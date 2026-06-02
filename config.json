@@ -1,0 +1,21 @@
+{
+  "base_currency": "CNY",
+  "supported_currencies": ["CNY", "USD", "CAD"],
+  "categories": {
+    "expense": ["餐饮", "交通", "购物", "住房", "医疗", "娱乐", "教育", "通讯", "日用", "其他"],
+    "income": ["工资", "奖金", "投资收益", "副业", "礼金", "其他"],
+    "investment": ["股票", "基金", "定期存款", "理财", "其他"],
+    "savings": ["活期", "定期", "应急金", "其他"]
+  },
+  "db_path": "data/ledger.db",
+  "receipts_dir": "receipts",
+  "wechat": {
+    "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。",
+    "allowed_commands": [
+      "add", "list", "summary", "monthly", "delete",
+      "deposit-add", "deposit-list",
+      "tax-add", "tax-list",
+      "fx-get", "fx-set"
+    ]
+  }
+}

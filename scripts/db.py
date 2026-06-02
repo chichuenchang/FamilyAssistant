@@ -1,0 +1,349 @@
+"""
+Family Assistant — Expense Tracker 数据库操作层
+
+提供 SQLite CRUD 和查询接口。Agent / CLI / 脚本统一走这个模块。
+"""
+
+import json
+import os
+import sqlite3
+from datetime import date, datetime, timedelta
+from pathlib import Path
+from typing import Any, Optional
+
+from models import SCHEMA, TRANSACTION_TYPES, BASE_CURRENCY, SUPPORTED_CURRENCIES
+
+# 数据库默认路径：项目根目录 data/ledger.db
+DB_PATH = Path(__file__).resolve().parent.parent / "data" / "ledger.db"
+
+
+def get_db(db_path: Optional[str] = None) -> sqlite3.Connection:
+    """获取数据库连接，自动启用 WAL 和 foreign keys。"""
+    path = db_path or str(DB_PATH)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def init_db(db_path: Optional[str] = None) -> None:
+    """初始化数据库：建表 + 索引。幂等。"""
+    conn = get_db(db_path)
+    conn.executescript(SCHEMA)
+    conn.commit()
+    conn.close()
+
+
+# ---------- Transactions ----------
+
+def find_duplicates(
+    type_: str,
+    amount: float,
+    currency: str,
+    date_: str,
+    description: str = "",
+    category: str = "",
+    db_path: Optional[str] = None,
+) -> list[dict]:
+    """查找疑似重复交易：同日 + 同金额 + 同币种 + 描述相近。"""
+    conn = get_db(db_path)
+    desc_clean = description.strip().lower()
+    rows = conn.execute(
+        """SELECT * FROM transactions
+           WHERE type = ? AND date = ? AND amount = ? AND currency = ?
+           ORDER BY id""",
+        (type_, date_, amount, currency),
+    ).fetchall()
+    conn.close()
+    dupes = []
+    for r in rows:
+        existing = dict(r)
+        existing_desc = (existing["description"] or "").strip().lower()
+        # 如果描述存在且相近，或描述都为空，视为疑似重复
+        if not desc_clean or not existing_desc or desc_clean == existing_desc:
+            dupes.append(existing)
+        elif desc_clean in existing_desc or existing_desc in desc_clean:
+            dupes.append(existing)
+    return dupes
+
+
+def add_transaction(
+    type_: str,
+    amount: float,
+    currency: str,
+    date_: str,
+    category: str = "",
+    description: str = "",
+    receipt_path: str = "",
+    notes: str = "",
+    skip_dup_check: bool = False,
+    db_path: Optional[str] = None,
+) -> tuple[int, list[dict]]:
+    """添加一条流水，返回 (新记录 id, 疑似重复列表)。
+
+    默认检查重复：同日 + 同金额 + 同币种 + 描述相近即报警。
+    设 skip_dup_check=True 跳过检查直接写入。
+    """
+    assert type_ in TRANSACTION_TYPES, f"Invalid type: {type_}"
+    assert currency in SUPPORTED_CURRENCIES, f"Unsupported currency: {currency}"
+    assert amount > 0, "Amount must be positive"
+
+    dupes = []
+    if not skip_dup_check:
+        dupes = find_duplicates(type_, amount, currency, date_, description, category, db_path)
+    if dupes:
+        return 0, dupes
+
+    conn = get_db(db_path)
+    cur = conn.execute(
+        """INSERT INTO transactions (type, amount, currency, category, description, date, receipt_path, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (type_, amount, currency, category, description, date_, receipt_path, notes),
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    conn.close()
+    return row_id, dupes
+
+
+def get_transactions(
+    type_: Optional[str] = None,
+    category: Optional[str] = None,
+    currency: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 200,
+    db_path: Optional[str] = None,
+) -> list[dict]:
+    """查询交易，支持多条件筛选。"""
+    conn = get_db(db_path)
+    sql = "SELECT * FROM transactions WHERE 1=1"
+    params: list[Any] = []
+
+    if type_:
+        sql += " AND type = ?"
+        params.append(type_)
+    if category:
+        sql += " AND category = ?"
+        params.append(category)
+    if currency:
+        sql += " AND currency = ?"
+        params.append(currency)
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+
+    sql += " ORDER BY date DESC LIMIT ?"
+    params.append(limit)
+
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_transaction(txn_id: int, db_path: Optional[str] = None) -> bool:
+    """删除一条交易。"""
+    conn = get_db(db_path)
+    cur = conn.execute("DELETE FROM transactions WHERE id = ?", (txn_id,))
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
+
+
+def summarize_by_category(
+    type_: str = "expense",
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    db_path: Optional[str] = None,
+) -> dict[str, float]:
+    """按分类汇总金额。"""
+    conn = get_db(db_path)
+    sql = "SELECT category, SUM(amount) AS total FROM transactions WHERE type = ?"
+    params: list[Any] = [type_]
+
+    if year:
+        sql += " AND strftime('%Y', date) = ?"
+        params.append(str(year))
+    if month:
+        sql += " AND strftime('%m', date) = ?"
+        params.append(f"{month:02d}")
+
+    sql += " GROUP BY category ORDER BY total DESC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return {r["category"] or "未分类": round(r["total"], 2) for r in rows}
+
+
+def monthly_summary(
+    type_: str = "expense",
+    year: Optional[int] = None,
+    db_path: Optional[str] = None,
+) -> dict[str, float]:
+    """按月汇总金额。"""
+    conn = get_db(db_path)
+    sql = "SELECT strftime('%Y-%m', date) AS mon, SUM(amount) AS total FROM transactions WHERE type = ?"
+    params: list[Any] = [type_]
+
+    if year:
+        sql += " AND strftime('%Y', date) = ?"
+        params.append(str(year))
+
+    sql += " GROUP BY mon ORDER BY mon"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return {r["mon"]: round(r["total"], 2) for r in rows}
+
+
+# ---------- Deposits ----------
+
+def add_deposit(
+    amount: float,
+    currency: str,
+    start_date: str,
+    bank: str = "",
+    term_months: int = 0,
+    rate: float = 0.0,
+    maturity_date: str = "",
+    receipt_path: str = "",
+    notes: str = "",
+    db_path: Optional[str] = None,
+) -> int:
+    """添加一笔定期存款记录。"""
+    conn = get_db(db_path)
+    cur = conn.execute(
+        """INSERT INTO deposits (amount, currency, bank, term_months, rate, start_date, maturity_date, receipt_path, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (amount, currency, bank, term_months, rate, start_date, maturity_date or "", receipt_path, notes),
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    conn.close()
+    return row_id
+
+
+def get_deposits(
+    currency: Optional[str] = None,
+    active_only: bool = False,
+    db_path: Optional[str] = None,
+) -> list[dict]:
+    """查询定期存款。active_only=True 时只返回未到期的。"""
+    conn = get_db(db_path)
+    sql = "SELECT * FROM deposits WHERE 1=1"
+    params: list[Any] = []
+
+    if currency:
+        sql += " AND currency = ?"
+        params.append(currency)
+    if active_only:
+        sql += " AND (maturity_date = '' OR maturity_date >= date('now'))"
+
+    sql += " ORDER BY start_date DESC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ---------- Tax Filings ----------
+
+def add_tax_filing(
+    year: int,
+    country: str,
+    data: dict,
+    filing_date: str = "",
+    receipt_path: str = "",
+    notes: str = "",
+    db_path: Optional[str] = None,
+) -> int:
+    """添加一条报税记录。data 为灵活 JSON。"""
+    conn = get_db(db_path)
+    cur = conn.execute(
+        """INSERT INTO tax_filings (year, country, filing_date, data, receipt_path, notes)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (year, country, filing_date, json.dumps(data, ensure_ascii=False), receipt_path, notes),
+    )
+    conn.commit()
+    row_id = cur.lastrowid
+    conn.close()
+    return row_id
+
+
+def get_tax_filings(
+    year: Optional[int] = None,
+    country: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> list[dict]:
+    """查询报税记录。data 字段自动解析为 dict。"""
+    conn = get_db(db_path)
+    sql = "SELECT * FROM tax_filings WHERE 1=1"
+    params: list[Any] = []
+
+    if year:
+        sql += " AND year = ?"
+        params.append(year)
+    if country:
+        sql += " AND country = ?"
+        params.append(country)
+
+    sql += " ORDER BY year DESC, country"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    result = [dict(r) for r in rows]
+    for r in result:
+        r["data"] = json.loads(r["data"])
+    return result
+
+
+# ---------- Exchange Rates ----------
+
+def set_exchange_rate(
+    from_currency: str,
+    to_currency: str,
+    rate: float,
+    source: str = "manual",
+    db_path: Optional[str] = None,
+) -> None:
+    """写入或更新当日汇率。"""
+    today = date.today().isoformat()
+    conn = get_db(db_path)
+    conn.execute(
+        """INSERT OR REPLACE INTO exchange_rates (from_currency, to_currency, rate, date, source)
+           VALUES (?, ?, ?, ?, ?)""",
+        (from_currency, to_currency, rate, today, source),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_latest_rate(
+    from_currency: str,
+    to_currency: str = BASE_CURRENCY,
+    db_path: Optional[str] = None,
+) -> Optional[float]:
+    """获取最近一条汇率。"""
+    conn = get_db(db_path)
+    row = conn.execute(
+        "SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY date DESC LIMIT 1",
+        (from_currency, to_currency),
+    ).fetchone()
+    conn.close()
+    return row["rate"] if row else None
+
+
+def convert_to_base(
+    amount: float,
+    from_currency: str,
+    db_path: Optional[str] = None,
+) -> float:
+    """将金额转换为基准货币（CNY）。无汇率时返回 None 特征值 -1。"""
+    if from_currency == BASE_CURRENCY:
+        return amount
+    rate = get_latest_rate(from_currency, BASE_CURRENCY, db_path)
+    if rate is None:
+        return -1.0
+    return round(amount * rate, 2)

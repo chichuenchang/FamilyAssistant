@@ -1,0 +1,20 @@
+# 数据库 & 凭据
+data/ledger.db
+data/wechat_creds.json*
+data/.feishu_*
+data/.telegram_offset
+
+# Python
+__pycache__/
+*.pyc
+
+# 票据
+receipts/inbox/*
+!receipts/inbox/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+
+# Conda
+env/
