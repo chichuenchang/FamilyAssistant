@@ -188,10 +188,13 @@ def summarize_by_category(
     year: Optional[int] = None,
     month: Optional[int] = None,
     db_path: Optional[str] = None,
-) -> dict[str, float]:
-    """按分类汇总金额。"""
+) -> dict[str, dict[str, float]]:
+    """按币种 + 分类汇总金额。不跨币种相加。
+
+    返回 {currency: {category: total}}。
+    """
     conn = get_db(db_path)
-    sql = "SELECT category, SUM(amount) AS total FROM transactions WHERE type = ?"
+    sql = "SELECT currency, category, SUM(amount) AS total FROM transactions WHERE type = ?"
     params: list[Any] = [type_]
 
     if year:
@@ -201,30 +204,39 @@ def summarize_by_category(
         sql += " AND strftime('%m', date) = ?"
         params.append(f"{month:02d}")
 
-    sql += " GROUP BY category ORDER BY total DESC"
+    sql += " GROUP BY currency, category ORDER BY currency, total DESC"
     rows = conn.execute(sql, params).fetchall()
     conn.close()
-    return {r["category"] or "未分类": round(r["total"], 2) for r in rows}
+    out: dict[str, dict[str, float]] = {}
+    for r in rows:
+        out.setdefault(r["currency"], {})[r["category"] or "未分类"] = round(r["total"], 2)
+    return out
 
 
 def monthly_summary(
     type_: str = "expense",
     year: Optional[int] = None,
     db_path: Optional[str] = None,
-) -> dict[str, float]:
-    """按月汇总金额。"""
+) -> dict[str, dict[str, float]]:
+    """按币种 + 月份汇总金额。不跨币种相加。
+
+    返回 {currency: {month: total}}。
+    """
     conn = get_db(db_path)
-    sql = "SELECT strftime('%Y-%m', date) AS mon, SUM(amount) AS total FROM transactions WHERE type = ?"
+    sql = "SELECT currency, strftime('%Y-%m', date) AS mon, SUM(amount) AS total FROM transactions WHERE type = ?"
     params: list[Any] = [type_]
 
     if year:
         sql += " AND strftime('%Y', date) = ?"
         params.append(str(year))
 
-    sql += " GROUP BY mon ORDER BY mon"
+    sql += " GROUP BY currency, mon ORDER BY currency, mon"
     rows = conn.execute(sql, params).fetchall()
     conn.close()
-    return {r["mon"]: round(r["total"], 2) for r in rows}
+    out: dict[str, dict[str, float]] = {}
+    for r in rows:
+        out.setdefault(r["currency"], {})[r["mon"]] = round(r["total"], 2)
+    return out
 
 
 # ---------- Deposits ----------

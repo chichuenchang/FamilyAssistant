@@ -122,22 +122,36 @@ def _build_system_prompt() -> str:
 4. 月度总览
    <TOOL>{{"tool":"get_monthly","args":{{"type":"expense","year":2026}}}}
 
-5. 定期存款
+5. 定期存款（查询）
    <TOOL>{{"tool":"list_deposits","args":{{}}}}
 
-6. 汇率
+6. 定期存款（新增）
+   <TOOL>{{"tool":"add_deposit","args":{{"amount":50000,"currency":"USD","bank":"HSBC","term":12,"rate":4.5,"start-date":"2026-01-15","maturity":"2027-01-15"}}}}
+
+7. 汇率（查询）
    <TOOL>{{"tool":"get_fx_rate","args":{{"from":"USD","to":"CNY"}}}}
 
-7. OCR 票据（用户发了图片时）
+8. 汇率（设置）
+   <TOOL>{{"tool":"set_fx_rate","args":{{"from":"USD","to":"CNY","rate":7.25}}}}
+
+9. 报税记录（新增；data 为 JSON 字符串）
+   <TOOL>{{"tool":"add_tax","args":{{"year":2025,"country":"US","data":"...JSON...","filing-date":"2026-04-10"}}}}
+
+10. 报税记录（查询）
+   <TOOL>{{"tool":"list_tax","args":{{"year":2025,"country":"US"}}}}
+
+11. OCR 票据（用户发了图片时）
    <TOOL>{{"tool":"ocr_image","args":{{"path":"图片路径"}}}}
 
-8. 删除
+12. 删除
    <TOOL>{{"tool":"delete_transaction","args":{{"id":12}}}}
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
 - 用户说"查账""这个月花了多少"→ 调 list_transactions 或 get_summary
-- 用户说"汇率"→ 调 get_fx_rate
+- 用户说"存了定期""买了理财"→ add_deposit；"我有哪些定期"→ list_deposits
+- 用户说"报税""今年报了多少税"→ add_tax / list_tax
+- 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
 - 用户闲聊/问候 → 直接友好回复，不用调工具
 - 需要精确信息时（金额、日期）才调工具，闲聊不调
 - 工具执行后会返回结果，你基于结果用自然语言回复
@@ -156,8 +170,14 @@ def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
     cli_args = [cmd]
     if args:
         for k, v in args.items():
-            cli_args.append(k)
-            cli_args.append(str(v))
+            flag = k if k.startswith("-") else f"--{k}"  # 容忍裸键（type→--type）
+            if v is True:
+                cli_args.append(flag)                     # 布尔开关，无值（如 --force）
+            elif v is False or v is None or v == "":
+                continue                                  # 未设置则跳过
+            else:
+                cli_args.append(flag)
+                cli_args.append(str(v))
 
     cli_path = ROOT / ".codewhale" / "skills" / "Expense_Tracker" / "cli.py"
     try:
@@ -180,7 +200,11 @@ def _tool_list_transactions(args): return _run_cli("list", args)
 def _tool_get_summary(args): return _run_cli("summary", args)
 def _tool_get_monthly(args): return _run_cli("monthly", args)
 def _tool_list_deposits(args): return _run_cli("deposit-list", args)
+def _tool_add_deposit(args): return _run_cli("deposit-add", args)
 def _tool_get_fx_rate(args): return _run_cli("fx-get", args)
+def _tool_set_fx_rate(args): return _run_cli("fx-set", args)
+def _tool_add_tax(args): return _run_cli("tax-add", args)
+def _tool_list_tax(args): return _run_cli("tax-list", args)
 def _tool_delete_transaction(args): return _run_cli("delete", args)
 
 def _tool_ocr_image(args):
@@ -201,7 +225,11 @@ _TOOL_MAP = {
     "get_summary": _tool_get_summary,
     "get_monthly": _tool_get_monthly,
     "list_deposits": _tool_list_deposits,
+    "add_deposit": _tool_add_deposit,
     "get_fx_rate": _tool_get_fx_rate,
+    "set_fx_rate": _tool_set_fx_rate,
+    "add_tax": _tool_add_tax,
+    "list_tax": _tool_list_tax,
     "delete_transaction": _tool_delete_transaction,
     "ocr_image": _tool_ocr_image,
 }

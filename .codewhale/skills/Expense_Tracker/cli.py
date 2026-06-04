@@ -110,14 +110,19 @@ def cmd_summary(args):
     if not result:
         print("没有数据。")
         return
-    total = sum(result.values())
-    print(f"{'类别':<10} {'金额':>10}  {'占比':>6}")
-    print("-" * 30)
-    for cat, amt in result.items():
-        pct = (amt / total * 100) if total > 0 else 0
-        print(f"{cat:<10} {amt:>10.2f}  {pct:>5.1f}%")
-    print("-" * 30)
-    print(f"{'合计':<10} {total:>10.2f}")
+    # 按币种分块，不跨币种相加
+    for i, (cur, cats) in enumerate(result.items()):
+        if i:
+            print()
+        total = sum(cats.values())
+        print(f"【{cur}】")
+        print(f"{'类别':<10} {'金额':>12}  {'占比':>6}")
+        print("-" * 32)
+        for cat, amt in cats.items():
+            pct = (amt / total * 100) if total > 0 else 0
+            print(f"{cat:<10} {amt:>12.2f}  {pct:>5.1f}%")
+        print("-" * 32)
+        print(f"{'合计':<10} {total:>12.2f} {cur}")
 
 
 def cmd_monthly(args):
@@ -125,8 +130,12 @@ def cmd_monthly(args):
     if not result:
         print("没有数据。")
         return
-    for mon, total in result.items():
-        print(f"{mon}: {total:.2f}")
+    for i, (cur, months) in enumerate(result.items()):
+        if i:
+            print()
+        print(f"【{cur}】")
+        for mon, total in months.items():
+            print(f"{mon}: {total:.2f} {cur}")
 
 
 def cmd_deposit_add(args):

@@ -166,9 +166,9 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 ## 多币种策略
 
 - 每笔保留原币种，不自动转换
-- 汇总时从 `exchange_rates` 取最新汇率折算到基准币种（`config.json` base_currency，当前 USD）
-- 首次使用某币种提醒设置汇率
-- 汇率建议每季度更新
+- `summary` / `monthly` **按币种分组汇总，不跨币种相加**（输出每币种一块）
+- 基准币种 = `config.json` base_currency（当前 USD），用于 `fx-get` / `convert_to_base` 折算
+- `exchange_rates` 存手工汇率；首次使用某币种提醒设置，建议每季度更新
 
 ## 远程通道
 
