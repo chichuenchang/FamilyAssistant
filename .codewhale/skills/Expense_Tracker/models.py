@@ -97,6 +97,27 @@ CREATE TABLE IF NOT EXISTS exchange_rates (
     source          TEXT    DEFAULT 'manual'
 );
 
+-- 资金划转/换汇溯源：源账户 → 换汇 → 目标账户。纯记录，不改余额。
+CREATE TABLE IF NOT EXISTS transfers (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_desc       TEXT    DEFAULT '',
+    from_type       TEXT    DEFAULT '',
+    from_deposit_id INTEGER DEFAULT NULL,
+    from_amount     REAL    NOT NULL,
+    from_currency   TEXT    NOT NULL,
+    to_amount       REAL    NOT NULL,
+    to_currency     TEXT    NOT NULL,
+    rate            REAL    DEFAULT 0.0,
+    exchange_date   TEXT    DEFAULT '',
+    to_bank         TEXT    DEFAULT '',
+    to_account      TEXT    DEFAULT '',
+    to_type         TEXT    DEFAULT '',
+    transfer_date   TEXT    DEFAULT '',
+    to_deposit_id   INTEGER DEFAULT NULL,
+    notes           TEXT    DEFAULT '',
+    created_at      TEXT    DEFAULT (datetime('now','localtime'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_txn_type    ON transactions(type);
 CREATE INDEX IF NOT EXISTS idx_txn_date    ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_txn_cat     ON transactions(category);
@@ -105,4 +126,8 @@ CREATE INDEX IF NOT EXISTS idx_dep_maturity ON deposits(maturity_date);
 CREATE INDEX IF NOT EXISTS idx_tax_year    ON tax_filings(year);
 CREATE INDEX IF NOT EXISTS idx_tax_country ON tax_filings(country);
 CREATE INDEX IF NOT EXISTS idx_fx_date     ON exchange_rates(date);
+CREATE INDEX IF NOT EXISTS idx_xfer_todep   ON transfers(to_deposit_id);
+CREATE INDEX IF NOT EXISTS idx_xfer_fromdep ON transfers(from_deposit_id);
+CREATE INDEX IF NOT EXISTS idx_xfer_date    ON transfers(transfer_date);
+CREATE INDEX IF NOT EXISTS idx_xfer_tocur   ON transfers(to_currency);
 """

@@ -141,10 +141,17 @@ def _build_system_prompt() -> str:
 10. 报税记录（查询）
    <TOOL>{{"tool":"list_tax","args":{{"year":2025,"country":"US"}}}}
 
-11. OCR 票据（用户发了图片时）
+11. 资金划转/换汇（溯源；目标为定期时自动建定期存款）
+   <TOOL>{{"tool":"add_transfer","args":{{"from-amount":350000,"from-currency":"CNY","from-desc":"活期/工行","from-type":"活期","to-amount":50000,"to-currency":"USD","to-type":"定期","to-bank":"HSBC","to-account":"6212xxxx","exchange-date":"2026-01-10","transfer-date":"2026-01-12","to-term":12,"to-rate":4.5,"to-maturity":"2027-01-12"}}}}
+
+12. 查资金来源/划转记录（如"这笔定期哪来的"）
+   <TOOL>{{"tool":"list_transfers","args":{{"to-deposit-id":5}}}}
+   <TOOL>{{"tool":"list_transfers","args":{{"trace":"工行","currency":"USD"}}}}
+
+13. OCR 票据（用户发了图片时）
    <TOOL>{{"tool":"ocr_image","args":{{"path":"图片路径"}}}}
 
-12. 删除
+14. 删除
    <TOOL>{{"tool":"delete_transaction","args":{{"id":12}}}}
 
 ## 行为准则
@@ -152,6 +159,8 @@ def _build_system_prompt() -> str:
 - 用户说"查账""这个月花了多少"→ 调 list_transactions 或 get_summary
 - 用户说"存了定期""买了理财"→ add_deposit；"我有哪些定期"→ list_deposits
 - 用户说"报税""今年报了多少税"→ add_tax / list_tax
+- 用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）
+- 用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）
 - 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
 - 用户闲聊/问候 → 直接友好回复，不用调工具
 - 需要精确信息时（金额、日期）才调工具，闲聊不调
@@ -206,6 +215,8 @@ def _tool_get_fx_rate(args): return _run_cli("fx-get", args)
 def _tool_set_fx_rate(args): return _run_cli("fx-set", args)
 def _tool_add_tax(args): return _run_cli("tax-add", args)
 def _tool_list_tax(args): return _run_cli("tax-list", args)
+def _tool_add_transfer(args): return _run_cli("transfer-add", args)
+def _tool_list_transfers(args): return _run_cli("transfer-list", args)
 def _tool_delete_transaction(args): return _run_cli("delete", args)
 
 def _tool_ocr_image(args):
@@ -231,6 +242,8 @@ _TOOL_MAP = {
     "set_fx_rate": _tool_set_fx_rate,
     "add_tax": _tool_add_tax,
     "list_tax": _tool_list_tax,
+    "add_transfer": _tool_add_transfer,
+    "list_transfers": _tool_list_transfers,
     "delete_transaction": _tool_delete_transaction,
     "ocr_image": _tool_ocr_image,
 }

@@ -71,6 +71,28 @@
 | date | TEXT | 日期 |
 | source | TEXT | 来源 |
 
+### transfers — 资金划转/换汇溯源表
+
+记录每一笔资金移动（源账户 → 换汇 → 目标账户），用于多年后回查某笔 活期/定期存款 的来源。纯记录，不改余额。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INTEGER | 主键 |
+| from_desc / from_type | TEXT | 源账户描述 / 类型（活期/定期） |
+| from_deposit_id | INTEGER | 可选：源若为已记录定期存款，链接其 id |
+| from_amount / from_currency | REAL / TEXT | 源金额 / 币种 |
+| to_amount / to_currency | REAL / TEXT | 目标金额 / 币种 |
+| rate | REAL | 换汇汇率（to/from，未给则计算） |
+| exchange_date | TEXT | 换汇日期 |
+| to_bank / to_account / to_type | TEXT | 目标银行 / 账号 / 类型（活期/定期） |
+| transfer_date | TEXT | 到账/转账日期 |
+| to_deposit_id | INTEGER | 目标为定期时自动建 deposits 行并链接其 id |
+| notes | TEXT | 备注 |
+
+**自动建定期**：`transfer-add --to-type 定期` 时，自动调 `add_deposit` 建一条定期存款记录（金额/币种/银行/账号/期限/利率/到期日来自 `--to-*`），并回填 `to_deposit_id` 链接。`--to-type 活期` 只记划转，不建记录。
+
+**溯源查询**：`transfer-list --to-deposit-id <定期id>` 查某定期存款的资金来源；`--trace <银行/账号关键词>` 模糊溯源；`--from-deposit-id` 查某定期的去向。
+
 ## 飞书远程收票
 
 用户可从手机拍照发到飞书群，Agent 定时拉取处理。
@@ -135,6 +157,17 @@ python .codewhale/skills/Expense_Tracker/cli.py deposit-list --currency USD --ac
 python .codewhale/skills/Expense_Tracker/cli.py tax-add --year 2025 --country US --data '{"total_income":85000,"tax_paid":12000}' --filing-date 2026-04-10
 python .codewhale/skills/Expense_Tracker/cli.py tax-list --year 2025
 
+# 资金划转/换汇（目标为定期时自动建定期存款并链接）
+python .codewhale/skills/Expense_Tracker/cli.py transfer-add \
+  --from-amount 350000 --from-currency CNY --from-desc 活期/工行 --from-type 活期 \
+  --to-amount 50000 --to-currency USD --to-type 定期 --to-bank HSBC --to-account 6212xx \
+  --exchange-date 2026-01-10 --transfer-date 2026-01-12 --to-term 12 --to-rate 4.5 --to-maturity 2027-01-12
+
+# 溯源：某定期存款的资金来源 / 模糊溯源 / 某定期的去向
+python .codewhale/skills/Expense_Tracker/cli.py transfer-list --to-deposit-id 6
+python .codewhale/skills/Expense_Tracker/cli.py transfer-list --trace 工行 --currency USD
+python .codewhale/skills/Expense_Tracker/cli.py transfer-list --from-deposit-id 6
+
 # 汇率
 python .codewhale/skills/Expense_Tracker/cli.py fx-set --from USD --to CNY --rate 7.25
 python .codewhale/skills/Expense_Tracker/cli.py fx-get --from USD --to CNY
@@ -163,6 +196,8 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 | "我有哪些定期存款" | `deposit-list` |
 | "2025 美国报了多少税" | `tax-list --year 2025 --country US` |
 | "现在美元汇率多少" | `fx-get --from USD --to CNY` |
+| "这笔定期存款哪来的" | `transfer-list --to-deposit-id <id>` 或 `--trace <银行/账号>` |
+| "我把X块换成美元转去Y银行存定期" | `transfer-add ...`（自动建定期存款） |
 
 ## 多币种策略
 
@@ -183,6 +218,7 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 - ✅ 日常开销 / 收入记账
 - ✅ 多币种（CNY USD CAD）
 - ✅ 定期存款追踪
+- ✅ 资金划转 / 换汇溯源（查任意 活期/定期 的资金来源）
 - ✅ 报税记录存档
 - ✅ 票据 OCR + 原始文件存档
 - ✅ 自然语言查询

@@ -31,6 +31,8 @@ from db import (
     monthly_summary,
     add_deposit,
     get_deposits,
+    add_transfer,
+    get_transfers,
     add_tax_filing,
     get_tax_filings,
     set_exchange_rate,
@@ -167,6 +169,62 @@ def cmd_deposit_list(args):
               f"| {r['term_months']}个月 @ {r['rate']}%")
 
 
+def cmd_transfer_add(args):
+    res = add_transfer(
+        from_amount=args.from_amount,
+        from_currency=args.from_currency,
+        to_amount=args.to_amount,
+        to_currency=args.to_currency,
+        from_desc=args.from_desc or "",
+        from_type=args.from_type or "",
+        from_deposit_id=args.from_deposit_id,
+        rate=args.rate,
+        exchange_date=args.exchange_date or "",
+        to_bank=args.to_bank or "",
+        to_account=args.to_account or "",
+        to_type=args.to_type,
+        transfer_date=args.transfer_date or "",
+        to_term=args.to_term or 0,
+        to_rate=args.to_rate or 0.0,
+        to_maturity=args.to_maturity or "",
+        notes=args.notes or "",
+    )
+    msg = (f"已记录划转 #{res['transfer_id']}: "
+           f"{args.from_amount} {args.from_currency} → {args.to_amount} {args.to_currency} "
+           f"@ {args.to_bank or '未知银行'}（{args.to_type}）")
+    if res["to_deposit_id"]:
+        msg += f"，已自动建定期存款 #{res['to_deposit_id']}"
+    print(msg)
+
+
+def cmd_transfer_list(args):
+    rows = get_transfers(
+        currency=args.currency,
+        to_bank=args.to_bank,
+        type_=args.type,
+        start=args.start,
+        end=args.end,
+        to_deposit_id=args.to_deposit_id,
+        from_deposit_id=args.from_deposit_id,
+        trace=args.trace,
+        limit=args.limit or 200,
+    )
+    if not rows:
+        print("没有划转记录。")
+        return
+    for r in rows:
+        src = r["from_desc"] or r["from_type"] or "?"
+        if r["from_deposit_id"]:
+            src += f"(定期#{r['from_deposit_id']})"
+        dst = "/".join(x for x in (r["to_bank"], r["to_account"]) if x) or "?"
+        link = f" 定期#{r['to_deposit_id']}" if r["to_deposit_id"] else ""
+        note = f" | {r['notes']}" if r["notes"] else ""
+        print(f"#{r['id']} [{r['transfer_date'] or r['exchange_date'] or '?'}] "
+              f"{r['from_amount']} {r['from_currency']}（{src}）→ "
+              f"{r['to_amount']} {r['to_currency']} @{r['rate']} → "
+              f"{dst}（{r['to_type']}{link}）{note}")
+
+
 def cmd_tax_add(args):
     import json
     data = json.loads(args.data) if args.data else {}
@@ -269,6 +327,38 @@ def main():
     p.add_argument("--currency")
     p.add_argument("--active", action="store_true")
 
+    # transfer add（资金划转/换汇溯源）
+    p = sub.add_parser("transfer-add", help="记录资金划转/换汇（目标为定期时自动建定期存款）")
+    p.add_argument("--from-amount", type=float, required=True)
+    p.add_argument("--from-currency", required=True)
+    p.add_argument("--to-amount", type=float, required=True)
+    p.add_argument("--to-currency", required=True)
+    p.add_argument("--to-type", required=True, help="目标账户类型：活期/定期")
+    p.add_argument("--from-desc", help="源账户描述，如 活期/工行")
+    p.add_argument("--from-type", help="源账户类型：活期/定期")
+    p.add_argument("--from-deposit-id", type=int, help="源若为已记录定期存款，链接其 id")
+    p.add_argument("--rate", type=float, help="换汇汇率；不填按 to/from 计算")
+    p.add_argument("--exchange-date", help="换汇日期 YYYY-MM-DD")
+    p.add_argument("--to-bank")
+    p.add_argument("--to-account")
+    p.add_argument("--transfer-date", help="到账/转账日期 YYYY-MM-DD")
+    p.add_argument("--to-term", type=int, help="目标定期期限（月）")
+    p.add_argument("--to-rate", type=float, help="目标定期年利率(%)")
+    p.add_argument("--to-maturity", help="目标定期到期日 YYYY-MM-DD")
+    p.add_argument("--notes")
+
+    # transfer list / 溯源
+    p = sub.add_parser("transfer-list", help="查询划转记录（溯源资金来源）")
+    p.add_argument("--currency", help="匹配源或目标币种")
+    p.add_argument("--to-bank")
+    p.add_argument("--type", help="匹配源或目标类型 活期/定期")
+    p.add_argument("--start")
+    p.add_argument("--end")
+    p.add_argument("--to-deposit-id", type=int, help="查某定期存款的资金来源")
+    p.add_argument("--from-deposit-id", type=int, help="查某定期存款的去向")
+    p.add_argument("--trace", help="模糊匹配 描述/银行/账号/备注")
+    p.add_argument("--limit", type=int)
+
     # tax add
     p = sub.add_parser("tax-add", help="添加报税记录")
     p.add_argument("--year", type=int, required=True)
@@ -310,6 +400,8 @@ def main():
         "monthly": cmd_monthly,
         "deposit-add": cmd_deposit_add,
         "deposit-list": cmd_deposit_list,
+        "transfer-add": cmd_transfer_add,
+        "transfer-list": cmd_transfer_list,
         "tax-add": cmd_tax_add,
         "tax-list": cmd_tax_list,
         "fx-set": cmd_fx_set,

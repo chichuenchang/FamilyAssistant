@@ -301,6 +301,122 @@ def get_deposits(
     return [dict(r) for r in rows]
 
 
+# ---------- Transfers（资金划转/换汇溯源） ----------
+
+def add_transfer(
+    from_amount: float,
+    from_currency: str,
+    to_amount: float,
+    to_currency: str,
+    from_desc: str = "",
+    from_type: str = "",
+    from_deposit_id: Optional[int] = None,
+    rate: Optional[float] = None,
+    exchange_date: str = "",
+    to_bank: str = "",
+    to_account: str = "",
+    to_type: str = "",
+    transfer_date: str = "",
+    to_term: int = 0,
+    to_rate: float = 0.0,
+    to_maturity: str = "",
+    notes: str = "",
+    db_path: Optional[str] = None,
+) -> dict:
+    """记录一笔资金划转/换汇。目标为定期时自动建 deposits 行并链接。
+
+    返回 {"transfer_id": int, "to_deposit_id": int|None}。
+    """
+    allowed_cur = get_supported_currencies()
+    for c in (from_currency, to_currency):
+        if c not in allowed_cur:
+            raise ValueError(f"不支持的币种 '{c}'。可选: {', '.join(allowed_cur)}")
+    if rate is None:
+        rate = round(to_amount / from_amount, 6) if from_amount else 0.0
+
+    # 目标为定期 → 自动建定期存款记录（复用 add_deposit），再链接
+    to_deposit_id: Optional[int] = None
+    if "定期" in (to_type or ""):
+        to_deposit_id = add_deposit(
+            amount=to_amount,
+            currency=to_currency,
+            bank=to_bank,
+            account=to_account,
+            term_months=to_term,
+            rate=to_rate,
+            start_date=transfer_date or exchange_date,
+            maturity_date=to_maturity,
+            notes="来自划转" + (f"：{notes}" if notes else ""),
+            db_path=db_path,
+        )
+
+    conn = get_db(db_path)
+    cur = conn.execute(
+        """INSERT INTO transfers
+           (from_desc, from_type, from_deposit_id, from_amount, from_currency,
+            to_amount, to_currency, rate, exchange_date, to_bank, to_account,
+            to_type, transfer_date, to_deposit_id, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (from_desc, from_type, from_deposit_id, from_amount, from_currency,
+         to_amount, to_currency, rate, exchange_date, to_bank, to_account,
+         to_type, transfer_date, to_deposit_id, notes),
+    )
+    conn.commit()
+    transfer_id = cur.lastrowid
+    conn.close()
+    return {"transfer_id": transfer_id, "to_deposit_id": to_deposit_id}
+
+
+def get_transfers(
+    currency: Optional[str] = None,
+    to_bank: Optional[str] = None,
+    type_: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    to_deposit_id: Optional[int] = None,
+    from_deposit_id: Optional[int] = None,
+    trace: Optional[str] = None,
+    limit: int = 200,
+    db_path: Optional[str] = None,
+) -> list[dict]:
+    """查询划转记录。currency/type_ 匹配源或目标；trace 模糊匹配描述/银行/账号/备注。"""
+    conn = get_db(db_path)
+    sql = "SELECT * FROM transfers WHERE 1=1"
+    params: list[Any] = []
+
+    if currency:
+        sql += " AND (from_currency = ? OR to_currency = ?)"
+        params += [currency, currency]
+    if to_bank:
+        sql += " AND to_bank = ?"
+        params.append(to_bank)
+    if type_:
+        sql += " AND (from_type = ? OR to_type = ?)"
+        params += [type_, type_]
+    if start:
+        sql += " AND transfer_date >= ?"
+        params.append(start)
+    if end:
+        sql += " AND transfer_date <= ?"
+        params.append(end)
+    if to_deposit_id is not None:
+        sql += " AND to_deposit_id = ?"
+        params.append(to_deposit_id)
+    if from_deposit_id is not None:
+        sql += " AND from_deposit_id = ?"
+        params.append(from_deposit_id)
+    if trace:
+        kw = f"%{trace}%"
+        sql += " AND (from_desc LIKE ? OR to_bank LIKE ? OR to_account LIKE ? OR notes LIKE ?)"
+        params += [kw, kw, kw, kw]
+
+    sql += " ORDER BY transfer_date DESC, id DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # ---------- Tax Filings ----------
 
 def add_tax_filing(
