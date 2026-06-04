@@ -28,7 +28,18 @@ import urllib.error
 
 # 项目根目录
 ROOT = Path(__file__).resolve().parent.parent
-INBOX_DIR = ROOT / "receipts" / "inbox"
+
+
+def _receipts_dir() -> Path:
+    """票据目录来自 config.json receipts_dir（单一事实来源）；缺失回退 receipts。"""
+    try:
+        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+        return ROOT / (cfg.get("receipts_dir") or "receipts")
+    except Exception:
+        return ROOT / "receipts"
+
+
+INBOX_DIR = _receipts_dir() / "inbox"
 LAST_ID_FILE = ROOT / "data" / ".feishu_last_id"
 CONFIG_FILE = ROOT / "data" / ".feishu_config.json"
 

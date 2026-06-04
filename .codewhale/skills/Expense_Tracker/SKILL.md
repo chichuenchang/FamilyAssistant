@@ -10,7 +10,7 @@
 .codewhale/skills/Expense_Tracker/
 ├── SKILL.md     ← 本文件
 ├── models.py    ← 数据模型 / SCHEMA / 默认分类
-├── db.py        ← SQLite CRUD & 查询层（DB_PATH = 项目根 data/ledger.db）
+├── db.py        ← SQLite CRUD & 查询层（DB_PATH 来自 config.json db_path）
 └── cli.py       ← 命令行入口（user / agent / 任意调用方）
 ```
 
@@ -145,11 +145,12 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 
 ## 分类 & 币种校验（单一事实来源）
 
-`config.json` 的 `categories` / `supported_currencies` / `base_currency` 是合法值的唯一来源；`config.json` 缺失或损坏时回退到 `models.py` 默认值（见 `db.get_categories` / `get_supported_currencies` / `get_base_currency`）。
+`config.json` 的 `categories` / `supported_currencies` / `base_currency` 是合法值的**唯一来源**。`models.py` 在导入时读取一次 config.json，暴露为 `CATEGORIES` / `SUPPORTED_CURRENCIES` / `BASE_CURRENCY` 常量；`db.py` 只从 `models` 取值（薄封装 `get_categories` / `get_supported_currencies` / `get_base_currency`），不再各自读配置。config.json 缺失/损坏时用 `models.py` 内的应急回退值（每类型仅 `其他` + USD）。
 
+- 数据流：`config.json` → `models`（读一次）→ `db` 取值 → `cli` 校验。改值只改 config.json，**改后重启进程生效**（导入期读取，非每次调用）。
 - `add` / `deposit-add` 写入前校验币种；`add` 还校验分类（按交易类型）。非法值报错并退出码 `1`，不写库。
 - 三方调用（user CLI / Agent subprocess / 进程内 import）走同一份校验，行为一致。
-- 想增改分类或币种 → 只改 `config.json`，无需动代码。`categories` 命令可随时查当前合法分类。
+- `categories` 命令可随时查当前合法分类。
 
 ## 查询模式
 
@@ -165,7 +166,7 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 ## 多币种策略
 
 - 每笔保留原币种，不自动转换
-- 汇总时从 `exchange_rates` 取最新汇率折算到 CNY
+- 汇总时从 `exchange_rates` 取最新汇率折算到基准币种（`config.json` base_currency，当前 USD）
 - 首次使用某币种提醒设置汇率
 - 汇率建议每季度更新
 

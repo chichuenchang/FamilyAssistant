@@ -1,5 +1,5 @@
 {
-  "base_currency": "CNY",
+  "base_currency": "USD",
   "supported_currencies": ["CNY", "USD", "CAD"],
   "categories": {
     "expense": ["餐饮", "交通", "购物", "住房", "医疗", "娱乐", "教育", "通讯", "日用", "其他"],
@@ -15,7 +15,7 @@
       "add", "list", "summary", "monthly", "delete",
       "deposit-add", "deposit-list",
       "tax-add", "tax-list",
-      "fx-get", "fx-set"
+      "fx-get", "fx-set", "categories"
     ]
   }
 }

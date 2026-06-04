@@ -37,6 +37,7 @@ from db import (
     get_latest_rate,
     convert_to_base,
     get_categories,
+    get_base_currency,
 )
 
 TRANSACTION_TYPES = ("expense", "income", "investment", "savings")
@@ -206,7 +207,7 @@ def main():
     p = sub.add_parser("add", help="添加交易")
     p.add_argument("--type", required=True, choices=["expense", "income", "investment", "savings"])
     p.add_argument("--amount", type=float, required=True)
-    p.add_argument("--currency", default="CNY")
+    p.add_argument("--currency", default=get_base_currency())
     p.add_argument("--date", required=True, help="YYYY-MM-DD")
     p.add_argument("--category")
     p.add_argument("--desc")
@@ -241,7 +242,7 @@ def main():
     # deposit add
     p = sub.add_parser("deposit-add", help="添加定期存款")
     p.add_argument("--amount", type=float, required=True)
-    p.add_argument("--currency", default="CNY")
+    p.add_argument("--currency", default=get_base_currency())
     p.add_argument("--bank")
     p.add_argument("--term", type=int)
     p.add_argument("--rate", type=float)

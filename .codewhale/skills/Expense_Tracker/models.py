@@ -3,28 +3,48 @@ Family Assistant — Expense Tracker 数据模型定义
 
 SQLite 数据库表结构，用于本地个人/家庭记账。
 支持多币种、定期存款、多国报税记录。
+
+分类 / 币种 / 基准币种的值 **全部来自项目根 config.json**（单一事实来源）。
+本模块导入时读取一次 config.json 并暴露为常量；改这些值只改 config.json，
+无需动代码（改后重启进程生效）。config.json 缺失/损坏时用下方应急回退值。
 """
 
-# 交易类型
+import json
+from pathlib import Path
+
+# 交易类型（结构性，固定，不放 config.json）
 TRANSACTION_TYPES = ("expense", "income", "investment", "savings")
 
-# 默认分类（回退值）。运行时优先读项目根 config.json 的 categories；
-# config 缺失/损坏才用这里。改分类请改 config.json（单一事实来源），见 db.get_categories。
-DEFAULT_CATEGORIES = {
-    "expense": ["餐饮", "交通", "购物", "住房", "医疗", "娱乐", "教育", "通讯", "日用", "其他"],
-    "income": ["工资", "奖金", "投资收益", "副业", "礼金", "其他"],
-    "investment": ["股票", "基金", "定期存款", "理财", "其他"],
-    "savings": ["活期", "定期", "应急金", "其他"],
-}
-
-# 支持的货币
-SUPPORTED_CURRENCIES = ("CNY", "USD", "CAD")
-
-# 基准货币（所有汇总折算到此）
-BASE_CURRENCY = "CNY"
-
-# 报税国家
+# 报税国家（结构性，固定）
 TAX_COUNTRIES = ("US", "CA")
+
+# ---------- config.json 读取（单一事实来源） ----------
+
+_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
+
+
+def _load_config() -> dict:
+    """读取项目根 config.json；缺失或损坏时返回空 dict（回退到下方应急默认）。"""
+    try:
+        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+_cfg = _load_config()
+
+# 应急回退（仅 config.json 缺失/损坏时使用；正常运行值来自 config.json）
+_FALLBACK_CATEGORIES = {t: ["其他"] for t in TRANSACTION_TYPES}
+_FALLBACK_CURRENCIES = ("USD", "CNY", "CAD")
+_FALLBACK_BASE = "USD"
+
+CATEGORIES = _cfg.get("categories") or _FALLBACK_CATEGORIES
+SUPPORTED_CURRENCIES = tuple(_cfg.get("supported_currencies") or _FALLBACK_CURRENCIES)
+BASE_CURRENCY = _cfg.get("base_currency") or _FALLBACK_BASE
+
+# 数据库路径：config.json db_path（相对项目根）；缺失回退 data/ledger.db
+_ROOT = _CONFIG_PATH.parent
+DB_PATH = _ROOT / (_cfg.get("db_path") or "data/ledger.db")
 
 # ---------- SQL DDL ----------
 

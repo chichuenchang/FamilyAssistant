@@ -30,9 +30,22 @@ python .codewhale/skills/Expense_Tracker/cli.py list --start 2026-05-01 --end 20
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 ```
 
+## 配置原则（单一事实来源）
+
+凡是 `config.json` 里有的值，代码与 SKILL.md **一律读取它，不重复硬编码**。当前 config.json 驱动：
+
+| config 键 | 谁读取 |
+|-----------|--------|
+| `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验 |
+| `db_path` | `models.DB_PATH` |
+| `receipts_dir` | `agent_core.RECEIPTS_DIR`、`feishu_inbox` |
+| `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
+
+改这些值只改 `config.json`（改后重启进程生效）。config 缺失/损坏时各处有应急回退默认值。
+
 ## 项目关键文件
 
-- `.codewhale/skills/Expense_Tracker/` — 记账 skill（cli.py 入口 + db.py 数据层 + models.py）
-- `config.json` — 分类 & 白名单配置
+- `.codewhale/skills/Expense_Tracker/` — 记账 skill（cli.py 入口 + db.py 数据层 + models.py 读 config）
+- `config.json` — 全局配置（分类/币种/路径/命令白名单的单一事实来源）
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md

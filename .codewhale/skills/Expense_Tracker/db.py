@@ -13,41 +13,28 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 models
+# 分类/币种/基准的值全部来自 config.json，由 models 统一读取（单一事实来源）。
 from models import (
-    SCHEMA, TRANSACTION_TYPES, BASE_CURRENCY, SUPPORTED_CURRENCIES, DEFAULT_CATEGORIES,
+    SCHEMA, TRANSACTION_TYPES, BASE_CURRENCY, SUPPORTED_CURRENCIES, CATEGORIES, DB_PATH,
 )
-
-# 数据库默认路径：项目根目录 data/ledger.db（本文件向上 3 级到根）
-DB_PATH = Path(__file__).resolve().parents[3] / "data" / "ledger.db"
-# 配置：项目根 config.json（分类 & 币种的单一事实来源；缺失时回退 models 默认）
-CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
+# DB_PATH 来自 config.json db_path（经 models）。
 
 
-# ── 配置加载（user / agent / 任意调用方共用同一套合法值） ──────
-
-def _load_config() -> dict:
-    """读取项目根 config.json；缺失或损坏时返回空 dict（回退到 models 默认）。"""
-    try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
+# ── 合法值访问器（薄封装 models 常量，供 cli / 校验复用） ──────
 
 def get_categories(type_: str) -> list[str]:
-    """某交易类型的合法分类。config.json 优先，回退 models.DEFAULT_CATEGORIES。"""
-    cats = _load_config().get("categories", {}).get(type_)
-    return list(cats) if cats else list(DEFAULT_CATEGORIES.get(type_, []))
+    """某交易类型的合法分类（来自 config.json，经 models）。"""
+    return list(CATEGORIES.get(type_, []))
 
 
 def get_supported_currencies() -> tuple[str, ...]:
-    """合法币种。config.json 优先，回退 models.SUPPORTED_CURRENCIES。"""
-    cur = _load_config().get("supported_currencies")
-    return tuple(cur) if cur else tuple(SUPPORTED_CURRENCIES)
+    """合法币种（来自 config.json，经 models）。"""
+    return tuple(SUPPORTED_CURRENCIES)
 
 
 def get_base_currency() -> str:
-    """基准币种。config.json 优先，回退 models.BASE_CURRENCY。"""
-    return _load_config().get("base_currency") or BASE_CURRENCY
+    """基准币种（来自 config.json，经 models）。"""
+    return BASE_CURRENCY
 
 
 def get_db(db_path: Optional[str] = None) -> sqlite3.Connection:
@@ -365,10 +352,12 @@ def set_exchange_rate(
 
 def get_latest_rate(
     from_currency: str,
-    to_currency: str = BASE_CURRENCY,
+    to_currency: Optional[str] = None,
     db_path: Optional[str] = None,
 ) -> Optional[float]:
-    """获取最近一条汇率。"""
+    """获取最近一条汇率。to_currency 默认基准币种（config.json）。"""
+    if to_currency is None:
+        to_currency = get_base_currency()
     conn = get_db(db_path)
     row = conn.execute(
         "SELECT rate FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY date DESC LIMIT 1",
@@ -383,10 +372,11 @@ def convert_to_base(
     from_currency: str,
     db_path: Optional[str] = None,
 ) -> float:
-    """将金额转换为基准货币（CNY）。无汇率时返回 None 特征值 -1。"""
-    if from_currency == BASE_CURRENCY:
+    """将金额转换为基准货币（config.json base_currency）。无汇率时返回特征值 -1。"""
+    base = get_base_currency()
+    if from_currency == base:
         return amount
-    rate = get_latest_rate(from_currency, BASE_CURRENCY, db_path)
+    rate = get_latest_rate(from_currency, base, db_path)
     if rate is None:
         return -1.0
     return round(amount * rate, 2)

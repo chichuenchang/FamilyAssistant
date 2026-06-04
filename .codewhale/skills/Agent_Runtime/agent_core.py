@@ -51,6 +51,30 @@ sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "OCR"))  # OCR skill 的
 # 注：CLI 经 subprocess 调用（见 _run_cli），无需加入 sys.path
 
 
+# ── config.json（值的单一事实来源；不在代码里重复硬编码） ──────
+
+def _load_config_dict() -> dict:
+    """解析项目根 config.json；缺失/损坏返回 {}（用下方回退）。"""
+    try:
+        return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+_CONFIG = _load_config_dict()
+
+# 票据目录（config.json receipts_dir，缺失回退 receipts）
+RECEIPTS_DIR = ROOT / (_CONFIG.get("receipts_dir") or "receipts")
+
+# CLI 命令白名单（config.json wechat.allowed_commands，缺失回退内置集）
+_FALLBACK_ALLOWED = {
+    "add", "list", "summary", "monthly", "delete",
+    "deposit-add", "deposit-list", "tax-add", "tax-list",
+    "fx-get", "fx-set", "categories",
+}
+ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FALLBACK_ALLOWED)
+
+
 # ── 项目文档加载 ────────────────────────────────────────────
 
 def _load_file(path: str) -> str:
@@ -64,6 +88,8 @@ def _build_system_prompt() -> str:
     config = _load_file("config.json")
 
     today = date.today()
+    currencies = "/".join(_CONFIG.get("supported_currencies") or ["USD"])
+    base_cur = _CONFIG.get("base_currency") or "USD"
 
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 你有整个项目的全局视角，能自主决定如何响应用户。
@@ -83,9 +109,9 @@ def _build_system_prompt() -> str:
 工具调用格式：在回复中单独一行以 <TOOL> 开头，JSON 格式。
 
 1. 记账
-   <TOOL>{{"tool":"add_transaction","args":{{"type":"expense","amount":45.5,"currency":"CNY","date":"{today}","category":"餐饮","desc":"午餐"}}}}
+   <TOOL>{{"tool":"add_transaction","args":{{"type":"expense","amount":45.5,"currency":"{base_cur}","date":"{today}","category":"餐饮","desc":"午餐"}}}}
    type: expense/income/investment/savings
-   currency: CNY/USD/CAD
+   currency: {currencies}（默认基准 {base_cur}）
 
 2. 查询
    <TOOL>{{"tool":"list_transactions","args":{{"type":"expense","start":"2026-05-01","end":"2026-06-01","limit":20}}}}
@@ -124,12 +150,7 @@ def _build_system_prompt() -> str:
 
 def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
     """执行 CLI 命令并返回 stdout。"""
-    allowed = {
-        "add", "list", "summary", "monthly", "delete",
-        "deposit-add", "deposit-list", "tax-add", "tax-list",
-        "fx-get", "fx-set",
-    }
-    if cmd not in allowed:
+    if cmd not in ALLOWED_COMMANDS:
         return f"[错误] 命令不允许: {cmd}"
 
     cli_args = [cmd]

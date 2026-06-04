@@ -91,7 +91,8 @@ if __name__ == "__main__":
 
 ## 安全
 
-- **命令白名单**：Agent 只能调 `agent_core.py` `_run_cli` 里 `allowed` 集合内的 CLI 子命令（add/list/summary/monthly/delete/deposit-*/tax-*/fx-*）。其余一律拒绝。
+- **命令白名单**：来自 `config.json` 的 `wechat.allowed_commands`（`agent_core.ALLOWED_COMMANDS` 读取，config 缺失才回退内置集）。Agent 只能调白名单内的 CLI 子命令，其余一律拒绝。增删命令改 `config.json` 即可。
+- **票据目录**：`agent_core.RECEIPTS_DIR` 来自 `config.json` `receipts_dir`，不在代码里硬编码。
 - **凭据本地化**：所有频道凭据（微信扫码态、Telegram token）只存本地，不外传。
 - Telegram token 走环境变量，不写进仓库。
 
