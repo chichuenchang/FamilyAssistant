@@ -21,10 +21,10 @@ Agent 使用 `load_skill` 工具按需获取 SKILL.md 内容。
 
 ```bash
 # 记账
-python scripts/cli.py add --type expense --amount 45.50 --currency CNY --date 2026-05-31 --category 餐饮 --desc "午餐"
+python .codewhale/skills/Expense_Tracker/cli.py add --type expense --amount 45.50 --currency CNY --date 2026-05-31 --category 餐饮 --desc "午餐"
 
 # 查账
-python scripts/cli.py list --start 2026-05-01 --end 2026-05-31
+python .codewhale/skills/Expense_Tracker/cli.py list --start 2026-05-01 --end 2026-05-31
 
 # 启动微信 Bot
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
@@ -32,8 +32,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 ## 项目关键文件
 
-- `scripts/cli.py` — CLI 入口
-- `scripts/db.py` — 数据库层
+- `.codewhale/skills/Expense_Tracker/` — 记账 skill（cli.py 入口 + db.py 数据层 + models.py）
 - `config.json` — 分类 & 白名单配置
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md

@@ -224,7 +224,7 @@ def main():
         print("没有新图片。")
     else:
         print(f"完成，下载 {count} 张图片到 {INBOX_DIR}")
-        print("运行 scripts/cli.py 处理这些票据。")
+        print("运行 .codewhale/skills/Expense_Tracker/cli.py 处理这些票据。")
 
 
 if __name__ == "__main__":

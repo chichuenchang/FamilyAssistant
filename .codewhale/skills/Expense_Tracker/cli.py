@@ -2,7 +2,7 @@
 Family Assistant — Expense Tracker CLI
 
 Agent 通过 CLI 子命令操作数据库，输出纯文本或 JSON。
-用法: python scripts/cli.py <command> [args]
+用法: python .codewhale/skills/Expense_Tracker/cli.py <command> [args]
 """
 
 import argparse
@@ -19,10 +19,10 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把项目根目录加入 sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# 把本 skill 目录加入 sys.path（同目录 db / models）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from scripts.db import (
+from db import (
     init_db,
     add_transaction,
     get_transactions,
@@ -36,7 +36,10 @@ from scripts.db import (
     set_exchange_rate,
     get_latest_rate,
     convert_to_base,
+    get_categories,
 )
+
+TRANSACTION_TYPES = ("expense", "income", "investment", "savings")
 
 
 def cmd_init(_args):
@@ -89,6 +92,12 @@ def cmd_list(args):
 def cmd_delete(args):
     ok = delete_transaction(args.id)
     print(f"{'已删除' if ok else '未找到'} 交易 #{args.id}")
+
+
+def cmd_categories(args):
+    types = [args.type] if args.type else list(TRANSACTION_TYPES)
+    for t in types:
+        print(f"{t}: {', '.join(get_categories(t))}")
 
 
 def cmd_summary(args):
@@ -273,6 +282,10 @@ def main():
     p.add_argument("--from", dest="from_", required=True)
     p.add_argument("--to", required=True)
 
+    # categories
+    p = sub.add_parser("categories", help="列出合法分类（来自 config.json）")
+    p.add_argument("--type", choices=list(TRANSACTION_TYPES), help="只看某交易类型")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -288,8 +301,13 @@ def main():
         "tax-list": cmd_tax_list,
         "fx-set": cmd_fx_set,
         "fx-get": cmd_fx_get,
+        "categories": cmd_categories,
     }
-    dispatch[args.command](args)
+    try:
+        dispatch[args.command](args)
+    except ValueError as e:
+        print(f"错误: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

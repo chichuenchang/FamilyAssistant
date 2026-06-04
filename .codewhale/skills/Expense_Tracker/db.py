@@ -7,14 +7,47 @@ Family Assistant — Expense Tracker 数据库操作层
 import json
 import os
 import sqlite3
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-from models import SCHEMA, TRANSACTION_TYPES, BASE_CURRENCY, SUPPORTED_CURRENCIES
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 models
+from models import (
+    SCHEMA, TRANSACTION_TYPES, BASE_CURRENCY, SUPPORTED_CURRENCIES, DEFAULT_CATEGORIES,
+)
 
-# 数据库默认路径：项目根目录 data/ledger.db
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "ledger.db"
+# 数据库默认路径：项目根目录 data/ledger.db（本文件向上 3 级到根）
+DB_PATH = Path(__file__).resolve().parents[3] / "data" / "ledger.db"
+# 配置：项目根 config.json（分类 & 币种的单一事实来源；缺失时回退 models 默认）
+CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
+
+
+# ── 配置加载（user / agent / 任意调用方共用同一套合法值） ──────
+
+def _load_config() -> dict:
+    """读取项目根 config.json；缺失或损坏时返回空 dict（回退到 models 默认）。"""
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def get_categories(type_: str) -> list[str]:
+    """某交易类型的合法分类。config.json 优先，回退 models.DEFAULT_CATEGORIES。"""
+    cats = _load_config().get("categories", {}).get(type_)
+    return list(cats) if cats else list(DEFAULT_CATEGORIES.get(type_, []))
+
+
+def get_supported_currencies() -> tuple[str, ...]:
+    """合法币种。config.json 优先，回退 models.SUPPORTED_CURRENCIES。"""
+    cur = _load_config().get("supported_currencies")
+    return tuple(cur) if cur else tuple(SUPPORTED_CURRENCIES)
+
+
+def get_base_currency() -> str:
+    """基准币种。config.json 优先，回退 models.BASE_CURRENCY。"""
+    return _load_config().get("base_currency") or BASE_CURRENCY
 
 
 def get_db(db_path: Optional[str] = None) -> sqlite3.Connection:
@@ -87,8 +120,15 @@ def add_transaction(
     设 skip_dup_check=True 跳过检查直接写入。
     """
     assert type_ in TRANSACTION_TYPES, f"Invalid type: {type_}"
-    assert currency in SUPPORTED_CURRENCIES, f"Unsupported currency: {currency}"
     assert amount > 0, "Amount must be positive"
+    allowed_cur = get_supported_currencies()
+    if currency not in allowed_cur:
+        raise ValueError(f"不支持的币种 '{currency}'。可选: {', '.join(allowed_cur)}")
+    if category:
+        allowed_cat = get_categories(type_)
+        if category not in allowed_cat:
+            raise ValueError(
+                f"无效分类 '{category}'（类型 {type_}）。可选: {', '.join(allowed_cat)}")
 
     dupes = []
     if not skip_dup_check:
@@ -215,6 +255,9 @@ def add_deposit(
     db_path: Optional[str] = None,
 ) -> int:
     """添加一笔定期存款记录。"""
+    allowed_cur = get_supported_currencies()
+    if currency not in allowed_cur:
+        raise ValueError(f"不支持的币种 '{currency}'。可选: {', '.join(allowed_cur)}")
     conn = get_db(db_path)
     cur = conn.execute(
         """INSERT INTO deposits (amount, currency, bank, term_months, rate, start_date, maturity_date, receipt_path, notes)

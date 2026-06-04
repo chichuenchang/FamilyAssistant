@@ -2,23 +2,19 @@
 
 > Family Assistant 的记账 skill。支持多币种日常开销、收入、投资、定期存款和报税记录管理。
 
-## 项目结构
+## 代码位置
+
+实现就在本 skill 目录 `.codewhale/skills/Expense_Tracker/`，自包含、零外部依赖（仅标准库 + SQLite）：
 
 ```
-FamilyAssistant/
-├── SKILL.md              ← 根索引
-├── .codewhale/skills/    ← Agent 技能目录
-├── README.md
-├── config.json           ← 分类 & 路径配置
-├── data/
-│   └── ledger.db         ← SQLite 数据库
-├── receipts/             ← 原始票据/截图存档
-│   └── YYYY/MM/
-└── scripts/
-    ├── models.py
-    ├── db.py
-    └── cli.py
+.codewhale/skills/Expense_Tracker/
+├── SKILL.md     ← 本文件
+├── models.py    ← 数据模型 / SCHEMA / 默认分类
+├── db.py        ← SQLite CRUD & 查询层（DB_PATH = 项目根 data/ledger.db）
+└── cli.py       ← 命令行入口（user / agent / 任意调用方）
 ```
+
+数据与配置仍在项目根：`data/ledger.db`（SQLite）、`config.json`（分类 & 路径）、`receipts/YYYY/MM/`（票据存档）。`cli.py` 把同目录加入 `sys.path` 后 `from db import ...`，无需从项目根 import。
 
 ## 数据模型
 
@@ -114,34 +110,46 @@ FamilyAssistant/
 
 ```bash
 # 初始化
-python scripts/cli.py init
+python .codewhale/skills/Expense_Tracker/cli.py init
 
 # 添加交易
-python scripts/cli.py add --type expense --amount 45.50 --currency CNY --date 2026-05-31 --category 餐饮 --desc "午餐"
+python .codewhale/skills/Expense_Tracker/cli.py add --type expense --amount 45.50 --currency CNY --date 2026-05-31 --category 餐饮 --desc "午餐"
 
 # 查询
-python scripts/cli.py list --type expense --start 2026-05-01 --end 2026-05-31
-python scripts/cli.py list --category 餐饮 --currency USD
+python .codewhale/skills/Expense_Tracker/cli.py list --type expense --start 2026-05-01 --end 2026-05-31
+python .codewhale/skills/Expense_Tracker/cli.py list --category 餐饮 --currency USD
 
 # 删除
-python scripts/cli.py delete --id 3
+python .codewhale/skills/Expense_Tracker/cli.py delete --id 3
 
 # 汇总
-python scripts/cli.py summary --type expense --year 2026 --month 5
-python scripts/cli.py monthly --type expense --year 2026
+python .codewhale/skills/Expense_Tracker/cli.py summary --type expense --year 2026 --month 5
+python .codewhale/skills/Expense_Tracker/cli.py monthly --type expense --year 2026
 
 # 定期存款
-python scripts/cli.py deposit-add --amount 50000 --currency USD --bank "HSBC" --term 12 --rate 4.5 --start-date 2026-01-15 --maturity 2027-01-15
-python scripts/cli.py deposit-list --currency USD --active
+python .codewhale/skills/Expense_Tracker/cli.py deposit-add --amount 50000 --currency USD --bank "HSBC" --term 12 --rate 4.5 --start-date 2026-01-15 --maturity 2027-01-15
+python .codewhale/skills/Expense_Tracker/cli.py deposit-list --currency USD --active
 
 # 报税
-python scripts/cli.py tax-add --year 2025 --country US --data '{"total_income":85000,"tax_paid":12000}' --filing-date 2026-04-10
-python scripts/cli.py tax-list --year 2025
+python .codewhale/skills/Expense_Tracker/cli.py tax-add --year 2025 --country US --data '{"total_income":85000,"tax_paid":12000}' --filing-date 2026-04-10
+python .codewhale/skills/Expense_Tracker/cli.py tax-list --year 2025
 
 # 汇率
-python scripts/cli.py fx-set --from USD --to CNY --rate 7.25
-python scripts/cli.py fx-get --from USD --to CNY
+python .codewhale/skills/Expense_Tracker/cli.py fx-set --from USD --to CNY --rate 7.25
+python .codewhale/skills/Expense_Tracker/cli.py fx-get --from USD --to CNY
+
+# 合法分类（来自 config.json）
+python .codewhale/skills/Expense_Tracker/cli.py categories
+python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 ```
+
+## 分类 & 币种校验（单一事实来源）
+
+`config.json` 的 `categories` / `supported_currencies` / `base_currency` 是合法值的唯一来源；`config.json` 缺失或损坏时回退到 `models.py` 默认值（见 `db.get_categories` / `get_supported_currencies` / `get_base_currency`）。
+
+- `add` / `deposit-add` 写入前校验币种；`add` 还校验分类（按交易类型）。非法值报错并退出码 `1`，不写库。
+- 三方调用（user CLI / Agent subprocess / 进程内 import）走同一份校验，行为一致。
+- 想增改分类或币种 → 只改 `config.json`，无需动代码。`categories` 命令可随时查当前合法分类。
 
 ## 查询模式
 

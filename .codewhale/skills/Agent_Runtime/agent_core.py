@@ -47,8 +47,8 @@ if sys.platform == "win32":
 
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT))  # scripts/cli.py（subprocess 调用）
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "OCR"))  # OCR skill 的 ocr.py
+# 注：CLI 经 subprocess 调用（见 _run_cli），无需加入 sys.path
 
 
 # ── 项目文档加载 ────────────────────────────────────────────
@@ -138,7 +138,7 @@ def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
             cli_args.append(k)
             cli_args.append(str(v))
 
-    cli_path = ROOT / "scripts" / "cli.py"
+    cli_path = ROOT / ".codewhale" / "skills" / "Expense_Tracker" / "cli.py"
     try:
         result = subprocess.run(
             [sys.executable, str(cli_path)] + cli_args,

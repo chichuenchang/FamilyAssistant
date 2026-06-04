@@ -8,7 +8,8 @@ SQLite 数据库表结构，用于本地个人/家庭记账。
 # 交易类型
 TRANSACTION_TYPES = ("expense", "income", "investment", "savings")
 
-# 默认分类（可按需在 config.json 扩展）
+# 默认分类（回退值）。运行时优先读项目根 config.json 的 categories；
+# config 缺失/损坏才用这里。改分类请改 config.json（单一事实来源），见 db.get_categories。
 DEFAULT_CATEGORIES = {
     "expense": ["餐饮", "交通", "购物", "住房", "医疗", "娱乐", "教育", "通讯", "日用", "其他"],
     "income": ["工资", "奖金", "投资收益", "副业", "礼金", "其他"],

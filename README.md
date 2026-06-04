@@ -47,6 +47,10 @@ FamilyAssistant/
 ├── .codewhale/
 │   └── skills/
 │       ├── Expense_Tracker/  ← 记账技能
+│       │   ├── SKILL.md
+│       │   ├── models.py        ← 数据模型
+│       │   ├── db.py            ← SQLite 数据层
+│       │   └── cli.py           ← 记账 CLI 入口
 │       ├── OCR/              ← OCR 技能
 │       │   ├── SKILL.md
 │       │   └── ocr.py            ← OCR（腾讯云）
@@ -56,8 +60,6 @@ FamilyAssistant/
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── scripts/
-│   ├── cli.py            ← 记账 CLI
-│   ├── db.py             ← 数据库层
 │   └── feishu_inbox.py   ← 飞书收件箱
 ├── config.json           ← 分类 & 白名单
 ├── data/                 ← SQLite + 凭据
