@@ -13,16 +13,16 @@
 
 用法:
     # 测试模式（命令行交互，不需要微信）
-    python scripts/wechat_ilink.py --mode test
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode test
 
     # 运行模式（扫码登录 + 长轮询）
-    python scripts/wechat_ilink.py --mode run
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
     # 重新扫码（切换账号）
-    python scripts/wechat_ilink.py --mode run --relogin
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 
 安全:
-    所有 CLI 调用受 scripts/wechat_skill.py 白名单约束。
+    所有 CLI 调用受同目录 agent_core.py 白名单约束。
     凭据加密存储在 data/wechat_creds.json，不对外传输。
 """
 
@@ -43,11 +43,12 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 项目根
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+# 项目根（本文件向上 3 级）
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
+sys.path.insert(0, str(ROOT))  # scripts.ocr / cli（经 agent_core）
 
-from scripts.wechat_skill import WechatAgent
+from agent_core import Agent
 
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
@@ -73,7 +74,7 @@ def run_bot(relogin: bool = False) -> None:
     print(f"[wechat_ilink] 登录成功 — 账号: {bot.account_id}")
     print("[wechat_ilink] 等待微信消息... (Ctrl+C 停止)")
 
-    agent = WechatAgent()
+    agent = Agent()
 
     # 注册文字消息处理器
     @bot.on_text
@@ -127,7 +128,7 @@ def run_test() -> None:
     llm_ready = bool(os.environ.get("DEEPSEEK_API_KEY"))
     print(f"LLM: {'已启用' if llm_ready else '未配置 — 设置 DEEPSEEK_API_KEY'}")
     print("-" * 40)
-    agent = WechatAgent()
+    agent = Agent()
     while True:
         try:
             msg = input("微信> ").strip()

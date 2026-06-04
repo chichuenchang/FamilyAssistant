@@ -8,6 +8,7 @@
 |-------|------|------|---------|
 | **Expense Tracker** | 记账、查账、汇总、存款、报税、汇率 | [SKILL.md](.codewhale/skills/Expense_Tracker/SKILL.md) | 记账、查账、汇总、存款、报税、汇率、票据 |
 | **OCR** | 图片文字识别、票据结构化提取 | [SKILL.md](.codewhale/skills/OCR/SKILL.md) | 图片文字识别、票据结构化提取 |
+| **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
 
 ## 加载策略
 
@@ -26,7 +27,7 @@ python scripts/cli.py add --type expense --amount 45.50 --currency CNY --date 20
 python scripts/cli.py list --start 2026-05-01 --end 2026-05-31
 
 # 启动微信 Bot
-python scripts/wechat_ilink.py --mode run
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 ```
 
 ## 项目关键文件
@@ -35,5 +36,4 @@ python scripts/wechat_ilink.py --mode run
 - `scripts/db.py` — 数据库层
 - `config.json` — 分类 & 白名单配置
 - `scripts/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
-- `scripts/wechat_ilink.py` — 微信传输层（基础设施，无需 Agent 介入）
-- `scripts/wechat_skill.py` — 微信消息引擎（基础设施，无需 Agent 介入）
+- `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md

@@ -11,7 +11,7 @@ Telegram Bot API 是全球最开放的 IM Bot 协议：
     2. 设环境变量 TELEGRAM_BOT_TOKEN
 
 用法:
-    python scripts/telegram_bot.py
+    python .codewhale/skills/Agent_Runtime/telegram_bot.py
 """
 
 from __future__ import annotations
@@ -30,10 +30,11 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
+sys.path.insert(0, str(ROOT))  # scripts.ocr / cli（经 agent_core）
 
-from scripts.wechat_skill import WechatAgent
+from agent_core import Agent
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
@@ -95,7 +96,7 @@ def run() -> None:
         return
     print(f"[tg] 已连接 — @{me['result']['username']}")
 
-    agent = WechatAgent()
+    agent = Agent()
     offset = _load_offset()
     print(f"[tg] 等待消息... (Ctrl+C 停止)")
 

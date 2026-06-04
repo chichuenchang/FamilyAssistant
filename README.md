@@ -14,7 +14,7 @@ pip install "weixin-ilink[qr]"
 setx DEEPSEEK_API_KEY "sk-xxx"
 
 # 3. 启动 Agent（终端出二维码）
-python scripts/wechat_ilink.py --mode run
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # （可选）设 OCR：
 #   setx TENCENT_SECRET_ID "xxx"
@@ -22,7 +22,7 @@ python scripts/wechat_ilink.py --mode run
 
 # ── 或用 Telegram（多人，推荐） ──
 #   setx TELEGRAM_BOT_TOKEN "xxx"
-#   python scripts/telegram_bot.py
+#   python .codewhale/skills/Agent_Runtime/telegram_bot.py
 ```
 
 ### 手机端
@@ -35,7 +35,7 @@ python scripts/wechat_ilink.py --mode run
 **方式二：Telegram**（多人使用，推荐）
 1. Telegram 搜 **@BotFather** → `/newbot` → 获取 Token
 2. `setx TELEGRAM_BOT_TOKEN "xxx"`
-3. `python scripts/telegram_bot.py`
+3. `python .codewhale/skills/Agent_Runtime/telegram_bot.py`
 4. 把 Bot 链接发给家人，拉进群一起用
 
 发什么都可以，比如 `花了45块 午餐` 或 `这个月花了多少`
@@ -44,14 +44,19 @@ python scripts/wechat_ilink.py --mode run
 
 ```
 FamilyAssistant/
-├── .codewhale/           ← Agent 技能目录（CodeWhale 按需加载）
+├── .codewhale/
+│   └── skills/
+│       ├── Expense_Tracker/  ← 记账技能
+│       ├── OCR/              ← OCR 技能
+│       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
+│           ├── SKILL.md
+│           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
+│           ├── wechat_ilink.py   ← 微信传输层
+│           └── telegram_bot.py   ← Telegram 传输层
 ├── scripts/
 │   ├── cli.py            ← 记账 CLI
 │   ├── db.py             ← 数据库层
-│   ├── wechat_ilink.py   ← 微信传输层
-│   ├── wechat_skill.py   ← 微信 Agent（全量上下文）
 │   ├── ocr.py            ← OCR（腾讯云）
-│   ├── telegram_bot.py   ← Telegram 传输层
 │   └── feishu_inbox.py   ← 飞书收件箱
 ├── config.json           ← 分类 & 白名单
 ├── data/                 ← SQLite + 凭据
