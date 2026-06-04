@@ -41,6 +41,7 @@
 | amount | REAL | 本金 |
 | currency | TEXT | 币种 |
 | bank | TEXT | 银行名 |
+| account | TEXT | 账号/账户号 |
 | term_months | INTEGER | 期限（月） |
 | rate | REAL | 年利率（%） |
 | start_date | TEXT | 起存日期 |
@@ -127,7 +128,7 @@ python .codewhale/skills/Expense_Tracker/cli.py summary --type expense --year 20
 python .codewhale/skills/Expense_Tracker/cli.py monthly --type expense --year 2026
 
 # 定期存款
-python .codewhale/skills/Expense_Tracker/cli.py deposit-add --amount 50000 --currency USD --bank "HSBC" --term 12 --rate 4.5 --start-date 2026-01-15 --maturity 2027-01-15
+python .codewhale/skills/Expense_Tracker/cli.py deposit-add --amount 50000 --currency USD --bank "HSBC" --account 6212xxxx --term 12 --rate 4.5 --start-date 2026-01-15 --maturity 2027-01-15
 python .codewhale/skills/Expense_Tracker/cli.py deposit-list --currency USD --active
 
 # 报税

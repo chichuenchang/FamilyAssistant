@@ -48,10 +48,19 @@ def get_db(db_path: Optional[str] = None) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_column(conn: sqlite3.Connection, table: str, col: str, decl: str) -> None:
+    """已有表缺列时补加（迁移）。幂等。"""
+    existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if col not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+
 def init_db(db_path: Optional[str] = None) -> None:
-    """初始化数据库：建表 + 索引。幂等。"""
+    """初始化数据库：建表 + 索引 + 迁移。幂等。"""
     conn = get_db(db_path)
     conn.executescript(SCHEMA)
+    # 迁移：为既有库补加新列
+    _ensure_column(conn, "deposits", "account", "TEXT DEFAULT ''")
     conn.commit()
     conn.close()
 
@@ -246,6 +255,7 @@ def add_deposit(
     currency: str,
     start_date: str,
     bank: str = "",
+    account: str = "",
     term_months: int = 0,
     rate: float = 0.0,
     maturity_date: str = "",
@@ -259,9 +269,9 @@ def add_deposit(
         raise ValueError(f"不支持的币种 '{currency}'。可选: {', '.join(allowed_cur)}")
     conn = get_db(db_path)
     cur = conn.execute(
-        """INSERT INTO deposits (amount, currency, bank, term_months, rate, start_date, maturity_date, receipt_path, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (amount, currency, bank, term_months, rate, start_date, maturity_date or "", receipt_path, notes),
+        """INSERT INTO deposits (amount, currency, bank, account, term_months, rate, start_date, maturity_date, receipt_path, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (amount, currency, bank, account, term_months, rate, start_date, maturity_date or "", receipt_path, notes),
     )
     conn.commit()
     row_id = cur.lastrowid

@@ -142,6 +142,7 @@ def cmd_deposit_add(args):
         amount=args.amount,
         currency=args.currency,
         bank=args.bank or "",
+        account=args.account or "",
         term_months=args.term or 0,
         rate=args.rate or 0.0,
         start_date=args.start_date,
@@ -149,7 +150,8 @@ def cmd_deposit_add(args):
         receipt_path=args.receipt or "",
         notes=args.notes or "",
     )
-    print(f"已添加定期存款 #{did}: {args.amount} {args.currency} @ {args.bank or '未知银行'}")
+    acct = f" 账号 {args.account}" if args.account else ""
+    print(f"已添加定期存款 #{did}: {args.amount} {args.currency} @ {args.bank or '未知银行'}{acct}")
 
 
 def cmd_deposit_list(args):
@@ -159,8 +161,9 @@ def cmd_deposit_list(args):
         return
     for r in rows:
         status = "进行中" if not r["maturity_date"] or r["maturity_date"] >= str(__import__("datetime").date.today()) else "已到期"
+        acct = f" 账号 {r['account']}" if r["account"] else ""
         print(f"#{r['id']} [{status}] {r['amount']} {r['currency']} "
-              f"| {r['bank']} | {r['start_date']} → {r['maturity_date'] or '未设'} "
+              f"| {r['bank']}{acct} | {r['start_date']} → {r['maturity_date'] or '未设'} "
               f"| {r['term_months']}个月 @ {r['rate']}%")
 
 
@@ -252,6 +255,7 @@ def main():
     p.add_argument("--amount", type=float, required=True)
     p.add_argument("--currency", default=get_base_currency())
     p.add_argument("--bank")
+    p.add_argument("--account", help="账号/账户号")
     p.add_argument("--term", type=int)
     p.add_argument("--rate", type=float)
     p.add_argument("--start-date", required=True)

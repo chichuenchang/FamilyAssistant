@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS deposits (
     amount          REAL    NOT NULL,
     currency        TEXT    NOT NULL,
     bank            TEXT    DEFAULT '',
+    account         TEXT    DEFAULT '',
     term_months     INTEGER DEFAULT 0,
     rate            REAL    DEFAULT 0.0,
     start_date      TEXT    NOT NULL,

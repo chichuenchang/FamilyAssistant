@@ -127,7 +127,7 @@ def _build_system_prompt() -> str:
    <TOOL>{{"tool":"list_deposits","args":{{}}}}
 
 6. 定期存款（新增）
-   <TOOL>{{"tool":"add_deposit","args":{{"amount":50000,"currency":"USD","bank":"HSBC","term":12,"rate":4.5,"start-date":"2026-01-15","maturity":"2027-01-15"}}}}
+   <TOOL>{{"tool":"add_deposit","args":{{"amount":50000,"currency":"USD","bank":"HSBC","account":"6212xxxx","term":12,"rate":4.5,"start-date":"2026-01-15","maturity":"2027-01-15"}}}}
 
 7. 汇率（查询）
    <TOOL>{{"tool":"get_fx_rate","args":{{"from":"USD","to":"CNY"}}}}
