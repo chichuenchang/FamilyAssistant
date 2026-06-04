@@ -90,6 +90,7 @@ def _build_system_prompt() -> str:
     today = date.today()
     currencies = "/".join(_CONFIG.get("supported_currencies") or ["USD"])
     base_cur = _CONFIG.get("base_currency") or "USD"
+    tx_types = "/".join(_CONFIG.get("categories", {}).keys()) or "expense/income/investment/savings"
 
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 你有整个项目的全局视角，能自主决定如何响应用户。
@@ -110,7 +111,7 @@ def _build_system_prompt() -> str:
 
 1. 记账
    <TOOL>{{"tool":"add_transaction","args":{{"type":"expense","amount":45.5,"currency":"{base_cur}","date":"{today}","category":"餐饮","desc":"午餐"}}}}
-   type: expense/income/investment/savings
+   type: {tx_types}
    currency: {currencies}（默认基准 {base_cur}）
 
 2. 查询

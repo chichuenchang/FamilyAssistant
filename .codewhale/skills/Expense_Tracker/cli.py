@@ -38,9 +38,8 @@ from db import (
     convert_to_base,
     get_categories,
     get_base_currency,
+    TRANSACTION_TYPES,
 )
-
-TRANSACTION_TYPES = ("expense", "income", "investment", "savings")
 
 
 def cmd_init(_args):
@@ -214,7 +213,7 @@ def main():
 
     # add
     p = sub.add_parser("add", help="添加交易")
-    p.add_argument("--type", required=True, choices=["expense", "income", "investment", "savings"])
+    p.add_argument("--type", required=True, choices=list(TRANSACTION_TYPES))
     p.add_argument("--amount", type=float, required=True)
     p.add_argument("--currency", default=get_base_currency())
     p.add_argument("--date", required=True, help="YYYY-MM-DD")

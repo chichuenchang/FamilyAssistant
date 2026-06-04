@@ -2,10 +2,10 @@
   "base_currency": "USD",
   "supported_currencies": ["CNY", "USD", "CAD"],
   "categories": {
-    "expense": ["餐饮", "交通", "购物", "住房", "医疗", "娱乐", "教育", "通讯", "日用", "其他"],
-    "income": ["工资", "奖金", "投资收益", "副业", "礼金", "其他"],
+    "expense": ["餐饮", "购物", "房租", "医疗", "每月孩子", "汽油", "水电煤网手机流量", "每月订阅", "机票", "其他"],
+    "income": ["收入", "其他"],
     "investment": ["股票", "基金", "定期存款", "理财", "其他"],
-    "savings": ["活期", "定期", "应急金", "其他"]
+    "savings": ["活期"]
   },
   "db_path": "data/ledger.db",
   "receipts_dir": "receipts",
