@@ -35,5 +35,5 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `scripts/cli.py` — CLI 入口
 - `scripts/db.py` — 数据库层
 - `config.json` — 分类 & 白名单配置
-- `scripts/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
+- `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md

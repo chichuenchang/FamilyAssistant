@@ -14,7 +14,7 @@
 └── telegram_bot.py   ← Telegram 传输层
 ```
 
-所有远程频道共用同一个大脑 —— 本目录 `agent_core.py` 里的 `Agent`。无论消息从微信还是 Telegram 进来，Agent 行为、指令、工具完全一致。频道只负责"收消息 → 转交 Agent → 回消息"，不含任何业务逻辑。业务逻辑（记账/查账）仍在 `scripts/cli.py`，OCR 在 `scripts/ocr.py`，Agent 经路径回调它们。
+所有远程频道共用同一个大脑 —— 本目录 `agent_core.py` 里的 `Agent`。无论消息从微信还是 Telegram 进来，Agent 行为、指令、工具完全一致。频道只负责"收消息 → 转交 Agent → 回消息"，不含任何业务逻辑。业务逻辑（记账/查账）仍在 `scripts/cli.py`，OCR 在 `.codewhale/skills/OCR/ocr.py`，Agent 经 `sys.path` + 路径回调它们。
 
 ```
 微信     ─┐
@@ -72,7 +72,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = Path(__file__).resolve().parents[3]   # 向上 3 级到项目根
 sys.path.insert(0, str(HERE))   # 同目录 agent_core
-sys.path.insert(0, str(ROOT))   # scripts.ocr / cli（经 agent_core）
+sys.path.insert(0, str(ROOT))   # scripts/cli.py、OCR skill（经 agent_core）
 from agent_core import Agent
 
 def run():

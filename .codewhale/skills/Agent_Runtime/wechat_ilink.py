@@ -46,7 +46,7 @@ if sys.platform == "win32":
 # 项目根（本文件向上 3 级）
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
-sys.path.insert(0, str(ROOT))  # scripts.ocr / cli（经 agent_core）
+sys.path.insert(0, str(ROOT))  # scripts/cli.py、OCR skill（经 agent_core）
 
 from agent_core import Agent
 

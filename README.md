@@ -48,6 +48,8 @@ FamilyAssistant/
 │   └── skills/
 │       ├── Expense_Tracker/  ← 记账技能
 │       ├── OCR/              ← OCR 技能
+│       │   ├── SKILL.md
+│       │   └── ocr.py            ← OCR（腾讯云）
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
@@ -56,7 +58,6 @@ FamilyAssistant/
 ├── scripts/
 │   ├── cli.py            ← 记账 CLI
 │   ├── db.py             ← 数据库层
-│   ├── ocr.py            ← OCR（腾讯云）
 │   └── feishu_inbox.py   ← 飞书收件箱
 ├── config.json           ← 分类 & 白名单
 ├── data/                 ← SQLite + 凭据

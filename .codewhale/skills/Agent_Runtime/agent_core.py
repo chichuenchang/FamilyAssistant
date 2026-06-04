@@ -47,7 +47,8 @@ if sys.platform == "win32":
 
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT))  # 让 scripts.ocr / scripts/cli.py 可解析
+sys.path.insert(0, str(ROOT))  # scripts/cli.py（subprocess 调用）
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "OCR"))  # OCR skill 的 ocr.py
 
 
 # ── 项目文档加载 ────────────────────────────────────────────
@@ -164,7 +165,7 @@ def _tool_delete_transaction(args): return _run_cli("delete", args)
 def _tool_ocr_image(args):
     path = args.get("path", "")
     try:
-        from scripts.ocr import ocr_extract, is_available
+        from ocr import ocr_extract, is_available
         if is_available():
             info = ocr_extract(path)
             return json.dumps(info, ensure_ascii=False) if info else "[未识别到文字]"
@@ -242,7 +243,7 @@ class Agent:
         return final
 
     def handle_image(self, image_path: str, user: str = "default") -> str:
-        from scripts.ocr import ocr_image, is_available
+        from ocr import ocr_image, is_available
         if is_available():
             ocr_text = ocr_image(image_path)
             if ocr_text:
