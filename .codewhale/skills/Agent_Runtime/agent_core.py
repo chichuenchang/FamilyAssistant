@@ -71,6 +71,7 @@ _FALLBACK_ALLOWED = {
     "add", "list", "summary", "monthly", "delete",
     "deposit-add", "deposit-list", "tax-add", "tax-list",
     "fx-get", "fx-set", "categories",
+    "transfer-add", "transfer-list",
 }
 ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FALLBACK_ALLOWED)
 
