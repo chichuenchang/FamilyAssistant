@@ -111,6 +111,7 @@ def add_transaction(
     description: str = "",
     receipt_path: str = "",
     notes: str = "",
+    member: str = "",
     skip_dup_check: bool = False,
     db_path: Optional[str] = None,
 ) -> tuple[int, list[dict]]:
@@ -138,9 +139,9 @@ def add_transaction(
 
     conn = get_db(db_path)
     cur = conn.execute(
-        """INSERT INTO transactions (type, amount, currency, category, description, date, receipt_path, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (type_, amount, currency, category, description, date_, receipt_path, notes),
+        """INSERT INTO transactions (type, amount, currency, category, description, date, receipt_path, member, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (type_, amount, currency, category, description, date_, receipt_path, member, notes),
     )
     conn.commit()
     row_id = cur.lastrowid
@@ -155,6 +156,7 @@ def get_transactions(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     limit: int = 200,
+    member: Optional[str] = None,
     db_path: Optional[str] = None,
 ) -> list[dict]:
     """查询交易，支持多条件筛选。"""
@@ -177,6 +179,9 @@ def get_transactions(
     if end_date:
         sql += " AND date <= ?"
         params.append(end_date)
+    if member:
+        sql += " AND member = ?"
+        params.append(member)
 
     sql += " ORDER BY date DESC LIMIT ?"
     params.append(limit)
@@ -200,6 +205,7 @@ def summarize_by_category(
     type_: str = "expense",
     year: Optional[int] = None,
     month: Optional[int] = None,
+    member: Optional[str] = None,
     db_path: Optional[str] = None,
 ) -> dict[str, dict[str, float]]:
     """按币种 + 分类汇总金额。不跨币种相加。
@@ -216,6 +222,9 @@ def summarize_by_category(
     if month:
         sql += " AND strftime('%m', date) = ?"
         params.append(f"{month:02d}")
+    if member:
+        sql += " AND member = ?"
+        params.append(member)
 
     sql += " GROUP BY currency, category ORDER BY currency, total DESC"
     rows = conn.execute(sql, params).fetchall()
@@ -229,6 +238,7 @@ def summarize_by_category(
 def monthly_summary(
     type_: str = "expense",
     year: Optional[int] = None,
+    member: Optional[str] = None,
     db_path: Optional[str] = None,
 ) -> dict[str, dict[str, float]]:
     """按币种 + 月份汇总金额。不跨币种相加。
@@ -242,6 +252,9 @@ def monthly_summary(
     if year:
         sql += " AND strftime('%Y', date) = ?"
         params.append(str(year))
+    if member:
+        sql += " AND member = ?"
+        params.append(member)
 
     sql += " GROUP BY currency, mon ORDER BY currency, mon"
     rows = conn.execute(sql, params).fetchall()
@@ -249,6 +262,34 @@ def monthly_summary(
     out: dict[str, dict[str, float]] = {}
     for r in rows:
         out.setdefault(r["currency"], {})[r["mon"]] = round(r["total"], 2)
+    return out
+
+
+def summarize_by_member(
+    type_: str = "expense",
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    db_path: Optional[str] = None,
+) -> dict[str, dict[str, float]]:
+    """按币种 + 成员汇总金额。member 为空的旧记录归"家庭"。不跨币种相加。
+
+    返回 {currency: {member: total}}。
+    """
+    conn = get_db(db_path)
+    sql = "SELECT currency, member, SUM(amount) AS total FROM transactions WHERE type = ?"
+    params: list[Any] = [type_]
+    if year:
+        sql += " AND strftime('%Y', date) = ?"
+        params.append(str(year))
+    if month:
+        sql += " AND strftime('%m', date) = ?"
+        params.append(f"{month:02d}")
+    sql += " GROUP BY currency, member ORDER BY currency, total DESC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    out: dict[str, dict[str, float]] = {}
+    for r in rows:
+        out.setdefault(r["currency"], {})[r["member"] or "家庭"] = round(r["total"], 2)
     return out
 
 
@@ -265,6 +306,7 @@ def add_deposit(
     maturity_date: str = "",
     receipt_path: str = "",
     notes: str = "",
+    member: str = "",
     db_path: Optional[str] = None,
 ) -> int:
     """添加一笔定期存款记录。"""
@@ -273,9 +315,9 @@ def add_deposit(
         raise ValueError(f"不支持的币种 '{currency}'。可选: {', '.join(allowed_cur)}")
     conn = get_db(db_path)
     cur = conn.execute(
-        """INSERT INTO deposits (amount, currency, bank, account, term_months, rate, start_date, maturity_date, receipt_path, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (amount, currency, bank, account, term_months, rate, start_date, maturity_date or "", receipt_path, notes),
+        """INSERT INTO deposits (amount, currency, bank, account, term_months, rate, start_date, maturity_date, receipt_path, member, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (amount, currency, bank, account, term_months, rate, start_date, maturity_date or "", receipt_path, member, notes),
     )
     conn.commit()
     row_id = cur.lastrowid
@@ -325,6 +367,7 @@ def add_transfer(
     to_rate: float = 0.0,
     to_maturity: str = "",
     notes: str = "",
+    member: str = "",
     db_path: Optional[str] = None,
 ) -> dict:
     """记录一笔资金划转/换汇。目标为定期时自动建 deposits 行并链接。
@@ -351,6 +394,7 @@ def add_transfer(
             start_date=transfer_date or exchange_date,
             maturity_date=to_maturity,
             notes="来自划转" + (f"：{notes}" if notes else ""),
+            member=member,
             db_path=db_path,
         )
 
@@ -359,11 +403,11 @@ def add_transfer(
         """INSERT INTO transfers
            (from_desc, from_type, from_deposit_id, from_amount, from_currency,
             to_amount, to_currency, rate, exchange_date, to_bank, to_account,
-            to_type, transfer_date, to_deposit_id, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            to_type, transfer_date, to_deposit_id, member, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (from_desc, from_type, from_deposit_id, from_amount, from_currency,
          to_amount, to_currency, rate, exchange_date, to_bank, to_account,
-         to_type, transfer_date, to_deposit_id, notes),
+         to_type, transfer_date, to_deposit_id, member, notes),
     )
     conn.commit()
     transfer_id = cur.lastrowid
@@ -430,14 +474,15 @@ def add_tax_filing(
     filing_date: str = "",
     receipt_path: str = "",
     notes: str = "",
+    member: str = "",
     db_path: Optional[str] = None,
 ) -> int:
     """添加一条报税记录。data 为灵活 JSON。"""
     conn = get_db(db_path)
     cur = conn.execute(
-        """INSERT INTO tax_filings (year, country, filing_date, data, receipt_path, notes)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (year, country, filing_date, json.dumps(data, ensure_ascii=False), receipt_path, notes),
+        """INSERT INTO tax_filings (year, country, filing_date, data, receipt_path, member, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (year, country, filing_date, json.dumps(data, ensure_ascii=False), receipt_path, member, notes),
     )
     conn.commit()
     row_id = cur.lastrowid
