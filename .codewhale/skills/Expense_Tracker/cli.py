@@ -321,7 +321,6 @@ def main():
     p.add_argument("--maturity")
     p.add_argument("--receipt")
     p.add_argument("--notes")
-    p.add_argument("--force", action="store_true", help="跳过重复检查，强制写入")
 
     # deposit list
     p = sub.add_parser("deposit-list", help="查询定期存款")
@@ -368,7 +367,6 @@ def main():
     p.add_argument("--filing-date")
     p.add_argument("--receipt")
     p.add_argument("--notes")
-    p.add_argument("--force", action="store_true", help="跳过重复检查，强制写入")
 
     # tax list
     p = sub.add_parser("tax-list", help="查询报税记录")
