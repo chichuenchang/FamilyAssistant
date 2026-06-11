@@ -166,10 +166,19 @@ def _tool_delete_transaction(args): return _run_cli("delete", args)
 
 def _tool_ocr_image(args):
     path = args.get("path", "")
+    # 安全：path 来自 LLM（间接来自用户消息），只允许票据目录内的文件，
+    # 防止把任意本地文件 base64 后发给腾讯云/DeepSeek（数据外泄）。
+    try:
+        p = Path(path)
+        resolved = (p if p.is_absolute() else ROOT / p).resolve()
+        if not resolved.is_relative_to(RECEIPTS_DIR.resolve()):
+            return f"[错误] 只允许识别票据目录内的图片: {RECEIPTS_DIR}"
+    except (OSError, ValueError):
+        return "[错误] 无效的图片路径"
     try:
         from ocr import ocr_extract, is_available
         if is_available():
-            info = ocr_extract(path)
+            info = ocr_extract(str(resolved))
             return json.dumps(info, ensure_ascii=False) if info else "[未识别到文字]"
         return "[OCR 未配置]"
     except Exception as e:
