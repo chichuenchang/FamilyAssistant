@@ -23,6 +23,10 @@ if sys.platform == "win32":
 # 把本 skill 目录加入 sys.path（同目录 db / models）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+# 成员注册表（Agent_Runtime skill；跨 skill 经 sys.path，与 agent_core 引 OCR 同模式）
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
+import members as members_registry
+
 from db import (
     init_db,
     add_transaction,
@@ -30,6 +34,7 @@ from db import (
     delete_transaction,
     summarize_by_category,
     monthly_summary,
+    summarize_by_member,
     add_deposit,
     get_deposits,
     add_transfer,
@@ -42,6 +47,17 @@ from db import (
     get_base_currency,
     TRANSACTION_TYPES,
 )
+
+
+def _validate_member(name: str) -> str:
+    """非空成员名必须已登记；返回原值或抛 ValueError。空值放行（家庭级）。"""
+    if not name:
+        return ""
+    known = members_registry.member_names()
+    if name not in known:
+        raise ValueError(
+            f"未知成员 '{name}'。已登记: {', '.join(known) or '（无）'}。用 member-add 添加。")
+    return name
 
 
 def cmd_init(_args):
@@ -60,6 +76,7 @@ def cmd_add(args):
         receipt_path=args.receipt or "",
         notes=args.notes or "",
         skip_dup_check=args.force,
+        member=_validate_member(args.member or ""),
     )
     if dupes:
         print(f"⚠ 疑似重复！已存在 {len(dupes)} 笔同日同金额同币种的记录：")
@@ -82,6 +99,7 @@ def cmd_list(args):
         start_date=args.start,
         end_date=args.end,
         limit=args.limit or 200,
+        member=args.member,
     )
     if not rows:
         print("没有找到交易记录。")
@@ -103,10 +121,24 @@ def cmd_categories(args):
 
 
 def cmd_summary(args):
+    if args.by_member:
+        result = summarize_by_member(type_=args.type or "expense",
+                                     year=args.year, month=args.month)
+        if not result:
+            print("没有数据。")
+            return
+        for i, (cur, members) in enumerate(result.items()):
+            if i:
+                print()
+            print(f"【{cur}】")
+            for name, total in members.items():
+                print(f"{name}: {total:.2f} {cur}")
+        return
     result = summarize_by_category(
         type_=args.type or "expense",
         year=args.year,
         month=args.month,
+        member=args.member,
     )
     if not result:
         print("没有数据。")
@@ -127,7 +159,7 @@ def cmd_summary(args):
 
 
 def cmd_monthly(args):
-    result = monthly_summary(type_=args.type or "expense", year=args.year)
+    result = monthly_summary(type_=args.type or "expense", year=args.year, member=args.member)
     if not result:
         print("没有数据。")
         return
@@ -151,6 +183,7 @@ def cmd_deposit_add(args):
         maturity_date=args.maturity or "",
         receipt_path=args.receipt or "",
         notes=args.notes or "",
+        member=_validate_member(args.member or ""),
     )
     acct = f" 账号 {args.account}" if args.account else ""
     print(f"已添加定期存款 #{did}: {args.amount} {args.currency} @ {args.bank or '未知银行'}{acct}")
@@ -188,6 +221,7 @@ def cmd_transfer_add(args):
         to_rate=args.to_rate or 0.0,
         to_maturity=args.to_maturity or "",
         notes=args.notes or "",
+        member=_validate_member(args.member or ""),
     )
     msg = (f"已记录划转 #{res['transfer_id']}: "
            f"{args.from_amount} {args.from_currency} → {args.to_amount} {args.to_currency} "
@@ -235,6 +269,7 @@ def cmd_tax_add(args):
         filing_date=args.filing_date or "",
         receipt_path=args.receipt or "",
         notes=args.notes or "",
+        member=_validate_member(args.member or ""),
     )
     print(f"已添加报税记录 #{tid}: {args.year} {args.country}")
 
@@ -265,6 +300,30 @@ def cmd_fx_get(args):
         print(f"未找到 {args.from_} → {args.to} 的汇率。")
 
 
+def cmd_member_add(args):
+    if not args.telegram and not args.wechat:
+        raise ValueError("至少提供一个 --telegram 或 --wechat 频道 id")
+    members_registry.add_member(args.name, telegram=args.telegram, wechat=args.wechat)
+    print(f"已登记成员 {args.name}")
+    cmd_member_list(args)
+
+
+def cmd_member_list(_args):
+    members = members_registry.load_members()
+    if not members:
+        print("没有已登记成员。用 member-add 添加。")
+        return
+    for name, b in members.items():
+        tg = ",".join(b.get("telegram") or []) or "-"
+        wx = ",".join(b.get("wechat") or []) or "-"
+        print(f"{name}: telegram={tg} wechat={wx}")
+
+
+def cmd_member_remove(args):
+    ok = members_registry.remove_member(args.name)
+    print(f"{'已删除成员' if ok else '未找到成员'} {args.name}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Family Assistant — Expense Tracker CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -282,6 +341,7 @@ def main():
     p.add_argument("--desc")
     p.add_argument("--receipt")
     p.add_argument("--notes")
+    p.add_argument("--member", help="归属成员（须已登记）")
     p.add_argument("--force", action="store_true", help="跳过重复检查，强制写入")
 
     # list
@@ -292,6 +352,7 @@ def main():
     p.add_argument("--start")
     p.add_argument("--end")
     p.add_argument("--limit", type=int)
+    p.add_argument("--member", help="按成员过滤")
 
     # delete
     p = sub.add_parser("delete", help="删除交易")
@@ -302,11 +363,14 @@ def main():
     p.add_argument("--type", default="expense")
     p.add_argument("--year", type=int)
     p.add_argument("--month", type=int)
+    p.add_argument("--member", help="按成员过滤")
+    p.add_argument("--by-member", action="store_true", help="按成员汇总")
 
     # monthly
     p = sub.add_parser("monthly", help="按月汇总")
     p.add_argument("--type", default="expense")
     p.add_argument("--year", type=int)
+    p.add_argument("--member", help="按成员过滤")
 
     # deposit add
     p = sub.add_parser("deposit-add", help="添加定期存款")
@@ -320,6 +384,7 @@ def main():
     p.add_argument("--maturity")
     p.add_argument("--receipt")
     p.add_argument("--notes")
+    p.add_argument("--member", help="归属成员（须已登记）")
 
     # deposit list
     p = sub.add_parser("deposit-list", help="查询定期存款")
@@ -345,6 +410,7 @@ def main():
     p.add_argument("--to-rate", type=float, help="目标定期年利率(%)")
     p.add_argument("--to-maturity", help="目标定期到期日 YYYY-MM-DD")
     p.add_argument("--notes")
+    p.add_argument("--member", help="归属成员（须已登记）")
 
     # transfer list / 溯源
     p = sub.add_parser("transfer-list", help="查询划转记录（溯源资金来源）")
@@ -366,11 +432,23 @@ def main():
     p.add_argument("--filing-date")
     p.add_argument("--receipt")
     p.add_argument("--notes")
+    p.add_argument("--member", help="归属成员（须已登记）")
 
     # tax list
     p = sub.add_parser("tax-list", help="查询报税记录")
     p.add_argument("--year", type=int)
     p.add_argument("--country")
+
+    # member 管理（仅本机使用；不在 wechat.allowed_commands 白名单内，Agent 调不到）
+    p = sub.add_parser("member-add", help="登记成员并绑定频道 id（仅本机）")
+    p.add_argument("name")
+    p.add_argument("--telegram", action="append", help="Telegram chat id，可多次")
+    p.add_argument("--wechat", action="append", help="微信用户 id，可多次")
+
+    sub.add_parser("member-list", help="列出已登记成员")
+
+    p = sub.add_parser("member-remove", help="删除成员（账目保留成员名）")
+    p.add_argument("name")
 
     # fx set
     p = sub.add_parser("fx-set", help="设置汇率")
@@ -405,6 +483,9 @@ def main():
         "fx-set": cmd_fx_set,
         "fx-get": cmd_fx_get,
         "categories": cmd_categories,
+        "member-add": cmd_member_add,
+        "member-list": cmd_member_list,
+        "member-remove": cmd_member_remove,
     }
     try:
         dispatch[args.command](args)
