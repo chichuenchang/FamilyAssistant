@@ -338,19 +338,41 @@ class Agent:
             print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
             return ""
 
+    def _iter_tool_spans(self, text):
+        """定位每个 <TOOL> 标签后的完整 JSON 对象（raw_decode 支持嵌套大括号）。
+
+        yield (tag_start, json_end, obj)。lazy 正则 \\{.*?\\} 会在嵌套 args
+        的第一个 } 截断，必须用 JSON 解析器找边界。
+        """
+        dec = json.JSONDecoder()
+        for m in re.finditer(r"<TOOL>\s*", text):
+            try:
+                obj, end = dec.raw_decode(text, m.end())
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(obj, dict):
+                # 吃掉可选的 </TOOL> 闭合标签
+                tail = re.match(r"\s*</TOOL>", text[end:])
+                if tail:
+                    end += tail.end()
+                yield m.start(), end, obj
+
     def _clean_response(self, text: str) -> str:
-        """移除 <TOOL> 标签，返回纯净回复文本。"""
-        return re.sub(r"<TOOL>\s*\{.*?\}\s*(?:</TOOL>)?", "", text, flags=re.DOTALL).strip()
+        """移除 <TOOL> 标签及其完整 JSON，返回纯净回复文本。"""
+        out, last = [], 0
+        for start, end, _ in self._iter_tool_spans(text):
+            if start < last:
+                continue
+            out.append(text[last:start])
+            last = end
+        out.append(text[last:])
+        return "".join(out).strip()
 
     def _parse_tools(self, text):
         tools = []
-        for m in re.finditer(r"<TOOL>\s*(\{.*?\})\s*(?:</TOOL>)?", text, re.DOTALL):
-            try:
-                t = json.loads(m.group(1))
-                if t.get("tool") in _TOOL_MAP:
-                    tools.append((t["tool"], t.get("args", {})))
-            except json.JSONDecodeError:
-                pass
+        for _, _, t in self._iter_tool_spans(text):
+            if t.get("tool") in _TOOL_MAP:
+                tools.append((t["tool"], t.get("args", {})))
         return tools
 
     def _save_history(self, user, user_msg, assistant_msg):
