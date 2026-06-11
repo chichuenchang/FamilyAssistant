@@ -44,13 +44,13 @@ OFFSET_FILE = ROOT / "data" / ".telegram_offset"
 
 def _load_offset() -> int:
     if OFFSET_FILE.exists():
-        return int(OFFSET_FILE.read_text().strip())
+        return int(OFFSET_FILE.read_text(encoding="utf-8").strip())
     return 0
 
 
 def _save_offset(update_id: int) -> None:
     OFFSET_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OFFSET_FILE.write_text(str(update_id))
+    OFFSET_FILE.write_text(str(update_id), encoding="utf-8")
 
 
 def _api(method: str, data: dict | None = None) -> dict | None:
