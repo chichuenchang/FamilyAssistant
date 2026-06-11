@@ -20,8 +20,12 @@ Agent 使用 `load_skill` 工具按需获取 SKILL.md 内容。
 ## 快速开始
 
 ```bash
-# 记账
-python .codewhale/skills/Expense_Tracker/cli.py add --type expense --amount 45.50 --currency CNY --date 2026-05-31 --category 餐饮 --desc "午餐"
+# 登记家庭成员（必须先做 — 未登记的频道来源一律静默忽略）
+python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx
+python .codewhale/skills/Expense_Tracker/cli.py member-list
+
+# 记账（--member 可选，远程频道会自动归属发消息的成员）
+python .codewhale/skills/Expense_Tracker/cli.py add --type expense --amount 45.50 --currency CNY --date 2026-05-31 --category 餐饮 --desc "午餐" --member 爸爸
 
 # 查账
 python .codewhale/skills/Expense_Tracker/cli.py list --start 2026-05-01 --end 2026-05-31
@@ -29,6 +33,13 @@ python .codewhale/skills/Expense_Tracker/cli.py list --start 2026-05-01 --end 20
 # 启动微信 Bot
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 ```
+
+## 成员注册（仅本机）
+
+- `member-add <名> --telegram <chat_id> --wechat <wxid>`（可多次传同一 flag 绑多个 id）、`member-list`、`member-remove <名>`。
+- 注册表存 `config.json` `members` 段；改后重启机器人生效。空注册表 = 锁定，所有远程消息静默丢弃。
+- 这三个命令**不在** `wechat.allowed_commands` 白名单内 —— Agent 只读注册表（`members.resolve`），无法增删成员。
+- 账目归属由代码注入解析出的成员名（LLM 给的 member 一律剥离，防冒名）。
 
 ## 配置原则（单一事实来源）
 
