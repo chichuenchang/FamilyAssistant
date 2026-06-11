@@ -23,8 +23,18 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
+
+# Windows 控制台编码容错
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 # 项目根目录
 ROOT = Path(__file__).resolve().parent.parent
@@ -75,7 +85,7 @@ def api_get(token: str, path: str, params: dict = None) -> dict:
     """GET 飞书 API。"""
     url = f"https://{FEISHU_HOST}{path}"
     if params:
-        query = "&".join(f"{k}={urllib.request.quote(str(v))}" for k, v in params.items())
+        query = "&".join(f"{k}={urllib.parse.quote(str(v))}" for k, v in params.items())
         url += "?" + query
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     resp = json.loads(urllib.request.urlopen(req).read())
