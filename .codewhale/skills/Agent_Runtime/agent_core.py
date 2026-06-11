@@ -65,6 +65,9 @@ _CONFIG = _load_config_dict()
 # 票据目录（config.json receipts_dir，缺失回退 receipts）
 RECEIPTS_DIR = ROOT / (_CONFIG.get("receipts_dir") or "receipts")
 
+# 文档目录（config.json documents_dir，缺失回退 documents）
+DOCUMENTS_DIR = ROOT / (_CONFIG.get("documents_dir") or "documents")
+
 
 def receipt_month_dir(dt: date | None = None) -> Path:
     """票据按月分子目录：receipts/YYYY-MM/，不存在则创建。"""
@@ -81,6 +84,16 @@ _FALLBACK_ALLOWED = {
 }
 ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FALLBACK_ALLOWED)
 
+# doc-* 命令属于 Document_Keeper skill，其余走 Expense_Tracker
+_DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
+                 "doc-update", "doc-ack", "doc-remove"}
+
+
+def _cli_path(cmd: str) -> Path:
+    """子命令 → 所属 skill 的 CLI 路径。"""
+    skill = "Document_Keeper" if cmd in _DOC_COMMANDS else "Expense_Tracker"
+    return ROOT / ".codewhale" / "skills" / skill / "cli.py"
+
 
 # ── system prompt ───────────────────────────────────────────
 
@@ -94,6 +107,7 @@ def _build_system_prompt() -> str:
     today = date.today()
     tx_types = "/".join(_TX_TYPES)
     currencies = "/".join(_CURRENCIES)
+    doc_types = "/".join(_DOC_TYPES)
 
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 
@@ -105,6 +119,14 @@ def _build_system_prompt() -> str:
 - 交易类型: {tx_types}
 - 币种: {currencies}（默认基准 {_BASE_CUR}）
 - 各类型分类: {_CATS_DESC}
+
+## 文档管理（家庭重要文档归档与到期提醒）
+- 文档类型: {doc_types}
+- 用户发来 合同/保单/证件 等重要文档，或说"存一下这个文件"→ add_document（尽量带 expiry 到期日和 action-note 到期动作）
+- 用户问"租约什么时候到期""我们有哪些保险""找一下XX保单"→ list_documents / show_document
+- 用户问"有什么要到期的""最近有什么要办的"→ due_documents
+- 用户说"续约了""换新证了"→ update_document 改到期日；旧文档另存时把旧的 status 改 superseded
+- 用户说"知道了""别再提醒"→ ack_document
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
@@ -141,7 +163,7 @@ def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
                 cli_args.append(flag)
                 cli_args.append(str(v))
 
-    cli_path = ROOT / ".codewhale" / "skills" / "Expense_Tracker" / "cli.py"
+    cli_path = _cli_path(cmd)
     try:
         result = subprocess.run(
             [sys.executable, str(cli_path)] + cli_args,
@@ -170,6 +192,12 @@ def _tool_list_tax(args): return _run_cli("tax-list", args)
 def _tool_add_transfer(args): return _run_cli("transfer-add", args)
 def _tool_list_transfers(args): return _run_cli("transfer-list", args)
 def _tool_delete_transaction(args): return _run_cli("delete", args)
+def _tool_add_document(args): return _run_cli("doc-add", args)
+def _tool_list_documents(args): return _run_cli("doc-list", args)
+def _tool_show_document(args): return _run_cli("doc-show", args)
+def _tool_due_documents(args): return _run_cli("doc-due", args)
+def _tool_update_document(args): return _run_cli("doc-update", args)
+def _tool_ack_document(args): return _run_cli("doc-ack", args)
 
 def _tool_ocr_image(args):
     path = args.get("path", "")
@@ -178,8 +206,9 @@ def _tool_ocr_image(args):
     try:
         p = Path(path)
         resolved = (p if p.is_absolute() else ROOT / p).resolve()
-        if not resolved.is_relative_to(RECEIPTS_DIR.resolve()):
-            return f"[错误] 只允许识别票据目录内的图片: {RECEIPTS_DIR}"
+        allowed = (RECEIPTS_DIR.resolve(), DOCUMENTS_DIR.resolve())
+        if not any(resolved.is_relative_to(d) for d in allowed):
+            return f"[错误] 只允许识别票据/文档目录内的图片: {RECEIPTS_DIR} 或 {DOCUMENTS_DIR}"
     except (OSError, ValueError):
         return "[错误] 无效的图片路径"
     try:
@@ -207,10 +236,17 @@ _TOOL_MAP = {
     "list_transfers": _tool_list_transfers,
     "delete_transaction": _tool_delete_transaction,
     "ocr_image": _tool_ocr_image,
+    "add_document": _tool_add_document,
+    "list_documents": _tool_list_documents,
+    "show_document": _tool_show_document,
+    "due_documents": _tool_due_documents,
+    "update_document": _tool_update_document,
+    "ack_document": _tool_ack_document,
 }
 
 # 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
-_MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_tax"}
+_MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_tax",
+                       "add_document"}
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
@@ -231,6 +267,8 @@ _TX_TYPES = list(_CONFIG.get("categories", {}).keys()) or [
 _CURRENCIES = _CONFIG.get("supported_currencies") or ["USD", "CNY", "CAD"]
 _BASE_CUR = _CONFIG.get("base_currency") or "USD"
 _CATS_DESC = json.dumps(_CONFIG.get("categories", {}), ensure_ascii=False)
+_DOC_TYPES = list(_CONFIG.get("doc_types") or ["other"])
+_DOC_STATUSES = ["active", "expired", "archived", "superseded"]
 
 
 def _fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
@@ -356,6 +394,47 @@ TOOL_SCHEMAS = [
     _fn("delete_transaction", "删除一条交易", {
         "id": _int("交易 id"),
     }, ["id"]),
+    _fn("add_document", "归档一份家庭重要文档（合同/保单/证件等），登记到期日以便提醒", {
+        "type": _s("文档类型", enum=_DOC_TYPES),
+        "title": _s("文档名称，如 2026公寓租约"),
+        "issuer": _s("签发方：房东/保险公司/政府机构"),
+        "number": _s("编号：保单号/证件号"),
+        "issue-date": _s("签发日期 YYYY-MM-DD"),
+        "expiry": _s("到期日期 YYYY-MM-DD；长期有效不填"),
+        "action-note": _s("到期要做什么，如 提前60天通知房东"),
+        "remind-days": _int("提前几天提醒（不填用默认值）"),
+        "file": _s("原始文件路径（图片已保存的路径）"),
+        "ocr-text": _s("OCR 识别全文，用于日后关键词检索"),
+        "notes": _s("备注"),
+        "force": {"type": "boolean", "description": "跳过重复检查强制写入（仅在用户确认非重复后用）"},
+    }, ["type", "title"]),
+    _fn("list_documents", "查询已归档的家庭文档", {
+        "type": _s("文档类型", enum=_DOC_TYPES),
+        "member": _s("按成员过滤"),
+        "keyword": _s("关键词，匹配标题/OCR全文/备注"),
+        "status": _s("状态（默认隐藏 archived/superseded）", enum=_DOC_STATUSES),
+    }),
+    _fn("show_document", "查看某文档完整信息（含文件路径）", {
+        "id": _int("文档 id"),
+    }, ["id"]),
+    _fn("due_documents", "查询即将到期/已过期的文档", {
+        "days": _int("查看几天内到期（不填按各文档默认提前量）"),
+    }),
+    _fn("update_document", "更新文档信息（续约改到期日、改状态归档等）", {
+        "id": _int("文档 id"),
+        "title": _s("文档名称"),
+        "issuer": _s("签发方"),
+        "number": _s("编号"),
+        "issue-date": _s("签发日期 YYYY-MM-DD"),
+        "expiry": _s("新到期日 YYYY-MM-DD（改后重新进入提醒）"),
+        "action-note": _s("到期要做什么"),
+        "remind-days": _int("提前几天提醒"),
+        "status": _s("状态", enum=_DOC_STATUSES),
+        "notes": _s("备注"),
+    }, ["id"]),
+    _fn("ack_document", "确认某文档的到期提醒（之后不再每日重复提醒）", {
+        "id": _int("文档 id"),
+    }, ["id"]),
 ]
 
 
@@ -436,8 +515,10 @@ class Agent:
             ocr_text = ocr_image(image_path)
             if ocr_text:
                 prompt = (
-                    f"用户发了一张票据图片，OCR结果:\n{ocr_text}\n"
-                    f"提取金额/日期/类别帮用户记账。如果不完整，告知需要什么。"
+                    f"用户发了一张图片，已保存为 {image_path}，OCR结果:\n{ocr_text}\n"
+                    f"若是消费票据：提取金额/日期/类别帮用户记账（add_transaction）。\n"
+                    f"若内容或用户语境表明是重要文档（合同/保单/证件）：用 add_document 归档，"
+                    f"file 参数传上面的保存路径，ocr-text 传 OCR 全文。信息不完整就先问用户。"
                 )
                 return self.handle(prompt, user=user, member=member)
         return "📷 图片已收到。请用文字描述（如\"午餐45块\"），或配置腾讯云 OCR。"

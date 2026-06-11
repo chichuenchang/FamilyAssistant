@@ -8,11 +8,13 @@
 |-------|------|------|---------|
 | **Expense Tracker** | 记账、查账、汇总、存款、报税、汇率 | [SKILL.md](.codewhale/skills/Expense_Tracker/SKILL.md) | 记账、查账、汇总、存款、报税、汇率、票据 |
 | **OCR** | 图片文字识别、票据结构化提取 | [SKILL.md](.codewhale/skills/OCR/SKILL.md) | 图片文字识别、票据结构化提取 |
+| **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒 | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
 | **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
 
 ## 加载策略
 
 - 用户意图涉及记账/查账/财务 → 加载 Expense Tracker（如需票据识别，同时加载 OCR）
+- 用户意图涉及文档归档/合同/保险/证件/到期提醒 → 加载 Document Keeper（如需图片识别，同时加载 OCR）
 - 仅闲聊/问候 → 不加载
 
 Agent 使用 `load_skill` 工具按需获取 SKILL.md 内容。
@@ -29,6 +31,10 @@ python .codewhale/skills/Expense_Tracker/cli.py add --type expense --amount 45.5
 
 # 查账
 python .codewhale/skills/Expense_Tracker/cli.py list --start 2026-05-01 --end 2026-05-31
+
+# 归档文档 / 查到期
+python .codewhale/skills/Document_Keeper/cli.py doc-add --type lease --title "2026公寓租约" --expiry 2027-02-28
+python .codewhale/skills/Document_Keeper/cli.py doc-due
 
 # 启动微信 Bot
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
@@ -50,6 +56,8 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验 |
 | `db_path` | `models.DB_PATH` |
 | `receipts_dir` | `agent_core.RECEIPTS_DIR` |
+| `documents_dir` | `Document_Keeper/doc_models.py`（DOCUMENTS_DIR）、`agent_core.DOCUMENTS_DIR` |
+| `doc_types` / `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
 | `members` | `Agent_Runtime/members.py`（只读：resolve）、`cli.py member-*`（本机写入） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
 
@@ -60,4 +68,5 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `.codewhale/skills/Expense_Tracker/` — 记账 skill（cli.py 入口 + db.py 数据层 + models.py 读 config）
 - `config.json` — 全局配置（分类/币种/路径/命令白名单的单一事实来源）
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
+- `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md

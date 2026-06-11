@@ -37,6 +37,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 from agent_core import Agent, receipt_month_dir
 from members import resolve
 
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
+from reminder import check_and_push as _doc_reminder_check
+
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -196,6 +199,12 @@ def run() -> None:
             offset = max(offset, update_id)
 
         _save_offset(offset)
+
+        # 文档到期提醒：每天最多推一次（reminder 内部按日去重）
+        try:
+            _doc_reminder_check(send_message, "telegram")
+        except Exception as e:
+            print(f"[tg] 文档提醒检查异常: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

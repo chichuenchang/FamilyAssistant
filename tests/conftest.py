@@ -15,6 +15,12 @@ AGENT_DIR = (
 )
 sys.path.insert(0, str(AGENT_DIR))
 
+DOC_DIR = (
+    Path(__file__).resolve().parent.parent
+    / ".codewhale" / "skills" / "Document_Keeper"
+)
+sys.path.insert(0, str(DOC_DIR))
+
 import pytest
 import db as dbm  # the fixture below is named ``db`` — alias avoids shadowing
 
@@ -29,3 +35,12 @@ def db(tmp_path):
     db_path = str(tmp_path / "test.db")
     dbm.init_db(db_path=db_path)
     return db_path
+
+
+@pytest.fixture
+def doc_db_path(tmp_path):
+    """Temporary SQLite database initialised with the documents table."""
+    import doc_db as doc_dbm
+    path = str(tmp_path / "docs.db")
+    doc_dbm.init_db(db_path=path)
+    return path

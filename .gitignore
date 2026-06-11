@@ -11,6 +11,13 @@ __pycache__/
 receipts/*
 !receipts/.gitkeep
 
+# 文档存档（按类型子目录 documents/<type>/）
+documents/*
+!documents/.gitkeep
+
+# 文档提醒状态
+data/.doc_reminder_state
+
 # IDE
 .vscode/
 .idea/

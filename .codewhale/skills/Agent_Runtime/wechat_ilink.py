@@ -50,6 +50,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 from agent_core import Agent, receipt_month_dir
 from members import resolve
 
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
+from reminder import check_and_push as _doc_reminder_check
+
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
 
@@ -126,6 +129,21 @@ def run_bot(relogin: bool = False) -> None:
         if resolve("wechat", msg.from_user) is None:
             return
         msg.reply_text("收到视频（暂不支持视频处理）")
+
+    # 文档到期提醒：后台线程每 10 分钟检查（reminder 内部按日去重，
+    # weixin-ilink bot.run() 阻塞，无轮询循环可挂钩）
+    import threading
+    import time as _time
+
+    def _reminder_loop():
+        while True:
+            try:
+                _doc_reminder_check(lambda wxid, text: bot.send_text(wxid, text), "wechat")
+            except Exception as e:
+                print(f"[wx] 文档提醒检查异常: {e}", file=sys.stderr)
+            _time.sleep(600)
+
+    threading.Thread(target=_reminder_loop, daemon=True, name="doc-reminder").start()
 
     try:
         bot.run()

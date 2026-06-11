@@ -9,6 +9,9 @@
   },
   "db_path": "data/ledger.db",
   "receipts_dir": "receipts",
+  "documents_dir": "documents",
+  "doc_types": ["lease", "insurance", "health", "id_document", "other"],
+  "reminder_lead_days": 30,
   "members": {},
   "wechat": {
     "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。",
@@ -17,7 +20,8 @@
       "deposit-add", "deposit-list",
       "transfer-add", "transfer-list",
       "tax-add", "tax-list",
-      "fx-get", "fx-set", "categories"
+      "fx-get", "fx-set", "categories",
+      "doc-add", "doc-list", "doc-show", "doc-due", "doc-update", "doc-ack"
     ]
   }
 }
