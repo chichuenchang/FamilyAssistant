@@ -9,7 +9,7 @@
 .codewhale/skills/Remote_Backup/
 ├── SKILL.md            ← 本文件
 ├── backup_sync.py      ← 同步引擎（真实实现）：清单、脏标记、防抖、镜像、恢复
-├── backup_provider.py  ← 云盘占位（用户私有实现，契约见文件头注释）
+├── backup_provider.py  ← Google Drive 实现（drive.file 最小权限；契约见文件头注释）
 └── cli.py              ← backup-now / backup-status / backup-verify / backup-restore
 ```
 
@@ -36,14 +36,24 @@ python .codewhale/skills/Remote_Backup/cli.py backup-now
 python .codewhale/skills/Remote_Backup/cli.py backup-restore          # 新设备
 ```
 
-## 用户开启备份（设置清单，给编码 Agent 执行）
+## 用户开启备份（当前 provider = Google Drive）
 
-1. 读 `backup_provider.py` 文件头契约（5 个函数）。
-2. 按用户选的云盘（Google Drive / Dropbox / OneDrive / S3 / WebDAV…）实现这 5 个
-   函数，替换文件内容。凭据走环境变量，不进代码、不进日志。
-3. `config.json` 设 `backup.enabled: true`。
-4. `backup-now` 做首次全量上传，`backup-verify` 确认一致。
-5. 新设备恢复：克隆代码库 → 实现/复制 provider → `backup-restore`。
+1. Google Cloud Console：建项目 → 启用 Google Drive API → OAuth 同意屏幕
+   （External，发布状态设 **In production**，否则 refresh token 7 天过期）→
+   创建 OAuth 客户端（**Desktop app**）→ 拿到 Client ID / Client Secret。
+2. `setx GDRIVE_CLIENT_ID "..."`、`setx GDRIVE_CLIENT_SECRET "..."`（新终端生效）。
+3. 一次性授权：`python .codewhale/skills/Remote_Backup/backup_provider.py --auth`
+   → 浏览器批准 → 按提示 `setx GDRIVE_REFRESH_TOKEN "..."`。
+4. `config.json` 设 `backup.enabled: true`，重启机器人。
+5. `backup-now` 首次全量上传，`backup-verify` 确认一致。
+6. 新设备恢复：克隆代码库 → 设置 3 个环境变量 → `backup-restore`。
+
+权限范围 `drive.file`：本应用只能看到自己上传的文件，看不到 Drive 其他内容。
+云端布局：全部文件平铺在 `remote_root` 文件夹，相对路径存于 appProperties.rel。
+
+**换云盘**：按 `backup_provider.py` 文件头契约（5 个函数）重写该文件即可，
+引擎零改动。**提交 provider 前自查**：代码里不得出现任何字面 token/key，
+凭据只能 `os.environ` 读取。
 
 ## 配置（config.json `backup` 段）
 

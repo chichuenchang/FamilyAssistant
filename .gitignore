@@ -22,6 +22,12 @@ data/.doc_reminder_state
 data/.backup_manifest.json
 data/.backup_state.json
 
+# 防御：OAuth 凭据文件绝不入库（provider 实现只允许用环境变量）
+**/Remote_Backup/token*.json
+**/Remote_Backup/*secret*
+**/Remote_Backup/*.pickle
+client_secret*.json
+
 # IDE
 .vscode/
 .idea/
