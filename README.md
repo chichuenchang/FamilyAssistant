@@ -13,7 +13,11 @@ pip install "weixin-ilink[qr]"
 # 2. 设 LLM API key（必须）
 setx DEEPSEEK_API_KEY "sk-xxx"
 
-# 3. 启动 Agent（终端出二维码）
+# 3. 登记家庭成员（必须 — 未登记的来源一律静默忽略）
+python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx
+python .codewhale/skills/Expense_Tracker/cli.py member-list
+
+# 4. 启动 Agent（终端出二维码）
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # （可选）设 OCR：
@@ -36,9 +40,10 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 1. Telegram 搜 **@BotFather** → `/newbot` → 获取 Token
 2. `setx TELEGRAM_BOT_TOKEN "xxx"`
 3. `python .codewhale/skills/Agent_Runtime/telegram_bot.py`
-4. 把 Bot 链接发给家人，拉进群一起用
+4. 把 Bot 链接发给家人，并在电脑上用 `member-add` 登记每个人的 chat id（未登记的人 Bot 不会回应）
 
-发什么都可以，比如 `花了45块 午餐` 或 `这个月花了多少`
+发什么都可以，比如 `花了45块 午餐` 或 `这个月花了多少`。
+每笔账自动归到发消息的成员名下；`summary --by-member` 可看谁花了多少。
 
 ## 目录结构
 
@@ -57,9 +62,10 @@ FamilyAssistant/
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
+│           ├── members.py        ← 成员注册表（频道 id → 成员名）
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
-├── config.json           ← 分类 & 白名单
+├── config.json           ← 分类 & 白名单 & 成员注册表
 ├── data/                 ← SQLite + 凭据
 └── receipts/             ← 票据存档
 ```
