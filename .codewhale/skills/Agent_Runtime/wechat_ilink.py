@@ -47,7 +47,7 @@ if sys.platform == "win32":
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
-from agent_core import Agent, RECEIPTS_DIR
+from agent_core import Agent, receipt_month_dir
 
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
@@ -90,9 +90,9 @@ def run_bot(relogin: bool = False) -> None:
     def handle_image(msg):
         print(f"[wx] 图片消息 from {msg.from_user}")
         try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            img_path = RECEIPTS_DIR / "inbox" / f"{ts}_wechat.jpg"
-            img_path.parent.mkdir(parents=True, exist_ok=True)
+            now = datetime.now()
+            ts = now.strftime("%Y%m%d_%H%M%S")
+            img_path = receipt_month_dir(now) / f"{ts}_wechat.jpg"
             msg.save(str(img_path))
             reply = agent.handle_image(str(img_path), user=msg.from_user)
             msg.reply_text(reply)

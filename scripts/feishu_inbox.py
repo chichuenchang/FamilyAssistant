@@ -2,7 +2,7 @@
 飞书收件箱 — 从飞书机器人拉取未处理的图片消息
 
 用法:
-    python scripts/feishu_inbox.py              # 拉取新图片到 receipts/inbox/
+    python scripts/feishu_inbox.py              # 拉取新图片到 receipts/YYYY-MM/
     python scripts/feishu_inbox.py --chat-id oc_xxx  # 指定群聊
 
 前置条件:
@@ -49,7 +49,7 @@ def _receipts_dir() -> Path:
         return ROOT / "receipts"
 
 
-INBOX_DIR = _receipts_dir() / "inbox"
+RECEIPTS_DIR = _receipts_dir()
 LAST_ID_FILE = ROOT / "data" / ".feishu_last_id"
 CONFIG_FILE = ROOT / "data" / ".feishu_config.json"
 
@@ -180,7 +180,7 @@ def process_messages(token: str, chat_id: str) -> int:
             ts = int(msg.get("create_time", "0"))
             dt = datetime.fromtimestamp(int(ts) / 1000) if ts else datetime.now()
             fname = dt.strftime("%Y%m%d_%H%M%S") + "_feishu.jpg"
-            dest = INBOX_DIR / fname
+            dest = RECEIPTS_DIR / dt.strftime("%Y-%m") / fname
 
             print(f"  下载: {fname}")
             if download_image(token, image_key, dest):
@@ -244,7 +244,7 @@ def main():
     if count == 0:
         print("没有新图片。")
     else:
-        print(f"完成，下载 {count} 张图片到 {INBOX_DIR}")
+        print(f"完成，下载 {count} 张图片到 {RECEIPTS_DIR} 按月子目录")
         print("运行 .codewhale/skills/Expense_Tracker/cli.py 处理这些票据。")
 
 

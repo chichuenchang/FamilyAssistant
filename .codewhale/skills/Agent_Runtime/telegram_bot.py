@@ -34,7 +34,7 @@ if sys.platform == "win32":
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
-from agent_core import Agent, RECEIPTS_DIR
+from agent_core import Agent, receipt_month_dir
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
@@ -78,9 +78,9 @@ def download_photo(file_id: str) -> Path | None:
     if not file_path:
         return None
     url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest = RECEIPTS_DIR / "inbox" / f"{ts}_telegram.jpg"
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    ts = now.strftime("%Y%m%d_%H%M%S")
+    dest = receipt_month_dir(now) / f"{ts}_telegram.jpg"
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
         return dest

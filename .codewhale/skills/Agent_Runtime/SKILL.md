@@ -85,7 +85,7 @@ if __name__ == "__main__":
 
 要点：
 - 用频道内唯一 id 作 `user`，保证多用户历史隔离。
-- 图片消息：先存到 `receipts/inbox/`，再调 `agent.handle_image(path, user)`。
+- 图片消息：先存到按月子目录 `receipts/YYYY-MM/`（用 `agent_core.receipt_month_dir()`），再调 `agent.handle_image(path, user)`。
 - 长回复需分段的频道（如 Telegram 4096 字限制）自行在传输层切分（见 `telegram_bot.py:send_message`）。
 - 不在传输层写任何记账/查账逻辑 —— 全部交给 Agent。
 
@@ -115,4 +115,4 @@ if __name__ == "__main__":
 
 - 业务逻辑（记账/查账/汇率）见 [Expense Tracker](../Expense_Tracker/SKILL.md)
 - 票据图片识别见 [OCR](../OCR/SKILL.md)
-- 飞书 `scripts/feishu_inbox.py` 是另一种形态：只拉取群里的票据图片到 `receipts/inbox/`，不做实时对话，不走本契约。
+- 飞书 `scripts/feishu_inbox.py` 是另一种形态：只拉取群里的票据图片到 `receipts/YYYY-MM/`，不做实时对话，不走本契约。

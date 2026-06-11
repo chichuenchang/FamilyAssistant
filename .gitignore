@@ -8,9 +8,9 @@ data/.telegram_offset
 __pycache__/
 *.pyc
 
-# 票据
-receipts/inbox/*
-!receipts/inbox/.gitkeep
+# 票据（按月子目录 receipts/YYYY-MM/）
+receipts/*
+!receipts/.gitkeep
 
 # IDE
 .vscode/

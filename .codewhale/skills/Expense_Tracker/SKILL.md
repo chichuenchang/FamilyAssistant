@@ -14,7 +14,7 @@
 └── cli.py       ← 命令行入口（user / agent / 任意调用方）
 ```
 
-数据与配置仍在项目根：`data/ledger.db`（SQLite）、`config.json`（分类 & 路径）、`receipts/YYYY/MM/`（票据存档）。`cli.py` 把同目录加入 `sys.path` 后 `from db import ...`，无需从项目根 import。
+数据与配置仍在项目根：`data/ledger.db`（SQLite）、`config.json`（分类 & 路径）、`receipts/YYYY-MM/`（票据按月存档）。`cli.py` 把同目录加入 `sys.path` 后 `from db import ...`，无需从项目根 import。
 
 ## 数据模型
 
@@ -106,16 +106,15 @@
 
 ### Agent 定时流程
 
-1. `python scripts/feishu_inbox.py` → 下载新图片到 `receipts/inbox/`
+1. `python scripts/feishu_inbox.py` → 下载新图片到按月子目录 `receipts/YYYY-MM/`
 2. 遍历 OCR 提取信息
 3. `cli.py add` 写入数据库（自动去重）
-4. 图片移到 `receipts/YYYY/MM/` 归档
 
 ## 接收票据（截图 / 发票照片）
 
 1. **OCR 提取** — 金额、日期、商家/类别
 2. **自动归类** — 匹配 `config.json` 分类
-3. **保存原始票据** — `receipts/YYYY/MM/`
+3. **保存原始票据** — `receipts/YYYY-MM/`
 4. **写入记录** — `cli.py add --receipt <路径>`
 5. **告知结果**
 

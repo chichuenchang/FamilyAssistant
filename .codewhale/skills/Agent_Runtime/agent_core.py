@@ -65,6 +65,13 @@ _CONFIG = _load_config_dict()
 # 票据目录（config.json receipts_dir，缺失回退 receipts）
 RECEIPTS_DIR = ROOT / (_CONFIG.get("receipts_dir") or "receipts")
 
+
+def receipt_month_dir(dt: date | None = None) -> Path:
+    """票据按月分子目录：receipts/YYYY-MM/，不存在则创建。"""
+    d = RECEIPTS_DIR / (dt or date.today()).strftime("%Y-%m")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
 # CLI 命令白名单（config.json wechat.allowed_commands，缺失回退内置集）
 _FALLBACK_ALLOWED = {
     "add", "list", "summary", "monthly", "delete",
