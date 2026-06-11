@@ -439,15 +439,6 @@ class Agent:
             self.history[user] = h[-self.history_size * 2:]
 
 
-# ── 兼容旧接口 ──────────────────────────────────────────────
-
-def process_message(text: str) -> str:
-    return Agent().handle(text)
-
-def process_image(image_path: str) -> str:
-    return Agent().handle_image(image_path)
-
-
 # ── 测试入口 ────────────────────────────────────────────────
 
 if __name__ == "__main__":
