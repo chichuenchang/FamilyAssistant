@@ -351,6 +351,11 @@ class Agent:
         if not text:
             return "收到空消息。"
 
+        # 频道无关命令：清除本用户对话上下文（不经 LLM，零 token）
+        if text.lower() in ("/clear", "清除上下文", "清空上下文", "清空记忆"):
+            self.history.pop(user, None)
+            return "✅ 对话上下文已清除。"
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             return "未配置 DEEPSEEK_API_KEY。"
