@@ -28,11 +28,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -106,54 +105,8 @@ def _build_system_prompt() -> str:
 ## 配置
 {config}
 
-## 可用工具
-你可以调用以下 Python 函数来完成任务。每个回复中可以包含一个或多个工具调用。
-工具调用格式：在回复中单独一行以 <TOOL> 开头，JSON 格式。
-
-1. 记账
-   <TOOL>{{"tool":"add_transaction","args":{{"type":"expense","amount":45.5,"currency":"{base_cur}","date":"{today}","category":"餐饮","desc":"午餐"}}}}
-   type: {tx_types}
-   currency: {currencies}（默认基准 {base_cur}）
-
-2. 查询
-   <TOOL>{{"tool":"list_transactions","args":{{"type":"expense","start":"2026-05-01","end":"2026-06-01","limit":20}}}}
-
-3. 汇总
-   <TOOL>{{"tool":"get_summary","args":{{"type":"expense","year":2026,"month":6}}}}
-
-4. 月度总览
-   <TOOL>{{"tool":"get_monthly","args":{{"type":"expense","year":2026}}}}
-
-5. 定期存款（查询）
-   <TOOL>{{"tool":"list_deposits","args":{{}}}}
-
-6. 定期存款（新增）
-   <TOOL>{{"tool":"add_deposit","args":{{"amount":50000,"currency":"USD","bank":"HSBC","account":"6212xxxx","term":12,"rate":4.5,"start-date":"2026-01-15","maturity":"2027-01-15"}}}}
-
-7. 汇率（查询）
-   <TOOL>{{"tool":"get_fx_rate","args":{{"from":"USD","to":"CNY"}}}}
-
-8. 汇率（设置）
-   <TOOL>{{"tool":"set_fx_rate","args":{{"from":"USD","to":"CNY","rate":7.25}}}}
-
-9. 报税记录（新增；data 为 JSON 字符串）
-   <TOOL>{{"tool":"add_tax","args":{{"year":2025,"country":"US","data":"...JSON...","filing-date":"2026-04-10"}}}}
-
-10. 报税记录（查询）
-   <TOOL>{{"tool":"list_tax","args":{{"year":2025,"country":"US"}}}}
-
-11. 资金划转/换汇（溯源；目标为定期时自动建定期存款）
-   <TOOL>{{"tool":"add_transfer","args":{{"from-amount":350000,"from-currency":"CNY","from-desc":"活期/工行","from-type":"活期","to-amount":50000,"to-currency":"USD","to-type":"定期","to-bank":"HSBC","to-account":"6212xxxx","exchange-date":"2026-01-10","transfer-date":"2026-01-12","to-term":12,"to-rate":4.5,"to-maturity":"2027-01-12"}}}}
-
-12. 查资金来源/划转记录（如"这笔定期哪来的"）
-   <TOOL>{{"tool":"list_transfers","args":{{"to-deposit-id":5}}}}
-   <TOOL>{{"tool":"list_transfers","args":{{"trace":"工行","currency":"USD"}}}}
-
-13. OCR 票据（用户发了图片时）
-   <TOOL>{{"tool":"ocr_image","args":{{"path":"图片路径"}}}}
-
-14. 删除
-   <TOOL>{{"tool":"delete_transaction","args":{{"id":12}}}}
+## 工具使用（通过 function calling 调用，定义见 tools 参数）
+- type: {tx_types}；currency: {currencies}（默认基准 {base_cur}）
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
@@ -250,6 +203,139 @@ _TOOL_MAP = {
 }
 
 
+# ── 工具 JSON Schema（DeepSeek function calling，OpenAI 兼容格式） ──
+# 参数名与 CLI 标志一致（含连字符），_run_cli 直接转 --flag。
+# 枚举值来自 config.json（单一事实来源）。
+
+_TX_TYPES = list(_CONFIG.get("categories", {}).keys()) or [
+    "expense", "income", "investment", "savings"]
+_CURRENCIES = _CONFIG.get("supported_currencies") or ["USD", "CNY", "CAD"]
+_BASE_CUR = _CONFIG.get("base_currency") or "USD"
+_CATS_DESC = json.dumps(_CONFIG.get("categories", {}), ensure_ascii=False)
+
+
+def _fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
+    return {"type": "function", "function": {
+        "name": name, "description": desc,
+        "parameters": {"type": "object", "properties": props,
+                       "required": required or []},
+    }}
+
+
+def _s(desc: str, **kw) -> dict:
+    return {"type": "string", "description": desc, **kw}
+
+
+def _num(desc: str) -> dict:
+    return {"type": "number", "description": desc}
+
+
+def _int(desc: str) -> dict:
+    return {"type": "integer", "description": desc}
+
+
+TOOL_SCHEMAS = [
+    _fn("add_transaction", "记一笔账（支出/收入/投资/储蓄）", {
+        "type": _s("交易类型", enum=_TX_TYPES),
+        "amount": _num("金额，正数"),
+        "currency": _s(f"币种，默认 {_BASE_CUR}", enum=_CURRENCIES),
+        "date": _s("日期 YYYY-MM-DD"),
+        "category": _s(f"分类，必须从合法分类中选: {_CATS_DESC}"),
+        "desc": _s("描述，如 午餐"),
+        "notes": _s("备注"),
+        "force": {"type": "boolean", "description": "跳过重复检查强制写入（仅在用户确认非重复后用）"},
+    }, ["type", "amount", "date"]),
+    _fn("list_transactions", "查询交易流水", {
+        "type": _s("交易类型", enum=_TX_TYPES),
+        "category": _s("分类"),
+        "currency": _s("币种", enum=_CURRENCIES),
+        "start": _s("开始日期 YYYY-MM-DD"),
+        "end": _s("结束日期 YYYY-MM-DD"),
+        "limit": _int("最多返回条数"),
+    }),
+    _fn("get_summary", "按分类汇总金额（分币种）", {
+        "type": _s("交易类型，默认 expense", enum=_TX_TYPES),
+        "year": _int("年份"),
+        "month": _int("月份 1-12"),
+    }),
+    _fn("get_monthly", "按月汇总金额（分币种）", {
+        "type": _s("交易类型，默认 expense", enum=_TX_TYPES),
+        "year": _int("年份"),
+    }),
+    _fn("list_deposits", "查询定期存款", {
+        "currency": _s("币种", enum=_CURRENCIES),
+        "active": {"type": "boolean", "description": "只看未到期的"},
+    }),
+    _fn("add_deposit", "新增定期存款记录", {
+        "amount": _num("本金"),
+        "currency": _s("币种", enum=_CURRENCIES),
+        "bank": _s("银行名"),
+        "account": _s("账号"),
+        "term": _int("期限（月）"),
+        "rate": _num("年利率(%)"),
+        "start-date": _s("起存日 YYYY-MM-DD"),
+        "maturity": _s("到期日 YYYY-MM-DD"),
+        "notes": _s("备注"),
+    }, ["amount", "start-date"]),
+    _fn("get_fx_rate", "查询汇率", {
+        "from": _s("源币种", enum=_CURRENCIES),
+        "to": _s("目标币种", enum=_CURRENCIES),
+    }, ["from", "to"]),
+    _fn("set_fx_rate", "设置汇率", {
+        "from": _s("源币种", enum=_CURRENCIES),
+        "to": _s("目标币种", enum=_CURRENCIES),
+        "rate": _num("汇率：1 源币种 = rate 目标币种"),
+    }, ["from", "to", "rate"]),
+    _fn("add_tax", "新增报税记录", {
+        "year": _int("税务年度"),
+        "country": _s("国家", enum=["US", "CA"]),
+        "data": _s('报税数据，JSON 字符串，如 {"total_income": 100000, "tax_paid": 20000}'),
+        "filing-date": _s("申报日期 YYYY-MM-DD"),
+        "notes": _s("备注"),
+    }, ["year", "country"]),
+    _fn("list_tax", "查询报税记录", {
+        "year": _int("税务年度"),
+        "country": _s("国家", enum=["US", "CA"]),
+    }),
+    _fn("add_transfer", "记录资金划转/换汇（溯源；目标为定期时自动建定期存款）", {
+        "from-amount": _num("源金额"),
+        "from-currency": _s("源币种", enum=_CURRENCIES),
+        "to-amount": _num("目标金额"),
+        "to-currency": _s("目标币种", enum=_CURRENCIES),
+        "to-type": _s("目标账户类型：活期/定期"),
+        "from-desc": _s("源账户描述，如 活期/工行"),
+        "from-type": _s("源账户类型：活期/定期"),
+        "from-deposit-id": _int("源若为已记录定期存款，其 id"),
+        "rate": _num("换汇汇率；不填按 to/from 计算"),
+        "exchange-date": _s("换汇日期 YYYY-MM-DD"),
+        "to-bank": _s("目标银行"),
+        "to-account": _s("目标账号"),
+        "transfer-date": _s("到账/转账日期 YYYY-MM-DD"),
+        "to-term": _int("目标定期期限（月）"),
+        "to-rate": _num("目标定期年利率(%)"),
+        "to-maturity": _s("目标定期到期日 YYYY-MM-DD"),
+        "notes": _s("备注"),
+    }, ["from-amount", "from-currency", "to-amount", "to-currency", "to-type"]),
+    _fn("list_transfers", "查询划转记录/溯源资金来源", {
+        "currency": _s("匹配源或目标币种", enum=_CURRENCIES),
+        "to-bank": _s("目标银行"),
+        "type": _s("匹配源或目标类型 活期/定期"),
+        "start": _s("开始日期 YYYY-MM-DD"),
+        "end": _s("结束日期 YYYY-MM-DD"),
+        "to-deposit-id": _int("查某定期存款的资金来源"),
+        "from-deposit-id": _int("查某定期存款的去向"),
+        "trace": _s("模糊匹配 描述/银行/账号/备注"),
+        "limit": _int("最多返回条数"),
+    }),
+    _fn("ocr_image", "OCR 识别票据图片并提取结构化信息", {
+        "path": _s("图片路径"),
+    }, ["path"]),
+    _fn("delete_transaction", "删除一条交易", {
+        "id": _int("交易 id"),
+    }, ["id"]),
+]
+
+
 # ── Agent ───────────────────────────────────────────────────
 
 class Agent:
@@ -274,36 +360,38 @@ class Agent:
         msgs.extend(user_history[-self.history_size * 2:])
         msgs.append({"role": "user", "content": text})
 
-        llm_output = ""
+        reply = ""
         tool_log = ""  # 收集工具执行日志
-        for _ in range(3):
-            llm_output = self._call_llm(msgs)
-            if not llm_output:
+        for _ in range(4):
+            message = self._call_llm(msgs)
+            if message is None:
                 return "抱歉，暂时出错了。"
 
-            tools = self._parse_tools(llm_output)
-            if not tools:
-                clean = self._clean_response(llm_output)
-                final = f"{tool_log}\n{clean}".strip() if tool_log else clean
-                self._save_history(user, text, clean)
-                return final
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                reply = (message.get("content") or "").strip()
+                break
 
-            results = []
-            for name, targs in tools:
-                r = _TOOL_MAP[name](targs)
-                results.append(r)
+            msgs.append(message)
+            for tc in tool_calls:
+                name = tc.get("function", {}).get("name", "")
+                try:
+                    targs = json.loads(tc["function"].get("arguments") or "{}")
+                except (json.JSONDecodeError, KeyError):
+                    targs = {}
+                fn = _TOOL_MAP.get(name)
+                result = fn(targs) if fn else f"[错误] 未知工具: {name}"
                 # 只展示工具调用，代码输出交给 LLM 转述
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
                 tool_log += f"  ⚙️ {name}({brief})\n"
+                msgs.append({"role": "tool",
+                             "tool_call_id": tc.get("id", ""),
+                             "content": result})
 
-            msgs.append({"role": "assistant", "content": llm_output})
-            msgs.append({"role": "user", "content":
-                f"工具执行结果:\n" + "\n".join(results) +
-                "\n请基于以上结果用自然语言回复用户。"})
-
-        clean = self._clean_response(llm_output)
-        final = f"{tool_log}\n{clean}".strip() if tool_log else clean
-        self._save_history(user, text, clean)
+        if not reply:
+            reply = "（工具已执行，但生成回复失败）" if tool_log else "抱歉，暂时出错了。"
+        final = f"{tool_log}\n{reply}".strip() if tool_log else reply
+        self._save_history(user, text, reply)
         return final
 
     def handle_image(self, image_path: str, user: str = "default") -> str:
@@ -318,13 +406,18 @@ class Agent:
                 return self.handle(prompt, user=user)
         return "📷 图片已收到。请用文字描述（如\"午餐45块\"），或配置腾讯云 OCR。"
 
-    def _call_llm(self, messages):
+    def _call_llm(self, messages) -> dict | None:
+        """调 DeepSeek chat completions（native function calling）。
+
+        返回 choices[0].message 整个 dict（可能含 tool_calls）；失败返回 None。
+        """
         import urllib.request
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         body = json.dumps({
             "model": "deepseek-v4-flash",
             "messages": messages,
+            "tools": TOOL_SCHEMAS,
             "temperature": 0.3, "max_tokens": 800,
         }).encode("utf-8")
         req = urllib.request.Request(
@@ -333,47 +426,10 @@ class Agent:
         )
         try:
             resp = json.loads(urllib.request.urlopen(req, timeout=30).read())
-            return resp["choices"][0]["message"]["content"].strip()
+            return resp["choices"][0]["message"]
         except Exception as e:
             print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
-            return ""
-
-    def _iter_tool_spans(self, text):
-        """定位每个 <TOOL> 标签后的完整 JSON 对象（raw_decode 支持嵌套大括号）。
-
-        yield (tag_start, json_end, obj)。lazy 正则 \\{.*?\\} 会在嵌套 args
-        的第一个 } 截断，必须用 JSON 解析器找边界。
-        """
-        dec = json.JSONDecoder()
-        for m in re.finditer(r"<TOOL>\s*", text):
-            try:
-                obj, end = dec.raw_decode(text, m.end())
-            except (json.JSONDecodeError, ValueError):
-                continue
-            if isinstance(obj, dict):
-                # 吃掉可选的 </TOOL> 闭合标签
-                tail = re.match(r"\s*</TOOL>", text[end:])
-                if tail:
-                    end += tail.end()
-                yield m.start(), end, obj
-
-    def _clean_response(self, text: str) -> str:
-        """移除 <TOOL> 标签及其完整 JSON，返回纯净回复文本。"""
-        out, last = [], 0
-        for start, end, _ in self._iter_tool_spans(text):
-            if start < last:
-                continue
-            out.append(text[last:start])
-            last = end
-        out.append(text[last:])
-        return "".join(out).strip()
-
-    def _parse_tools(self, text):
-        tools = []
-        for _, _, t in self._iter_tool_spans(text):
-            if t.get("tool") in _TOOL_MAP:
-                tools.append((t["tool"], t.get("args", {})))
-        return tools
+            return None
 
     def _save_history(self, user, user_msg, assistant_msg):
         h = self.history[user]
