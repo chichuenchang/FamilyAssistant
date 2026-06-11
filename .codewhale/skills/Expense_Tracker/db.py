@@ -509,12 +509,12 @@ def convert_to_base(
     amount: float,
     from_currency: str,
     db_path: Optional[str] = None,
-) -> float:
-    """将金额转换为基准货币（config.json base_currency）。无汇率时返回特征值 -1。"""
+) -> Optional[float]:
+    """将金额转换为基准货币（config.json base_currency）。无汇率时返回 None。"""
     base = get_base_currency()
     if from_currency == base:
         return amount
     rate = get_latest_rate(from_currency, base, db_path)
     if rate is None:
-        return -1.0
+        return None
     return round(amount * rate, 2)

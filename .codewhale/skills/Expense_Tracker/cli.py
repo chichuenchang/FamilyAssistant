@@ -38,7 +38,6 @@ from db import (
     get_tax_filings,
     set_exchange_rate,
     get_latest_rate,
-    convert_to_base,
     get_categories,
     get_base_currency,
     TRANSACTION_TYPES,

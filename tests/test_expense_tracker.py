@@ -538,7 +538,7 @@ def test_exchange_rate_roundtrip(db):
 
 def test_convert_to_base(db):
     """Same currency: amount unchanged. With rate: round(amount*rate, 2).
-    Missing rate: -1.0."""
+    Missing rate: None."""
     # USD is the base currency (config.json)
     assert dbm.convert_to_base(100.0, "USD", db_path=db) == 100.0
 
@@ -548,4 +548,4 @@ def test_convert_to_base(db):
     assert converted == round(350000 * 0.14, 2)
 
     # No rate set for CAD → USD
-    assert dbm.convert_to_base(1000, "CAD", db_path=db) == -1.0
+    assert dbm.convert_to_base(1000, "CAD", db_path=db) is None
