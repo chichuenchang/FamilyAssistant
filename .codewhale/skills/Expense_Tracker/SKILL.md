@@ -30,6 +30,7 @@
 | description | TEXT | 描述 |
 | date | TEXT | ISO 日期 `YYYY-MM-DD` |
 | receipt_path | TEXT | 票据文件相对路径 |
+| member | TEXT | 归属成员（空 = 家庭级） |
 | notes | TEXT | 备注 |
 | created_at | TEXT | 创建时间 |
 
@@ -47,7 +48,9 @@
 | start_date | TEXT | 起存日期 |
 | maturity_date | TEXT | 到期日期 |
 | receipt_path | TEXT | 单据路径 |
+| member | TEXT | 归属成员（空 = 家庭级） |
 | notes | TEXT | 备注 |
+| created_at | TEXT | 创建时间 |
 
 ### tax_filings — 报税记录表
 
@@ -59,12 +62,15 @@
 | filing_date | TEXT | 申报日期 |
 | data | TEXT(JSON) | 灵活字段 |
 | receipt_path | TEXT | 税表文件路径 |
+| member | TEXT | 归属成员（空 = 家庭级） |
 | notes | TEXT | 备注 |
+| created_at | TEXT | 创建时间 |
 
 ### exchange_rates — 汇率表
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
+| id | INTEGER | 主键 |
 | from_currency | TEXT | 源币种 |
 | to_currency | TEXT | 目标币种 |
 | rate | REAL | 汇率 |
@@ -87,7 +93,9 @@
 | to_bank / to_account / to_type | TEXT | 目标银行 / 账号 / 类型（活期/定期） |
 | transfer_date | TEXT | 到账/转账日期 |
 | to_deposit_id | INTEGER | 目标为定期时自动建 deposits 行并链接其 id |
+| member | TEXT | 归属成员（空 = 家庭级） |
 | notes | TEXT | 备注 |
+| created_at | TEXT | 创建时间 |
 
 **自动建定期**：`transfer-add --to-type 定期` 时，自动调 `add_deposit` 建一条定期存款记录（金额/币种/银行/账号/期限/利率/到期日来自 `--to-*`），并回填 `to_deposit_id` 链接。`--to-type 活期` 只记划转，不建记录。
 

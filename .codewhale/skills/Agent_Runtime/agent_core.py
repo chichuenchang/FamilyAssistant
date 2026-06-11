@@ -433,6 +433,7 @@ TOOL_SCHEMAS = [
         "member": _s("按成员过滤"),
         "keyword": _s("关键词，匹配标题/OCR全文/备注"),
         "status": _s("状态（默认隐藏 archived/superseded）", enum=_DOC_STATUSES),
+        "limit": _int("最多返回条数"),
     }),
     _fn("show_document", "查看某文档完整信息（含文件路径）", {
         "id": _int("文档 id"),
@@ -442,6 +443,7 @@ TOOL_SCHEMAS = [
     }),
     _fn("update_document", "更新文档信息（续约改到期日、改状态归档等）", {
         "id": _int("文档 id"),
+        "type": _s("文档类型", enum=_DOC_TYPES),
         "title": _s("文档名称"),
         "issuer": _s("签发方"),
         "number": _s("编号"),

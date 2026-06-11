@@ -55,11 +55,12 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 | config 键 | 谁读取 |
 |-----------|--------|
-| `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验 |
+| `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验；`agent_core` 独立读取同一来源（工具 enum） |
 | `db_path` | `models.DB_PATH` |
 | `receipts_dir` | `agent_core.RECEIPTS_DIR` |
 | `documents_dir` | `Document_Keeper/doc_models.py`（DOCUMENTS_DIR）、`agent_core.DOCUMENTS_DIR` |
-| `doc_types` / `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
+| `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
+| `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
 | `backup`（enabled/debounce/include/remote_root） | `Remote_Backup/backup_sync.py`（CFG，读一次） |
 | `members` | `Agent_Runtime/members.py`（只读：resolve）、`cli.py member-*`（本机写入） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |

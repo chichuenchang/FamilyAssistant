@@ -10,6 +10,7 @@
 .codewhale/skills/Agent_Runtime/
 ├── SKILL.md          ← 本文件
 ├── agent_core.py     ← 频道无关 Agent（共用大脑）
+├── members.py        ← 成员注册表（频道 id → 成员名）
 ├── wechat_ilink.py   ← 微信传输层
 └── telegram_bot.py   ← Telegram 传输层
 ```
