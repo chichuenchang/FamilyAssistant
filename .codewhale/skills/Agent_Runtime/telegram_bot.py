@@ -35,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
 from agent_core import Agent, receipt_month_dir
+from members import resolve
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
@@ -146,6 +147,12 @@ def run() -> None:
                 continue
 
             chat_id = msg["chat"]["id"]
+            # 成员闸门：未注册 id 静默丢弃（不回复、不进 LLM），本地留一行日志
+            member = resolve("telegram", str(chat_id))
+            if member is None:
+                print(f"[tg] 忽略未注册来源 chat_id={chat_id}")
+                offset = max(offset, update_id)
+                continue
             user_name = msg.get("from", {}).get("first_name", "unknown")
             text = msg.get("text", "")
 
@@ -169,7 +176,7 @@ def run() -> None:
                 file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
                 dest = download_photo(file_id) if file_id else None
                 if dest:
-                    reply = agent.handle_image(str(dest), user=str(chat_id))
+                    reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
                 else:
                     reply = "图片下载失败，请重发。"
                 send_message(chat_id, reply)
@@ -182,7 +189,7 @@ def run() -> None:
             print(f"[tg] {user_name}: {text[:60]}")
 
             # 处理消息
-            reply = agent.handle(text, user=str(chat_id))
+            reply = agent.handle(text, user=str(chat_id), member=member)
             if reply:
                 send_message(chat_id, reply)
 

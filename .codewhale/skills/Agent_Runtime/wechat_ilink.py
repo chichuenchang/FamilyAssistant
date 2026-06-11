@@ -48,6 +48,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
 from agent_core import Agent, receipt_month_dir
+from members import resolve
 
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
@@ -78,9 +79,13 @@ def run_bot(relogin: bool = False) -> None:
     # 注册文字消息处理器
     @bot.on_text
     def handle_text(msg):
-        print(f"[wx] 文字消息 from {msg.from_user}: {msg.text[:60]}")
+        member = resolve("wechat", msg.from_user)
+        if member is None:
+            print(f"[wx] 忽略未注册来源 {msg.from_user}")
+            return
+        print(f"[wx] 文字消息 from {msg.from_user}({member}): {msg.text[:60]}")
         try:
-            reply = agent.handle(msg.text, user=msg.from_user)
+            reply = agent.handle(msg.text, user=msg.from_user, member=member)
             msg.reply_text(reply)
         except Exception as e:
             msg.reply_text(f"处理出错: {e}")
@@ -88,13 +93,17 @@ def run_bot(relogin: bool = False) -> None:
     # 注册图片消息处理器
     @bot.on_image
     def handle_image(msg):
-        print(f"[wx] 图片消息 from {msg.from_user}")
+        member = resolve("wechat", msg.from_user)
+        if member is None:
+            print(f"[wx] 忽略未注册来源 {msg.from_user}")
+            return
+        print(f"[wx] 图片消息 from {msg.from_user}({member})")
         try:
             now = datetime.now()
             ts = now.strftime("%Y%m%d_%H%M%S")
             img_path = receipt_month_dir(now) / f"{ts}_wechat.jpg"
             msg.save(str(img_path))
-            reply = agent.handle_image(str(img_path), user=msg.from_user)
+            reply = agent.handle_image(str(img_path), user=msg.from_user, member=member)
             msg.reply_text(reply)
         except Exception as e:
             msg.reply_text(f"图片处理出错: {e}")
@@ -102,14 +111,20 @@ def run_bot(relogin: bool = False) -> None:
     # 其他消息类型：友好提示
     @bot.on_voice
     def handle_voice(msg):
+        if resolve("wechat", msg.from_user) is None:
+            return
         msg.reply_text("目前不支持语音消息，请发文字或图片。")
 
     @bot.on_file
     def handle_file(msg):
+        if resolve("wechat", msg.from_user) is None:
+            return
         msg.reply_text(f"收到文件: {msg.file_name}（暂不支持文件处理）")
 
     @bot.on_video
     def handle_video(msg):
+        if resolve("wechat", msg.from_user) is None:
+            return
         msg.reply_text("收到视频（暂不支持视频处理）")
 
     try:
@@ -135,7 +150,7 @@ def run_test() -> None:
             break
         if msg.lower() in ("quit", "exit", "q"):
             break
-        reply = agent.handle(msg)
+        reply = agent.handle(msg, member="本地测试")
         print(f"助手> {reply}")
         print()
 
