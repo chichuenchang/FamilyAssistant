@@ -2,6 +2,45 @@
 
 > 个人/家庭多功能 AI 助手。电脑上跑 Agent，手机上用微信远程操控。
 
+## 功能特性
+
+### 📒 记账（Expense Tracker）
+- **多币种流水**：日常开销 / 收入 / 投资 / 活期，CNY · USD · CAD，每笔保留原币种，汇总按币种分组不混算
+- **定期存款追踪**：本金、利率、期限、到期日，`deposit-list --active` 查在存
+- **资金划转 / 换汇溯源**：记录"源账户 → 换汇 → 目标账户"全链路，多年后可回查任意一笔存款的资金来源（`transfer-list --trace`）；转入定期时自动建定期存款记录并链接
+- **报税记录存档**：按年度/国家（US/CA）存申报记录与税表文件
+- **手工汇率表**：`fx-set` / `fx-get`，按基准币种折算
+- **重复检测**：同日同金额同币种且描述相近自动拦截
+
+### 🧾 票据 OCR
+- 发票/小票照片 → 腾讯云 OCR 文字识别（1000 次/月免费）→ DeepSeek 结构化提取（金额/日期/分类/描述）→ 自动记账
+- 原始票据按月存档 `receipts/YYYY-MM/`，与账目记录关联
+
+### 📁 家庭文档管理（Document Keeper）
+- 重要文档归档：租约、保险单、证件、健康卡等，原件存 `documents/<类型>/`
+- OCR 全文索引，关键词检索（"我们有哪些保险"）
+- **到期跟踪 + 每日主动提醒**：到期前 Bot 每天推送（如 "租约 20 天后到期 — 提前60天通知房东"），`doc-ack` 确认后不再重复
+- 重复检测（证件编号 / 文件哈希）
+
+### 👨‍👩‍👧 家庭成员
+- 成员注册表（仅本机管理，Agent 无权增删）；每笔账自动归到发消息的成员名下
+- `summary --by-member` 按成员汇总；`--member` 过滤查询
+- **默认锁定**：未登记的频道来源一律静默忽略；账目归属由代码注入，LLM 无法冒名
+
+### 💬 远程频道（微信 / Telegram）
+- 手机发自然语言即可操作："花了45块 午餐"、"这个月花了多少"、发照片说"存一下这份租约"
+- 一个频道无关的 Agent 大脑（DeepSeek 函数调用），多个轻量传输层；新增频道只需实现一个薄适配文件
+- 每用户独立对话上下文，`/clear` 远程清空
+
+### ☁️ 云盘备份（Remote Backup，可选）
+- 用户数据（账本/票据/文档/配置）单向镜像到云盘，写入后防抖增量同步，本地永远是事实源
+- 当前内置 Google Drive 实现（最小 `drive.file` 权限，只能看到自己上传的文件）；按 provider 契约可换任意云端存储
+- 换电脑 `backup-restore` 一键恢复全部数据
+
+### 🔒 安全设计
+- Agent 只能调 `config.json` 白名单内的 CLI 命令；成员/文档删除等敏感命令仅限本机
+- OCR 路径限制在票据目录内，防文件外泄；所有凭据走环境变量或本地加密存储，永不入库
+
 ## 快速开始
 
 ### 电脑端
@@ -23,6 +62,12 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 # （可选）设 OCR：
 #   setx TENCENT_SECRET_ID "xxx"
 #   setx TENCENT_SECRET_KEY "xxx"
+
+# （可选）云盘备份（当前为 Google Drive 实现，可换其他云盘；步骤详见 Remote_Backup/SKILL.md）：
+#   setx GDRIVE_CLIENT_ID "xxx"
+#   setx GDRIVE_CLIENT_SECRET "xxx"
+#   python .codewhale/skills/Remote_Backup/backup_provider.py --auth  # 一次性授权，按提示设 GDRIVE_REFRESH_TOKEN
+#   config.json 设 backup.enabled: true
 
 # ── 或用 Telegram（多人，推荐） ──
 #   setx TELEGRAM_BOT_TOKEN "xxx"
@@ -70,7 +115,7 @@ FamilyAssistant/
 │       ├── Remote_Backup/    ← 用户数据云盘镜像（可选）
 │       │   ├── SKILL.md
 │       │   ├── backup_sync.py    ← 同步引擎
-│       │   ├── backup_provider.py← 云盘占位（用户自己实现）
+│       │   ├── backup_provider.py← Google Drive 实现（可按契约换成其他云盘）
 │       │   └── cli.py            ← 备份 CLI 入口
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
