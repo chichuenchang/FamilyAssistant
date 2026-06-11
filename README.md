@@ -59,8 +59,6 @@ FamilyAssistant/
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
-├── scripts/
-│   └── feishu_inbox.py   ← 飞书收件箱
 ├── config.json           ← 分类 & 白名单
 ├── data/                 ← SQLite + 凭据
 └── receipts/             ← 票据存档

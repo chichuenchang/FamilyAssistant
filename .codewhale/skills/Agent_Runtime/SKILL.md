@@ -115,4 +115,3 @@ if __name__ == "__main__":
 
 - 业务逻辑（记账/查账/汇率）见 [Expense Tracker](../Expense_Tracker/SKILL.md)
 - 票据图片识别见 [OCR](../OCR/SKILL.md)
-- 飞书 `scripts/feishu_inbox.py` 是另一种形态：只拉取群里的票据图片到 `receipts/YYYY-MM/`，不做实时对话，不走本契约。

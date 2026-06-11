@@ -38,7 +38,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 |-----------|--------|
 | `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验 |
 | `db_path` | `models.DB_PATH` |
-| `receipts_dir` | `agent_core.RECEIPTS_DIR`、`feishu_inbox` |
+| `receipts_dir` | `agent_core.RECEIPTS_DIR` |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
 
 改这些值只改 `config.json`（改后重启进程生效）。config 缺失/损坏时各处有应急回退默认值。

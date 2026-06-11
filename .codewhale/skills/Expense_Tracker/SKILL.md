@@ -93,23 +93,6 @@
 
 **溯源查询**：`transfer-list --to-deposit-id <定期id>` 查某定期存款的资金来源；`--trace <银行/账号关键词>` 模糊溯源；`--from-deposit-id` 查某定期的去向。
 
-## 飞书远程收票
-
-用户可从手机拍照发到飞书群，Agent 定时拉取处理。
-
-### 配置
-
-1. [飞书开放平台](https://open.feishu.cn) 创建自建应用
-2. 添加机器人能力，权限 `im:message`、`im:message:read_as_bot`
-3. 设环境变量：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`
-4. `python scripts/feishu_inbox.py --list-chats` 获取 chat_id
-
-### Agent 定时流程
-
-1. `python scripts/feishu_inbox.py` → 下载新图片到按月子目录 `receipts/YYYY-MM/`
-2. 遍历 OCR 提取信息
-3. `cli.py add` 写入数据库（自动去重）
-
 ## 接收票据（截图 / 发票照片）
 
 1. **OCR 提取** — 金额、日期、商家/类别
@@ -208,7 +191,6 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 ## 远程通道
 
 - **微信**：用户可通过微信发送文字或图片与 Agent 交互（基础设施，后台常驻运行，Agent 无需管理）
-- **飞书**：用户从飞书群发票据图片，Agent 定时拉取处理
 - **OCR**：票据图片自动识别 → 结构化提取（通过 `.codewhale/skills/OCR/ocr.py` 调用腾讯云 OCR，详见 [OCR Skill](../OCR/SKILL.md)）
 
 ## 技能边界

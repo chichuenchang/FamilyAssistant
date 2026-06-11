@@ -1,7 +1,6 @@
 # 数据库 & 凭据
 data/ledger.db
 data/wechat_creds.json*
-data/.feishu_*
 data/.telegram_offset
 
 # Python
