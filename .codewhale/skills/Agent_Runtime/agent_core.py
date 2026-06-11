@@ -320,7 +320,7 @@ class Agent:
 
     def _call_llm(self, messages):
         import urllib.request
-        api_key = os.environ["DEEPSEEK_API_KEY"]
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         body = json.dumps({
             "model": "deepseek-v4-flash",
