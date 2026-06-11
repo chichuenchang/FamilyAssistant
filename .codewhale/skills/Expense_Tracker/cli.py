@@ -8,6 +8,7 @@ Agent 通过 CLI 子命令操作数据库，输出纯文本或 JSON。
 import argparse
 import os
 import sys
+from datetime import date
 from pathlib import Path
 
 # Windows 控制台编码容错
@@ -162,7 +163,7 @@ def cmd_deposit_list(args):
         print("没有定期存款记录。")
         return
     for r in rows:
-        status = "进行中" if not r["maturity_date"] or r["maturity_date"] >= str(__import__("datetime").date.today()) else "已到期"
+        status = "进行中" if not r["maturity_date"] or r["maturity_date"] >= str(date.today()) else "已到期"
         acct = f" 账号 {r['account']}" if r["account"] else ""
         print(f"#{r['id']} [{status}] {r['amount']} {r['currency']} "
               f"| {r['bank']}{acct} | {r['start_date']} → {r['maturity_date'] or '未设'} "
