@@ -13,7 +13,7 @@
   "doc_types": ["lease", "insurance", "health", "id_document", "other"],
   "reminder_lead_days": 30,
   "backup": {
-    "enabled": false,
+    "enabled": true,
     "debounce_seconds": 60,
     "include": ["data/ledger.db", "receipts", "documents", "config.json"],
     "remote_root": "FamilyAssistant"
