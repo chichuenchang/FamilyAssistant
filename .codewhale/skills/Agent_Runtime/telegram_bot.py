@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 if sys.platform == "win32":
@@ -33,7 +34,7 @@ if sys.platform == "win32":
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
-from agent_core import Agent
+from agent_core import Agent, RECEIPTS_DIR
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
@@ -64,6 +65,27 @@ def _api(method: str, data: dict | None = None) -> dict | None:
         return json.loads(urllib.request.urlopen(req, timeout=30).read())
     except Exception as e:
         print(f"[tg] API 错误: {e}", file=sys.stderr)
+        return None
+
+
+def download_photo(file_id: str) -> Path | None:
+    """getFile 拿到路径后下载图片到票据收件箱，返回保存路径。"""
+    import urllib.request
+    r = _api("getFile", {"file_id": file_id})
+    if not r or not r.get("ok"):
+        return None
+    file_path = r["result"].get("file_path", "")
+    if not file_path:
+        return None
+    url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = RECEIPTS_DIR / "inbox" / f"{ts}_telegram.jpg"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
+        return dest
+    except Exception as e:
+        print(f"[tg] 图片下载失败: {e}", file=sys.stderr)
         return None
 
 
@@ -137,6 +159,20 @@ def run() -> None:
                         "  • \"花了45块 午餐\" — 记账\n"
                         "  • \"这个月花了多少\" — 查账\n"
                         "  • \"美元汇率\" — 查汇率")
+                offset = max(offset, update_id)
+                continue
+
+            # 图片消息 → 下载到票据收件箱 → OCR 记账流程（与微信一致）
+            photos = msg.get("photo") or []
+            if photos:
+                print(f"[tg] 图片消息 from {user_name}")
+                file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
+                dest = download_photo(file_id) if file_id else None
+                if dest:
+                    reply = agent.handle_image(str(dest), user=str(chat_id))
+                else:
+                    reply = "图片下载失败，请重发。"
+                send_message(chat_id, reply)
                 offset = max(offset, update_id)
                 continue
 
