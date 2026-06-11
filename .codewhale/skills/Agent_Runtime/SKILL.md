@@ -84,7 +84,8 @@ if __name__ == "__main__":
 ```
 
 要点：
-- 用频道内唯一 id 作 `user`，保证多用户历史隔离。
+- 每条消息先过成员闸门：`members.resolve(频道, 频道id)` 返回 None → 静默丢弃（不回复、不进 LLM）。
+- 用频道内唯一 id 作 `user`（隔离对话历史），解析出的成员名作 `member` 传给 `agent.handle(text, user, member)` / `agent.handle_image(path, user, member)`。
 - 图片消息：先存到按月子目录 `receipts/YYYY-MM/`（用 `agent_core.receipt_month_dir()`），再调 `agent.handle_image(path, user)`。
 - 长回复需分段的频道（如 Telegram 4096 字限制）自行在传输层切分（见 `telegram_bot.py:send_message`）。
 - 不在传输层写任何记账/查账逻辑 —— 全部交给 Agent。
@@ -93,6 +94,7 @@ if __name__ == "__main__":
 
 - **命令白名单**：来自 `config.json` 的 `wechat.allowed_commands`（`agent_core.ALLOWED_COMMANDS` 读取，config 缺失才回退内置集）。Agent 只能调白名单内的 CLI 子命令，其余一律拒绝。增删命令改 `config.json` 即可。
 - **票据目录**：`agent_core.RECEIPTS_DIR` 来自 `config.json` `receipts_dir`，不在代码里硬编码。
+- **成员注册表**：`config.json` `members` 只在本机用 `cli.py member-add/list/remove` 管理（不在命令白名单内，Agent 调不到）。未注册频道 id 一律静默丢弃；写入类账目的归属由 `agent_core` 注入解析出的成员名，LLM 给的 member 一律剥离（防冒名）。
 - **凭据本地化**：所有频道凭据（微信扫码态、Telegram token）只存本地，不外传。
 - Telegram token 走环境变量，不写进仓库。
 

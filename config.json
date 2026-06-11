@@ -9,6 +9,7 @@
   },
   "db_path": "data/ledger.db",
   "receipts_dir": "receipts",
+  "members": {},
   "wechat": {
     "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。",
     "allowed_commands": [

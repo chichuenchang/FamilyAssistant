@@ -93,6 +93,16 @@
 
 **溯源查询**：`transfer-list --to-deposit-id <定期id>` 查某定期存款的资金来源；`--trace <银行/账号关键词>` 模糊溯源；`--from-deposit-id` 查某定期的去向。
 
+## 家庭成员
+
+四张账目表都有 `member` 列（空 = 家庭级，旧数据自动归"家庭"）。
+
+- 写入：`add` / `deposit-add` / `transfer-add` / `tax-add` 支持 `--member <名>`（须已登记）。
+- 查询：`list` / `summary` / `monthly` 支持 `--member` 过滤；`summary --by-member` 按成员汇总。
+- 登记（仅本机，Agent 白名单外）：
+  `member-add 爸爸 --telegram 123456789 --wechat wxid_abc` / `member-list` / `member-remove 爸爸`
+- 注册表存 `config.json` `members` 段；改后重启机器人生效。
+
 ## 接收票据（截图 / 发票照片）
 
 1. **OCR 提取** — 金额、日期、商家/类别
