@@ -61,6 +61,10 @@ def init_db(db_path: Optional[str] = None) -> None:
     conn.executescript(SCHEMA)
     # 迁移：为既有库补加新列
     _ensure_column(conn, "deposits", "account", "TEXT DEFAULT ''")
+    for table in ("transactions", "deposits", "transfers", "tax_filings"):
+        _ensure_column(conn, table, "member", "TEXT NOT NULL DEFAULT ''")
+    # member 索引必须在迁移后建（SCHEMA 里建会在旧库上先于迁移执行而失败）
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_txn_member ON transactions(member)")
     conn.commit()
     conn.close()
 

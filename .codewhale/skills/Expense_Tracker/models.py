@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     description     TEXT    DEFAULT '',
     date            TEXT    NOT NULL,
     receipt_path    TEXT    DEFAULT NULL,
+    member          TEXT    NOT NULL DEFAULT '',
     notes           TEXT    DEFAULT '',
     created_at      TEXT    DEFAULT (datetime('now','localtime'))
 );
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS deposits (
     start_date      TEXT    NOT NULL,
     maturity_date   TEXT    DEFAULT NULL,
     receipt_path    TEXT    DEFAULT NULL,
+    member          TEXT    NOT NULL DEFAULT '',
     notes           TEXT    DEFAULT '',
     created_at      TEXT    DEFAULT (datetime('now','localtime'))
 );
@@ -84,6 +86,7 @@ CREATE TABLE IF NOT EXISTS tax_filings (
     filing_date     TEXT    DEFAULT NULL,
     data            TEXT    NOT NULL DEFAULT '{}',
     receipt_path    TEXT    DEFAULT NULL,
+    member          TEXT    NOT NULL DEFAULT '',
     notes           TEXT    DEFAULT '',
     created_at      TEXT    DEFAULT (datetime('now','localtime'))
 );
@@ -114,6 +117,7 @@ CREATE TABLE IF NOT EXISTS transfers (
     to_type         TEXT    DEFAULT '',
     transfer_date   TEXT    DEFAULT '',
     to_deposit_id   INTEGER DEFAULT NULL,
+    member          TEXT    NOT NULL DEFAULT '',
     notes           TEXT    DEFAULT '',
     created_at      TEXT    DEFAULT (datetime('now','localtime'))
 );
