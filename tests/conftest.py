@@ -21,6 +21,12 @@ DOC_DIR = (
 )
 sys.path.insert(0, str(DOC_DIR))
 
+BACKUP_DIR = (
+    Path(__file__).resolve().parent.parent
+    / ".codewhale" / "skills" / "Remote_Backup"
+)
+sys.path.insert(0, str(BACKUP_DIR))
+
 import pytest
 import db as dbm  # the fixture below is named ``db`` — alias avoids shadowing
 

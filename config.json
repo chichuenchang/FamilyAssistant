@@ -12,6 +12,12 @@
   "documents_dir": "documents",
   "doc_types": ["lease", "insurance", "health", "id_document", "other"],
   "reminder_lead_days": 30,
+  "backup": {
+    "enabled": false,
+    "debounce_seconds": 60,
+    "include": ["data/ledger.db", "receipts", "documents", "config.json"],
+    "remote_root": "FamilyAssistant"
+  },
   "members": {},
   "wechat": {
     "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。",
@@ -21,7 +27,8 @@
       "transfer-add", "transfer-list",
       "tax-add", "tax-list",
       "fx-get", "fx-set", "categories",
-      "doc-add", "doc-list", "doc-show", "doc-due", "doc-update", "doc-ack"
+      "doc-add", "doc-list", "doc-show", "doc-due", "doc-update", "doc-ack",
+      "backup-now", "backup-status", "backup-verify"
     ]
   }
 }

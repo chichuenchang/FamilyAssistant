@@ -40,6 +40,9 @@ from members import resolve
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
 from reminder import check_and_push as _doc_reminder_check
 
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
+from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
+
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -87,6 +90,7 @@ def download_photo(file_id: str) -> Path | None:
     dest = receipt_month_dir(now) / f"{ts}_telegram.jpg"
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
+        _backup_mark_dirty()
         return dest
     except Exception as e:
         print(f"[tg] 图片下载失败: {e}", file=sys.stderr)
@@ -205,6 +209,9 @@ def run() -> None:
             _doc_reminder_check(send_message, "telegram")
         except Exception as e:
             print(f"[tg] 文档提醒检查异常: {e}", file=sys.stderr)
+
+        # 用户数据备份：脏 + 静默期满则镜像一轮（backup_sync 内部把关，永不抛）
+        _backup_tick()
 
 
 if __name__ == "__main__":

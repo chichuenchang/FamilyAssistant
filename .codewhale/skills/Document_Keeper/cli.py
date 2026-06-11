@@ -39,6 +39,18 @@ ROOT = Path(__file__).resolve().parents[3]
 # 测试钩子：覆盖数据库路径，避免测试碰真实账本
 _DB_OVERRIDE = os.environ.get("DOC_KEEPER_DB") or None
 
+# 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）
+_BACKUP_WRITE_COMMANDS = {"doc-add", "doc-update", "doc-ack", "doc-remove"}
+
+
+def _mark_backup_dirty() -> None:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
+        from backup_sync import mark_dirty
+        mark_dirty()
+    except Exception:
+        pass
+
 
 def _validate_member(name: str) -> str:
     """非空成员名必须已登记；返回原值或抛 ValueError。空值放行（家庭级）。"""
@@ -261,6 +273,10 @@ def main():
     except ValueError as e:
         print(f"错误: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        # finally：doc-add 可能已复制文件后才失败，文件已落盘也要标脏
+        if args.command in _BACKUP_WRITE_COMMANDS:
+            _mark_backup_dirty()
 
 
 if __name__ == "__main__":

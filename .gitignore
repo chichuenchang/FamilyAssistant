@@ -18,6 +18,10 @@ documents/*
 # 文档提醒状态
 data/.doc_reminder_state
 
+# 备份引擎状态（本机的镜像清单，不入库）
+data/.backup_manifest.json
+data/.backup_state.json
+
 # IDE
 .vscode/
 .idea/

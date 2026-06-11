@@ -53,6 +53,9 @@ from members import resolve
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
 from reminder import check_and_push as _doc_reminder_check
 
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
+from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
+
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
 
@@ -106,6 +109,7 @@ def run_bot(relogin: bool = False) -> None:
             ts = now.strftime("%Y%m%d_%H%M%S")
             img_path = receipt_month_dir(now) / f"{ts}_wechat.jpg"
             msg.save(str(img_path))
+            _backup_mark_dirty()
             reply = agent.handle_image(str(img_path), user=msg.from_user, member=member)
             msg.reply_text(reply)
         except Exception as e:
@@ -141,6 +145,7 @@ def run_bot(relogin: bool = False) -> None:
                 _doc_reminder_check(lambda wxid, text: bot.send_text(wxid, text), "wechat")
             except Exception as e:
                 print(f"[wx] 文档提醒检查异常: {e}", file=sys.stderr)
+            _backup_tick()
             _time.sleep(600)
 
     threading.Thread(target=_reminder_loop, daemon=True, name="doc-reminder").start()

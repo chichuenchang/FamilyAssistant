@@ -9,12 +9,14 @@
 | **Expense Tracker** | 记账、查账、汇总、存款、报税、汇率 | [SKILL.md](.codewhale/skills/Expense_Tracker/SKILL.md) | 记账、查账、汇总、存款、报税、汇率、票据 |
 | **OCR** | 图片文字识别、票据结构化提取 | [SKILL.md](.codewhale/skills/OCR/SKILL.md) | 图片文字识别、票据结构化提取 |
 | **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒 | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
+| **Remote Backup** | 用户数据云盘镜像（可选，provider 由用户私有实现） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
 
 ## 加载策略
 
 - 用户意图涉及记账/查账/财务 → 加载 Expense Tracker（如需票据识别，同时加载 OCR）
 - 用户意图涉及文档归档/合同/保险/证件/到期提醒 → 加载 Document Keeper（如需图片识别，同时加载 OCR）
+- 用户意图涉及备份/恢复/云盘同步 → 加载 Remote Backup
 - 仅闲聊/问候 → 不加载
 
 Agent 使用 `load_skill` 工具按需获取 SKILL.md 内容。
@@ -58,6 +60,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `receipts_dir` | `agent_core.RECEIPTS_DIR` |
 | `documents_dir` | `Document_Keeper/doc_models.py`（DOCUMENTS_DIR）、`agent_core.DOCUMENTS_DIR` |
 | `doc_types` / `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
+| `backup`（enabled/debounce/include/remote_root） | `Remote_Backup/backup_sync.py`（CFG，读一次） |
 | `members` | `Agent_Runtime/members.py`（只读：resolve）、`cli.py member-*`（本机写入） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
 
@@ -69,4 +72,5 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `config.json` — 全局配置（分类/币种/路径/命令白名单的单一事实来源）
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
 - `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒）
+- `.codewhale/skills/Remote_Backup/` — 用户数据云盘镜像 skill（backup_provider.py 留给用户私有实现）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md

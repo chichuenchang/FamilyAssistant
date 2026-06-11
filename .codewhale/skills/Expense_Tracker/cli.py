@@ -27,6 +27,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 import members as members_registry
 
+# 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）
+_BACKUP_WRITE_COMMANDS = {"init", "add", "delete", "deposit-add", "transfer-add",
+                          "tax-add", "fx-set", "member-add", "member-remove"}
+
+
+def _mark_backup_dirty() -> None:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
+        from backup_sync import mark_dirty
+        mark_dirty()
+    except Exception:
+        pass
+
 from db import (
     init_db,
     add_transaction,
@@ -492,6 +505,8 @@ def main():
     except ValueError as e:
         print(f"错误: {e}", file=sys.stderr)
         sys.exit(1)
+    if args.command in _BACKUP_WRITE_COMMANDS:
+        _mark_backup_dirty()
 
 
 if __name__ == "__main__":

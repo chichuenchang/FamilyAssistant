@@ -45,6 +45,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 发什么都可以，比如 `花了45块 午餐`、`这个月花了多少`，或发一张租约照片说 `存一下这份租约`。
 每笔账自动归到发消息的成员名下；`summary --by-member` 可看谁花了多少。
 归档的文档到期前 Bot 会每天主动提醒（如 "租约 20 天后到期 — 提前60天通知房东"）。
+（可选）配置云盘备份后，所有数据自动镜像到你自己的网盘；换电脑 `backup-restore` 一键恢复。
 
 ## 目录结构
 
@@ -66,6 +67,11 @@ FamilyAssistant/
 │       │   ├── doc_db.py         ← SQLite 数据层
 │       │   ├── cli.py            ← 文档 CLI 入口
 │       │   └── reminder.py       ← 每日到期提醒
+│       ├── Remote_Backup/    ← 用户数据云盘镜像（可选）
+│       │   ├── SKILL.md
+│       │   ├── backup_sync.py    ← 同步引擎
+│       │   ├── backup_provider.py← 云盘占位（用户自己实现）
+│       │   └── cli.py            ← 备份 CLI 入口
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）

@@ -84,14 +84,20 @@ _FALLBACK_ALLOWED = {
 }
 ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FALLBACK_ALLOWED)
 
-# doc-* 命令属于 Document_Keeper skill，其余走 Expense_Tracker
+# 子命令 → 所属 skill（未列出的归 Expense_Tracker）
 _DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
                  "doc-update", "doc-ack", "doc-remove"}
+_BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify", "backup-restore"}
 
 
 def _cli_path(cmd: str) -> Path:
     """子命令 → 所属 skill 的 CLI 路径。"""
-    skill = "Document_Keeper" if cmd in _DOC_COMMANDS else "Expense_Tracker"
+    if cmd in _DOC_COMMANDS:
+        skill = "Document_Keeper"
+    elif cmd in _BACKUP_COMMANDS:
+        skill = "Remote_Backup"
+    else:
+        skill = "Expense_Tracker"
     return ROOT / ".codewhale" / "skills" / skill / "cli.py"
 
 
@@ -127,6 +133,14 @@ def _build_system_prompt() -> str:
 - 用户问"有什么要到期的""最近有什么要办的"→ due_documents
 - 用户说"续约了""换新证了"→ update_document 改到期日；旧文档另存时把旧的 status 改 superseded
 - 用户说"知道了""别再提醒"→ ack_document
+
+## 数据备份（可选功能）
+- 用户问"备份了吗""上次备份什么时候"→ backup_status
+- 用户说"立刻备份""把数据同步到云盘"→ backup_now
+- 用户问"云端和本地一致吗"→ backup_verify
+- backup_status 显示未启用/未实现时：告知备份是可选功能，需要在电脑上让编码
+  Agent 按 Remote_Backup/SKILL.md 实现 provider 并启用；不要反复推销
+- 数据恢复（backup-restore）只能在电脑上手动执行，你调不到
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
@@ -198,6 +212,9 @@ def _tool_show_document(args): return _run_cli("doc-show", args)
 def _tool_due_documents(args): return _run_cli("doc-due", args)
 def _tool_update_document(args): return _run_cli("doc-update", args)
 def _tool_ack_document(args): return _run_cli("doc-ack", args)
+def _tool_backup_now(args): return _run_cli("backup-now", args)
+def _tool_backup_status(args): return _run_cli("backup-status", args)
+def _tool_backup_verify(args): return _run_cli("backup-verify", args)
 
 def _tool_ocr_image(args):
     path = args.get("path", "")
@@ -242,6 +259,9 @@ _TOOL_MAP = {
     "due_documents": _tool_due_documents,
     "update_document": _tool_update_document,
     "ack_document": _tool_ack_document,
+    "backup_now": _tool_backup_now,
+    "backup_status": _tool_backup_status,
+    "backup_verify": _tool_backup_verify,
 }
 
 # 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
@@ -435,6 +455,9 @@ TOOL_SCHEMAS = [
     _fn("ack_document", "确认某文档的到期提醒（之后不再每日重复提醒）", {
         "id": _int("文档 id"),
     }, ["id"]),
+    _fn("backup_now", "立即把用户数据镜像到云盘（需用户已配置 backup provider）", {}),
+    _fn("backup_status", "查看云盘备份状态（是否启用/已配置/待同步/上次同步/错误）", {}),
+    _fn("backup_verify", "校验云端镜像与本地清单是否一致", {}),
 ]
 
 

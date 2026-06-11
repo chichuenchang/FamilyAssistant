@@ -185,9 +185,13 @@ _CLI = str(_Path(__file__).resolve().parent.parent
 
 
 def _run_cli(*args):
+    # BACKUP_STATE_DIR: 写命令会标记备份脏位，重定向到临时目录避免碰真实 data/
+    import os as _os
+    import tempfile as _tempfile
+    env = {**_os.environ, "BACKUP_STATE_DIR": _tempfile.mkdtemp()}
     return subprocess.run(
         [_sys.executable, _CLI, *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
     )
 
 
