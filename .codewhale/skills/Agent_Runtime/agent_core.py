@@ -75,38 +75,29 @@ _FALLBACK_ALLOWED = {
 ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FALLBACK_ALLOWED)
 
 
-# ── 项目文档加载 ────────────────────────────────────────────
-
-def _load_file(path: str) -> str:
-    f = ROOT / path
-    return f.read_text(encoding="utf-8") if f.exists() else ""
-
+# ── system prompt ───────────────────────────────────────────
 
 def _build_system_prompt() -> str:
-    """组装 system prompt：项目文档 + 工具定义 + 行为准则。"""
-    overview = _load_file("FamilyAssistant.md")
-    config = _load_file("config.json")
+    """组装 system prompt：身份 + config 提取的事实 + 行为准则。
 
+    工具定义走 API tools 参数。FamilyAssistant.md 是开发文档（文件路径、
+    CLI 示例），对运行时对话无用，不进 prompt——省每条消息的 token。
+    分类/币种从 config.json 提取为紧凑列表，不嵌原始 JSON。
+    """
     today = date.today()
-    currencies = "/".join(_CONFIG.get("supported_currencies") or ["USD"])
-    base_cur = _CONFIG.get("base_currency") or "USD"
-    tx_types = "/".join(_CONFIG.get("categories", {}).keys()) or "expense/income/investment/savings"
+    tx_types = "/".join(_TX_TYPES)
+    currencies = "/".join(_CURRENCIES)
 
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
-你有整个项目的全局视角，能自主决定如何响应用户。
 
 ## 你是谁
 - 你可以帮用户记账、查账、汇总开销、管理定期存款、查询汇率、OCR 票据等
 - 你友好、简洁、直接——回复不用太长
 
-## 项目结构
-{overview}
-
-## 配置
-{config}
-
-## 工具使用（通过 function calling 调用，定义见 tools 参数）
-- type: {tx_types}；currency: {currencies}（默认基准 {base_cur}）
+## 记账合法值（来自配置，必须从中选）
+- 交易类型: {tx_types}
+- 币种: {currencies}（默认基准 {_BASE_CUR}）
+- 各类型分类: {_CATS_DESC}
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
