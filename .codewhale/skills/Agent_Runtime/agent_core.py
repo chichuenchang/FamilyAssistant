@@ -209,6 +209,18 @@ _TOOL_MAP = {
     "ocr_image": _tool_ocr_image,
 }
 
+# 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
+_MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_tax"}
+
+
+def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
+    """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。"""
+    if tool_name in _MEMBER_WRITE_TOOLS:
+        targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
+        if member:
+            targs["member"] = member
+    return targs
+
 
 # ── 工具 JSON Schema（DeepSeek function calling，OpenAI 兼容格式） ──
 # 参数名与 CLI 标志一致（含连字符），_run_cli 直接转 --flag。
@@ -259,15 +271,19 @@ TOOL_SCHEMAS = [
         "start": _s("开始日期 YYYY-MM-DD"),
         "end": _s("结束日期 YYYY-MM-DD"),
         "limit": _int("最多返回条数"),
+        "member": _s("按成员过滤，如只看某个家庭成员的账"),
     }),
     _fn("get_summary", "按分类汇总金额（分币种）", {
         "type": _s("交易类型，默认 expense", enum=_TX_TYPES),
         "year": _int("年份"),
         "month": _int("月份 1-12"),
+        "member": _s("按成员过滤，如只看某个家庭成员的账"),
+        "by-member": {"type": "boolean", "description": "按成员汇总（谁花了多少）"},
     }),
     _fn("get_monthly", "按月汇总金额（分币种）", {
         "type": _s("交易类型，默认 expense", enum=_TX_TYPES),
         "year": _int("年份"),
+        "member": _s("按成员过滤，如只看某个家庭成员的账"),
     }),
     _fn("list_deposits", "查询定期存款", {
         "currency": _s("币种", enum=_CURRENCIES),
@@ -353,7 +369,10 @@ class Agent:
         self.history_size = history_size
         self.history: dict[str, list[dict]] = defaultdict(list)
 
-    def handle(self, text: str, user: str = "default") -> str:
+    def handle(self, text: str, user: str = "default", member: str = "") -> str:
+        # 防御纵深：传输层闸门漏掉的未注册来源，这里二次拦截，不碰 LLM
+        if not member:
+            return ""
         text = text.strip()
         if not text:
             return "收到空消息。"
@@ -367,7 +386,9 @@ class Agent:
         if not api_key:
             return "未配置 DEEPSEEK_API_KEY。"
 
-        msgs = [{"role": "system", "content": self.system_prompt}]
+        member_note = (f"\n\n## 当前对话成员\n{member} —— 写入类操作自动归到该成员名下；"
+                       f"查询类工具可用 member 参数按成员过滤。")
+        msgs = [{"role": "system", "content": self.system_prompt + member_note}]
         user_history = self.history[user]
         msgs.extend(user_history[-self.history_size * 2:])
         msgs.append({"role": "user", "content": text})
@@ -392,6 +413,7 @@ class Agent:
                 except (json.JSONDecodeError, KeyError):
                     targs = {}
                 fn = _TOOL_MAP.get(name)
+                targs = _apply_member(name, targs, member)
                 result = fn(targs) if fn else f"[错误] 未知工具: {name}"
                 # 只展示工具调用，代码输出交给 LLM 转述
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
@@ -406,7 +428,9 @@ class Agent:
         self._save_history(user, text, reply)
         return final
 
-    def handle_image(self, image_path: str, user: str = "default") -> str:
+    def handle_image(self, image_path: str, user: str = "default", member: str = "") -> str:
+        if not member:
+            return ""
         from ocr import ocr_image, is_available
         if is_available():
             ocr_text = ocr_image(image_path)
@@ -415,7 +439,7 @@ class Agent:
                     f"用户发了一张票据图片，OCR结果:\n{ocr_text}\n"
                     f"提取金额/日期/类别帮用户记账。如果不完整，告知需要什么。"
                 )
-                return self.handle(prompt, user=user)
+                return self.handle(prompt, user=user, member=member)
         return "📷 图片已收到。请用文字描述（如\"午餐45块\"），或配置腾讯云 OCR。"
 
     def _call_llm(self, messages) -> dict | None:
@@ -467,5 +491,5 @@ if __name__ == "__main__":
             break
         if msg.lower() in ("quit", "exit", "q"):
             break
-        print(agent.handle(msg))
+        print(agent.handle(msg, member="本地测试"))
         print()
