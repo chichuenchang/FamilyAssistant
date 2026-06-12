@@ -115,7 +115,7 @@ def setup_logging(debug: bool = False) -> logging.Logger:
 _FALLBACK_ALLOWED = {
     "add", "list", "summary", "monthly", "delete",
     "deposit-add", "deposit-list", "tax-add", "tax-list",
-    "fx-get", "fx-set", "categories",
+    "fx-get", "fx-set",
     "transfer-add", "transfer-list",
 }
 ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FALLBACK_ALLOWED)

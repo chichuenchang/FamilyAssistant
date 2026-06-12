@@ -110,6 +110,7 @@ if __name__ == "__main__":
 |------|------|------|
 | `DEEPSEEK_API_KEY` | Agent LLM（所有频道共用） | ✅ |
 | `DEEPSEEK_BASE_URL` | LLM 自定义端点（默认官方） | ❌ |
+| `DEEPSEEK_MODEL` | Agent LLM 模型（默认 `deepseek-v4-pro`） | ❌ |
 | `TELEGRAM_BOT_TOKEN` | Telegram 频道 | Telegram 时必需 |
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 图片 OCR（见 [OCR Skill](../OCR/SKILL.md)） | 收图片时 |
 | `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` / `GDRIVE_REFRESH_TOKEN` | 云盘备份（`backup_tick` 在传输层轮询里跑，见 [Remote Backup](../Remote_Backup/SKILL.md)） | backup.enabled 时 |

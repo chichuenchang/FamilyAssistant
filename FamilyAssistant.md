@@ -1,6 +1,7 @@
 # Family Assistant
 
-> 个人/家庭多功能助手。技能拆分为独立 skill，Agent 按需加载，不在会话启动时全量加载。
+> 个人/家庭多功能助手。技能拆分为独立 skill；本文档与各 SKILL.md 面向开发者，
+> 运行时 Agent 不读取它们（见下"运行时提示词"）。
 
 ## 可用技能
 
@@ -14,16 +15,12 @@
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
 
-## 加载策略
+## 运行时提示词
 
-- 用户意图涉及记账/查账/财务 → 加载 Expense Tracker（如需票据识别，同时加载 OCR）
-- 用户意图涉及文档归档/合同/保险/证件/到期提醒 → 加载 Document Keeper（如需图片识别，同时加载 OCR）
-- 用户意图涉及备忘/杂项信息记忆（"记一下""帮我记住"）→ 加载 Note Keeper
-- 用户意图涉及日程/活动/待办/日历（"安排""X号有什么事""待办清单"）→ 加载 Calendar Keeper
-- 用户意图涉及备份/恢复/云盘同步 → 加载 Remote Backup
-- 仅闲聊/问候 → 不加载
-
-Agent 使用 `load_skill` 工具按需获取 SKILL.md 内容。
+运行时 Agent（`Agent_Runtime/agent_core.py`）在启动时把所有技能领域的行为准则
+一次性组装进 system prompt（`_build_system_prompt()`），分类/币种/文档类型等
+合法值从 `config.json` 提取为紧凑列表。SKILL.md 与本文档是开发文档，
+不进 prompt，对运行时对话无影响。工具定义走 API 的 tools 参数（function calling）。
 
 ## 快速开始
 
