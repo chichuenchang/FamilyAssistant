@@ -175,6 +175,14 @@ class TestDue:
         doc_db.update_document(doc_id, status="archived", db_path=doc_db_path)
         assert doc_db.due_documents(today=self.TODAY, db_path=doc_db_path) == []
 
+    def test_due_on_uninitialized_ledger_returns_empty(self, tmp_path):
+        # Production bug: the reminder polls every cycle, but on a ledger where
+        # no document was ever added init_db() never ran, so the documents table
+        # is missing. Reading it must return empty, not raise
+        # "no such table: documents".
+        fresh = str(tmp_path / "virgin.db")
+        assert doc_db.due_documents(today=self.TODAY, db_path=fresh) == []
+
 
 import subprocess
 import sys as _sys
