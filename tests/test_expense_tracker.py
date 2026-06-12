@@ -573,3 +573,84 @@ def test_convert_to_base(db):
 
     # No rate set for CAD → USD
     assert dbm.convert_to_base(1000, "CAD", db_path=db) is None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 21. _store_receipt — 票据归档约定（cli 层，与 Document_Keeper 同模式）
+# ═══════════════════════════════════════════════════════════════════════
+
+import importlib.util as _ilu  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+# 多个 skill 都有 cli.py，裸 `import cli` 名字冲突 → 按路径精确加载 Expense_Tracker 的。
+_CLI_PATH = (_Path(__file__).resolve().parent.parent
+             / ".codewhale" / "skills" / "Expense_Tracker" / "cli.py")
+_spec = _ilu.spec_from_file_location("expense_cli", _CLI_PATH)
+expense_cli = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(expense_cli)
+
+
+def _patch_receipts(monkeypatch, tmp_path):
+    """把 cli 的 ROOT / RECEIPTS_DIR 指向临时目录，避免碰真实 receipts/。"""
+    monkeypatch.setattr(expense_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(expense_cli, "RECEIPTS_DIR", tmp_path / "receipts")
+
+
+def test_store_receipt_archives_external_file(monkeypatch, tmp_path):
+    """receipts/ 外的文件 → 复制进 receipts/YYYY-MM/，规范命名、后缀小写、原件保留。"""
+    _patch_receipts(monkeypatch, tmp_path)
+    src = tmp_path / "inbox" / "photo.JPG"
+    src.parent.mkdir()
+    src.write_bytes(b"img")
+
+    rel = expense_cli._store_receipt(str(src), "2026-06-01", "expense_午餐")
+
+    assert rel == "receipts/2026-06/2026-06-01_expense_午餐.jpg"
+    assert (tmp_path / rel).read_bytes() == b"img"   # 已复制到目标
+    assert src.exists()                              # copy 非 move，原件还在
+
+
+def test_store_receipt_keeps_file_already_in_receipts(monkeypatch, tmp_path):
+    """已在 receipts/ 内的文件（入站照片）原样返回，不改名、不产生副本。"""
+    _patch_receipts(monkeypatch, tmp_path)
+    inbound = tmp_path / "receipts" / "2026-06" / "20260601_222413_wechat.jpg"
+    inbound.parent.mkdir(parents=True)
+    inbound.write_bytes(b"x")
+
+    rel = expense_cli._store_receipt(str(inbound), "2026-06-01", "expense_午餐")
+
+    assert rel == "receipts/2026-06/20260601_222413_wechat.jpg"
+    assert len(list((tmp_path / "receipts" / "2026-06").iterdir())) == 1
+
+
+def test_store_receipt_missing_file_raises(monkeypatch, tmp_path):
+    """文件不存在 → ValueError（main 捕获为干净报错退出 1）。"""
+    _patch_receipts(monkeypatch, tmp_path)
+    with pytest.raises(ValueError):
+        expense_cli._store_receipt(str(tmp_path / "nope.jpg"), "2026-06-01", "expense_x")
+
+
+def test_store_receipt_collision_suffixes(monkeypatch, tmp_path):
+    """同名归档冲突 → 追加 _1。"""
+    _patch_receipts(monkeypatch, tmp_path)
+    src = tmp_path / "a.png"
+    src.write_bytes(b"1")
+
+    r1 = expense_cli._store_receipt(str(src), "2026-06-01", "expense_lunch")
+    r2 = expense_cli._store_receipt(str(src), "2026-06-01", "expense_lunch")
+
+    assert r1 == "receipts/2026-06/2026-06-01_expense_lunch.png"
+    assert r2 == "receipts/2026-06/2026-06-01_expense_lunch_1.png"
+
+
+def test_store_receipt_invalid_date_falls_back_to_today(monkeypatch, tmp_path):
+    """when 为空/非法 → 用今天的年月与日期命名。"""
+    from datetime import date as _date
+    _patch_receipts(monkeypatch, tmp_path)
+    src = tmp_path / "b.jpg"
+    src.write_bytes(b"1")
+
+    rel = expense_cli._store_receipt(str(src), "", "expense_x")
+
+    today = _date.today()
+    assert rel == f"receipts/{today.strftime('%Y-%m')}/{today.isoformat()}_expense_x.jpg"

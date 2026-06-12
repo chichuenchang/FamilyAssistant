@@ -46,6 +46,9 @@ BASE_CURRENCY = _cfg.get("base_currency") or _FALLBACK_BASE
 _ROOT = _CONFIG_PATH.parent
 DB_PATH = _ROOT / (_cfg.get("db_path") or "data/ledger.db")
 
+# 票据目录：config.json receipts_dir（相对项目根）；缺失回退 receipts
+RECEIPTS_DIR = _ROOT / (_cfg.get("receipts_dir") or "receipts")
+
 # ---------- SQL DDL ----------
 
 SCHEMA = """

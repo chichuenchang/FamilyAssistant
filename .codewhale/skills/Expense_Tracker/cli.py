@@ -7,6 +7,8 @@ Agent 通过 CLI 子命令操作数据库，输出纯文本或 JSON。
 
 import argparse
 import os
+import re
+import shutil
 import sys
 from datetime import date
 from pathlib import Path
@@ -60,6 +62,10 @@ from db import (
     get_base_currency,
     TRANSACTION_TYPES,
 )
+from models import RECEIPTS_DIR
+
+# 项目根：用于把存档票据路径转成相对路径（与 Document_Keeper 同模式）
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _validate_member(name: str) -> str:
@@ -73,12 +79,46 @@ def _validate_member(name: str) -> str:
     return name
 
 
+def _store_receipt(src: str, when: str, label: str) -> str:
+    """复制票据到 receipts/YYYY-MM/，返回相对项目根的路径（正斜杠）。
+
+    - 已在票据目录内的文件不复制，原样返回相对路径（如频道存入的入站照片）。
+    - 否则归档为 receipts/YYYY-MM/YYYY-MM-DD_<label>.ext（月份/日期取 when，无效则今天）。
+    - 同名冲突追加 _1/_2…。文件不存在抛 ValueError（main 捕获，干净报错退出）。
+    """
+    p = Path(src)
+    abs_p = (p if p.is_absolute() else ROOT / p).resolve()
+    if not abs_p.exists():
+        raise ValueError(f"票据文件不存在: {src}")
+    receipts_root = RECEIPTS_DIR.resolve()
+    if abs_p.is_relative_to(receipts_root):
+        return abs_p.relative_to(ROOT.resolve()).as_posix()
+    try:
+        d = date.fromisoformat(when)
+    except (ValueError, TypeError):
+        d = date.today()
+    safe_label = re.sub(r'[\\/:*?"<>|\s]+', "_", label).strip("_")[:40] or "receipt"
+    dest_dir = receipts_root / d.strftime("%Y-%m")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{d.isoformat()}_{safe_label}"
+    dest = dest_dir / f"{stem}{abs_p.suffix.lower()}"
+    n = 1
+    while dest.exists():
+        dest = dest_dir / f"{stem}_{n}{abs_p.suffix.lower()}"
+        n += 1
+    shutil.copy2(abs_p, dest)
+    return dest.relative_to(ROOT.resolve()).as_posix()
+
+
 def cmd_init(_args):
     init_db()
     print("数据库初始化完成。")
 
 
 def cmd_add(args):
+    member = _validate_member(args.member or "")
+    receipt = _store_receipt(args.receipt, args.date,
+                             f"{args.type}_{args.desc or ''}") if args.receipt else ""
     tid, dupes = add_transaction(
         type_=args.type,
         amount=args.amount,
@@ -86,10 +126,10 @@ def cmd_add(args):
         date_=args.date,
         category=args.category or "",
         description=args.desc or "",
-        receipt_path=args.receipt or "",
+        receipt_path=receipt,
         notes=args.notes or "",
         skip_dup_check=args.force,
-        member=_validate_member(args.member or ""),
+        member=member,
     )
     if dupes:
         print(f"⚠ 疑似重复！已存在 {len(dupes)} 笔同日同金额同币种的记录：")
@@ -185,6 +225,9 @@ def cmd_monthly(args):
 
 
 def cmd_deposit_add(args):
+    member = _validate_member(args.member or "")
+    receipt = _store_receipt(args.receipt, args.start_date,
+                             f"deposit_{args.bank or ''}") if args.receipt else ""
     did = add_deposit(
         amount=args.amount,
         currency=args.currency,
@@ -194,9 +237,9 @@ def cmd_deposit_add(args):
         rate=args.rate or 0.0,
         start_date=args.start_date,
         maturity_date=args.maturity or "",
-        receipt_path=args.receipt or "",
+        receipt_path=receipt,
         notes=args.notes or "",
-        member=_validate_member(args.member or ""),
+        member=member,
     )
     acct = f" 账号 {args.account}" if args.account else ""
     print(f"已添加定期存款 #{did}: {args.amount} {args.currency} @ {args.bank or '未知银行'}{acct}")
@@ -275,14 +318,17 @@ def cmd_transfer_list(args):
 def cmd_tax_add(args):
     import json
     data = json.loads(args.data) if args.data else {}
+    member = _validate_member(args.member or "")
+    receipt = _store_receipt(args.receipt, args.filing_date or "",
+                             f"tax_{args.year}_{args.country}") if args.receipt else ""
     tid = add_tax_filing(
         year=args.year,
         country=args.country,
         data=data,
         filing_date=args.filing_date or "",
-        receipt_path=args.receipt or "",
+        receipt_path=receipt,
         notes=args.notes or "",
-        member=_validate_member(args.member or ""),
+        member=member,
     )
     print(f"已添加报税记录 #{tid}: {args.year} {args.country}")
 
