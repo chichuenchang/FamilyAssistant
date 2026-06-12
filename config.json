@@ -44,6 +44,12 @@
     "other"
   ],
   "reminder_lead_days": 30,
+  "calendar": {
+    "_comment": "家庭日程与远程日历同步。凭据走 GCAL_* 环境变量，日历 id 走 GCAL_CALENDAR_ID，均不入 git。",
+    "enabled": true,
+    "lookahead_days": 10,
+    "refresh_minutes": 15
+  },
   "backup": {
     "enabled": true,
     "debounce_seconds": 60,
@@ -86,7 +92,13 @@
       "note-list",
       "note-search",
       "note-delete",
-      "note-pin"
+      "note-pin",
+      "cal-add",
+      "cal-list",
+      "cal-done",
+      "cal-delete",
+      "cal-sync",
+      "cal-status"
     ]
   }
 }

@@ -49,6 +49,9 @@ from reminder import check_and_push as _doc_reminder_check
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
 from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
 
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
+from calendar_sync import calendar_tick as _calendar_tick
+
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -166,6 +169,8 @@ def run() -> None:
                 print(f"[tg] 忽略未注册来源 chat_id={chat_id}")
                 offset = max(offset, update_id)
                 continue
+            # 已注册成员的消息 → 静默节流刷新远程日历（内部把关，永不抛）
+            _calendar_tick()
             user_name = msg.get("from", {}).get("first_name", "unknown")
             text = msg.get("text", "")
 

@@ -125,9 +125,12 @@ _DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
                  "doc-update", "doc-ack", "doc-remove"}
 _BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify", "backup-restore"}
 _NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
+_CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
+                 "cal-sync", "cal-status"}
 
-# 备忘命令始终允许（个人备忘是 Agent 核心能力，不随 wechat 白名单配置开关）
+# 备忘/日程命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
+ALLOWED_COMMANDS |= _CAL_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
@@ -138,6 +141,8 @@ def _cli_path(cmd: str) -> Path:
         skill = "Remote_Backup"
     elif cmd in _NOTE_COMMANDS:
         skill = "Note_Keeper"
+    elif cmd in _CAL_COMMANDS:
+        skill = "Calendar_Keeper"
     else:
         skill = "Expense_Tracker"
     return ROOT / ".codewhale" / "skills" / skill / "cli.py"
@@ -189,6 +194,16 @@ def _build_system_prompt() -> str:
 - 用户问"有什么要到期的""最近有什么要办的"→ due_documents
 - 用户说"续约了""换新证了"→ update_document 改到期日；旧文档另存时把旧的 status 改 superseded
 - 用户说"知道了""别再提醒"→ ack_document
+
+## 家庭日程与待办（与远程日历静默同步）
+- 未来{_CAL_LOOKAHEAD}天的家庭日程/待办会自动注入上下文（家庭共享，全员可见）
+- **不要主动播报日程**：仅当用户问到（"接下来有什么安排""待办清单"）或与当前话题直接相关时才提及
+- 用户说"安排/约了/X号要做Y/加个日程/活动"→ add_event（活动必须有日期；有具体时间则给 start/end）
+- 用户说"要做X/记个待办/任务"→ add_task（有截止日给 due）
+- 用户问"接下来有什么安排/这周有什么事/我的待办"→ 按上下文回答或调 list_schedule
+- 用户说"做完了/办完了"→ complete_task；"取消/不去了"→ remove_schedule_item
+- 用户说"刷新日历/同步日历"→ sync_calendar；问同步状态 → calendar_status
+- 新增/完成/取消会自动同步到远程日历；"待同步"= 暂未推送会自动重试，无需向用户解释技术细节
 
 ## 数据备份（可选功能）
 - 用户问"备份了吗""上次备份什么时候"→ backup_status
@@ -311,6 +326,26 @@ def _tool_search_notes(args): return _run_cli("note-search", args)
 def _tool_delete_note(args): return _run_cli("note-delete", args)
 def _tool_pin_note(args): return _run_cli("note-pin", args)
 
+
+def _tool_add_event(args):
+    return _run_cli("cal-add", {**args, "kind": "event"})
+
+
+def _tool_add_task(args):
+    # LLM 用 due 表达截止日，CLI 统一收 --date
+    args = dict(args)
+    due = args.pop("due", "")
+    if due:
+        args["date"] = due
+    return _run_cli("cal-add", {**args, "kind": "task"})
+
+
+def _tool_list_schedule(args): return _run_cli("cal-list", args)
+def _tool_complete_task(args): return _run_cli("cal-done", args)
+def _tool_remove_schedule_item(args): return _run_cli("cal-delete", args)
+def _tool_sync_calendar(args): return _run_cli("cal-sync", args)
+def _tool_calendar_status(args): return _run_cli("cal-status", args)
+
 def _tool_ocr_image(args):
     path = args.get("path", "")
     # 安全：path 来自 LLM（间接来自用户消息），只允许票据目录内的文件，
@@ -362,11 +397,18 @@ _TOOL_MAP = {
     "search_notes": _tool_search_notes,
     "delete_note": _tool_delete_note,
     "pin_note": _tool_pin_note,
+    "add_event": _tool_add_event,
+    "add_task": _tool_add_task,
+    "list_schedule": _tool_list_schedule,
+    "complete_task": _tool_complete_task,
+    "remove_schedule_item": _tool_remove_schedule_item,
+    "sync_calendar": _tool_sync_calendar,
+    "calendar_status": _tool_calendar_status,
 }
 
 # 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
 _MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_tax",
-                       "add_document"}
+                       "add_document", "add_event", "add_task"}
 
 # 备忘工具全部强制注入 member（读写皆是 — 备忘按成员私有，LLM 不得跨成员读写）
 _NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note"}
@@ -393,6 +435,7 @@ _BASE_CUR = _CONFIG.get("base_currency") or "USD"
 _CATS_DESC = json.dumps(_CONFIG.get("categories", {}), ensure_ascii=False)
 _DOC_TYPES = list(_CONFIG.get("doc_types") or ["other"])
 _DOC_STATUSES = ["active", "expired", "archived", "superseded"]
+_CAL_LOOKAHEAD = int((_CONFIG.get("calendar") or {}).get("lookahead_days") or 10)
 
 
 def _fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
@@ -584,12 +627,41 @@ TOOL_SCHEMAS = [
         "id": _int("备忘 id"),
         "unpin": {"type": "boolean", "description": "true=取消置顶"},
     }, ["id"]),
+    _fn("add_event", "添加家庭日程/活动/安排（自动同步到远程日历）", {
+        "title": _s("活动标题，如 孩子游泳课"),
+        "date": _s("日期 YYYY-MM-DD"),
+        "start": _s("开始时间 HH:MM（不知道具体时间就不填=全天）"),
+        "end": _s("结束时间 HH:MM"),
+        "all-day": {"type": "boolean", "description": "全天活动"},
+        "location": _s("地点"),
+        "notes": _s("备注"),
+    }, ["title", "date"]),
+    _fn("add_task", "添加待办/任务（自动同步到远程待办清单）", {
+        "title": _s("待办内容，如 买生日蛋糕"),
+        "due": _s("截止日期 YYYY-MM-DD（没有就不填）"),
+        "notes": _s("备注"),
+    }, ["title"]),
+    _fn("list_schedule", "查询未来日程与开放待办（用户问\"接下来有什么安排\"\"待办清单\"）", {
+        "days": _int(f"窗口天数（默认 {_CAL_LOOKAHEAD}）"),
+        "kind": _s("只看活动或待办", enum=["event", "task"]),
+        "member": _s("按创建成员过滤"),
+        "all": {"type": "boolean", "description": "包含已完成/已取消"},
+    }),
+    _fn("complete_task", "标记一条待办完成（同步到远程）", {
+        "id": _int("日程 id"),
+    }, ["id"]),
+    _fn("remove_schedule_item", "取消一条日程/待办（已上云的同步删除远端）", {
+        "id": _int("日程 id"),
+    }, ["id"]),
+    _fn("sync_calendar", "立即与远程日历强制同步一轮（用户说\"刷新/同步日历\"）", {}),
+    _fn("calendar_status", "查看日历同步状态（启用/配置/上次刷新/待同步/错误）", {}),
 ]
 
 
 # ── 备忘上下文注入 ──────────────────────────────────────────
 
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Note_Keeper"))
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
 
 
 def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
@@ -612,6 +684,36 @@ def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
                 f"完整内容用 search_notes 查）\n" + "\n".join(lines))
     except Exception:
         _log.exception("备忘上下文注入失败（已跳过）")
+        return ""
+
+
+def _schedule_context(db_path: str | None = None, clip: int = 60,
+                      max_lines: int = 15) -> str:
+    """未来 N 天家庭日程 + 开放待办，拼成 system prompt 附加块（家庭共享，不分成员）。
+
+    进程内直调 cal_db（每条消息都要取，subprocess 太重）。
+    任何失败返回空串 —— 日程注入绝不能拖垮 handle()。
+    """
+    try:
+        import cal_db
+        rows = cal_db.list_upcoming(days=_CAL_LOOKAHEAD, db_path=db_path)
+        if not rows:
+            return ""
+        lines = []
+        for r in rows[:max_lines]:
+            title = r["title"][:clip] + ("…" if len(r["title"]) > clip else "")
+            if r["kind"] == "event":
+                s = r["start_at"]
+                when = (s[5:10] + (" " + s[11:16] if len(s) > 10 else " 全天")) if s else ""
+                loc = f" @{r['location']}" if r["location"] else ""
+                lines.append(f"- {when} {title}{loc}".strip())
+            else:
+                due = f"（截止 {r['start_at'][5:10]}）" if r["start_at"] else ""
+                lines.append(f"- ☐ {title}{due}")
+        return (f"\n\n## 未来{_CAL_LOOKAHEAD}天家庭日程与待办（已静默同步自远程日历；"
+                f"不要主动播报，仅在用户问到或相关时使用）\n" + "\n".join(lines))
+    except Exception:
+        _log.exception("日程上下文注入失败（已跳过）")
         return ""
 
 
@@ -645,7 +747,8 @@ class Agent:
         member_note = (f"\n\n## 当前对话成员\n{member} —— 写入类操作自动归到该成员名下；"
                        f"查询类工具可用 member 参数按成员过滤。")
         msgs = [{"role": "system",
-                 "content": self.system_prompt + member_note + _notes_context(member)}]
+                 "content": self.system_prompt + member_note
+                 + _notes_context(member) + _schedule_context()}]
         user_history = self.history[user]
         msgs.extend(user_history[-self.history_size * 2:])
         msgs.append({"role": "user", "content": text})

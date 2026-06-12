@@ -583,3 +583,45 @@ class TestCli:
         r = _cli(["cal-sync"], cal_db_path, tmp_path)
         assert r.returncode == 0
         assert "未配置" in r.stdout
+
+
+# ── Agent 接线（agent_core） ────────────────────────────────────
+
+_TOOLS = ("add_event", "add_task", "list_schedule", "complete_task",
+          "remove_schedule_item", "sync_calendar", "calendar_status")
+_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
+             "cal-sync", "cal-status"}
+
+
+class TestAgentWiring:
+    def test_tools_registered(self):
+        import agent_core
+        names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
+        for n in _TOOLS:
+            assert n in names, n
+            assert n in agent_core._TOOL_MAP, n
+
+    def test_cal_commands_routed_and_allowed(self):
+        import agent_core
+        path = agent_core._cli_path("cal-add")
+        assert path.parts[-2:] == ("Calendar_Keeper", "cli.py")
+        assert _COMMANDS <= agent_core.ALLOWED_COMMANDS
+
+    def test_member_injected_on_schedule_writes(self):
+        import agent_core
+        out = agent_core._apply_member("add_event",
+                                       {"member": "假冒", "title": "x"}, "MemberA")
+        assert out["member"] == "MemberA"
+        out2 = agent_core._apply_member("add_task", {"title": "y"}, "MemberA")
+        assert out2["member"] == "MemberA"
+
+    def test_schedule_context_formats_and_empty(self, cal_db_path):
+        import agent_core
+        assert agent_core._schedule_context(db_path=cal_db_path) == ""
+        _add_event(cal_db_path, title="游泳课",
+                   start=f"{D1}T14:00", end=f"{D1}T15:00", location="泳馆")
+        _add_task(cal_db_path, title="买蛋糕", due=D3)
+        block = agent_core._schedule_context(db_path=cal_db_path)
+        assert "游泳课" in block and "@泳馆" in block
+        assert "☐ 买蛋糕" in block
+        assert "不要主动播报" in block      # 防刷屏规则随块注入

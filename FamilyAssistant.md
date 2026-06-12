@@ -10,6 +10,7 @@
 | **OCR** | 图片文字识别、票据结构化提取 | [SKILL.md](.codewhale/skills/OCR/SKILL.md) | 图片文字识别、票据结构化提取 |
 | **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒 | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
 | **Note Keeper** | 个人备忘（杂项信息长期记忆，按成员私有，支持图片 OCR 入忘、置顶常驻上下文） | [SKILL.md](.codewhale/skills/Note_Keeper/SKILL.md) | 记一下、帮我记住、备忘、我记过什么 |
+| **Calendar Keeper** | 家庭日程与待办，与远程日历静默同步（作者已实现 Google Calendar + Tasks provider，用户可按契约换成其他日历服务） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
 
@@ -18,6 +19,7 @@
 - 用户意图涉及记账/查账/财务 → 加载 Expense Tracker（如需票据识别，同时加载 OCR）
 - 用户意图涉及文档归档/合同/保险/证件/到期提醒 → 加载 Document Keeper（如需图片识别，同时加载 OCR）
 - 用户意图涉及备忘/杂项信息记忆（"记一下""帮我记住"）→ 加载 Note Keeper
+- 用户意图涉及日程/活动/待办/日历（"安排""X号有什么事""待办清单"）→ 加载 Calendar Keeper
 - 用户意图涉及备份/恢复/云盘同步 → 加载 Remote Backup
 - 仅闲聊/问候 → 不加载
 
@@ -68,6 +70,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
 | `backup`（enabled/debounce/include/remote_root） | `Remote_Backup/backup_sync.py`（CFG，读一次） |
+| `calendar`（enabled/lookahead_days/refresh_minutes） | `Calendar_Keeper/calendar_sync.py`（CFG，读一次）；`agent_core`（_CAL_LOOKAHEAD，上下文注入窗口）；`Calendar_Keeper/cli.py`（cal-list 默认窗口） |
 | ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
 
@@ -80,4 +83,5 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
 - `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒）
 - `.codewhale/skills/Remote_Backup/` — 用户数据云盘镜像 skill（backup_provider.py 当前为 Google Drive 实现；按其文件头契约重写即可换成其他云盘）
+- `.codewhale/skills/Calendar_Keeper/` — 家庭日程/待办 + 远程日历同步 skill（calendar_provider.py 当前为 Google Calendar + Tasks 实现；按其文件头契约重写即可换成其他日历服务）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md

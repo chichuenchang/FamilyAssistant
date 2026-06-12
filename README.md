@@ -35,6 +35,15 @@
 - 一个频道无关的 Agent 大脑（DeepSeek 函数调用），多个轻量传输层；新增频道只需实现一个薄适配文件
 - 每用户独立对话上下文，`/clear` 远程清空
 
+### 📅 家庭日程与待办（Calendar Keeper）
+- 自然语言加日程/待办："周六下午2点孩子游泳课"、"提醒我15号前买生日蛋糕"
+- **静默同步远程日历**：已注册成员消息到达时自动拉取未来 10 天日程（节流，默认 15 分钟一次），
+  不主动播报；问"接下来有什么安排""待办清单"时即答
+- Agent 新建/完成/取消的日程待办自动推送远端；离线/未配置时本地照常用，配好自动补推
+- 当前内置 Google Calendar + Google Tasks 实现（最小权限 `calendar.events` + `tasks`）；
+  按 provider 契约可换任意日历服务
+- 家人在手机日历上的改动会同步回来：远端是日程的事实源（改名/删除/完成都对账）
+
 ### ☁️ 云盘备份（Remote Backup，可选）
 - 用户数据（账本/票据/文档/配置）单向镜像到云盘，写入后防抖增量同步，本地永远是事实源
 - 当前内置 Google Drive 实现（最小 `drive.file` 权限，只能看到自己上传的文件）；按 provider 契约可换任意云端存储
@@ -74,6 +83,12 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 #   python .codewhale/skills/Remote_Backup/backup_provider.py --auth  # 一次性授权，按提示设 GDRIVE_REFRESH_TOKEN
 #   config.json 设 backup.enabled: true
 
+# （可选）远程日历同步（当前为 Google Calendar + Tasks 实现；步骤详见 Calendar_Keeper/SKILL.md）：
+#   setx GCAL_CLIENT_ID "xxx"        # 可复用上面的同一个 OAuth 客户端
+#   setx GCAL_CLIENT_SECRET "xxx"
+#   python .codewhale/skills/Calendar_Keeper/calendar_provider.py --auth  # 一次性授权，按提示设 GCAL_REFRESH_TOKEN
+#   config.json 设 calendar.enabled: true
+
 # ── 或用 Telegram（多人，推荐） ──
 #   setx TELEGRAM_BOT_TOKEN "xxx"
 #   python .codewhale/skills/Agent_Runtime/telegram_bot.py   # 同样支持 --debug
@@ -92,7 +107,8 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 3. `python .codewhale/skills/Agent_Runtime/telegram_bot.py`
 4. 把 Bot 链接发给家人，并在电脑上用 `member-add` 登记每个人的 chat id（未登记的人 Bot 不会回应）
 
-发什么都可以，比如 `花了45块 午餐`、`这个月花了多少`，或发一张租约照片说 `存一下这份租约`。
+发什么都可以，比如 `花了45块 午餐`、`这个月花了多少`、`周六下午2点游泳课`、
+`接下来有什么安排`，或发一张租约照片说 `存一下这份租约`。
 每笔账自动归到发消息的成员名下；`summary --by-member` 可看谁花了多少。
 归档的文档到期前 Bot 会每天主动提醒（如 "租约 20 天后到期 — 提前60天通知房东"）。
 （可选）配置云盘备份后，所有数据自动镜像到你自己的网盘；换电脑 `backup-restore` 一键恢复。
@@ -122,6 +138,12 @@ FamilyAssistant/
 │       │   ├── backup_sync.py    ← 同步引擎
 │       │   ├── backup_provider.py← Google Drive 实现（可按契约换成其他云盘）
 │       │   └── cli.py            ← 备份 CLI 入口
+│       ├── Calendar_Keeper/  ← 家庭日程/待办 + 远程日历同步
+│       │   ├── SKILL.md
+│       │   ├── cal_db.py         ← 数据层（日程缓存）
+│       │   ├── calendar_sync.py  ← 同步引擎（静默节流刷新/先推后拉/对账）
+│       │   ├── calendar_provider.py ← Google Calendar+Tasks 实现（可按契约换）
+│       │   └── cli.py            ← 日程 CLI 入口
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
