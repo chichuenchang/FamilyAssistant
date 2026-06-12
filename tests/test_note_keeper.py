@@ -310,3 +310,48 @@ class TestAgentRegistration:
         assert out["member"] == "爸爸"
         out = agent_core._apply_member("delete_note", {"member": "妈妈", "id": 1}, "爸爸")
         assert out["member"] == "爸爸"
+
+
+class TestRelocateNoteImage:
+    """save_note 的图片搬移：收件箱 receipts/ → documents/notes/YYYY-MM/。"""
+
+    def _patch_dirs(self, monkeypatch, tmp_path):
+        import agent_core
+        receipts = tmp_path / "receipts"; receipts.mkdir()
+        documents = tmp_path / "documents"; documents.mkdir()
+        monkeypatch.setattr(agent_core, "RECEIPTS_DIR", receipts)
+        monkeypatch.setattr(agent_core, "DOCUMENTS_DIR", documents)
+        return receipts, documents
+
+    def test_moves_inbox_image(self, monkeypatch, tmp_path):
+        import agent_core
+        receipts, documents = self._patch_dirs(monkeypatch, tmp_path)
+        img = receipts / "a.jpg"; img.write_bytes(b"x")
+        out = agent_core._relocate_note_image(str(img))
+        assert not img.exists()
+        out_p = _Path(out)
+        assert out_p.exists() and out_p.parent.parent == documents / "notes"
+
+    def test_leaves_outside_paths_alone(self, monkeypatch, tmp_path):
+        import agent_core
+        self._patch_dirs(monkeypatch, tmp_path)
+        other = tmp_path / "elsewhere.jpg"; other.write_bytes(b"x")
+        assert agent_core._relocate_note_image(str(other)) == str(other)
+        assert other.exists()
+
+    def test_missing_file_returns_original(self, monkeypatch, tmp_path):
+        import agent_core
+        receipts, _ = self._patch_dirs(monkeypatch, tmp_path)
+        ghost = str(receipts / "nope.jpg")
+        assert agent_core._relocate_note_image(ghost) == ghost
+
+    def test_name_collision_gets_suffix(self, monkeypatch, tmp_path):
+        import agent_core
+        from datetime import date
+        receipts, documents = self._patch_dirs(monkeypatch, tmp_path)
+        month = date.today().strftime("%Y-%m")
+        taken = documents / "notes" / month; taken.mkdir(parents=True)
+        (taken / "a.jpg").write_bytes(b"old")
+        img = receipts / "a.jpg"; img.write_bytes(b"new")
+        out = agent_core._relocate_note_image(str(img))
+        assert _Path(out).name == "a_1.jpg" and _Path(out).read_bytes() == b"new"

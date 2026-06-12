@@ -274,7 +274,38 @@ def _tool_ack_document(args): return _run_cli("doc-ack", args)
 def _tool_backup_now(args): return _run_cli("backup-now", args)
 def _tool_backup_status(args): return _run_cli("backup-status", args)
 def _tool_backup_verify(args): return _run_cli("backup-verify", args)
-def _tool_save_note(args): return _run_cli("note-add", args)
+def _relocate_note_image(src: str) -> str:
+    """备忘图片若还在票据收件箱 receipts/，搬到 documents/notes/YYYY-MM/。
+
+    传输层把所有来图先存 receipts/（收件箱），分类后备忘图不该留在那。
+    代码确定性执行（不交给 LLM 决定）。失败保留原路径，绝不丢图。
+    返回最终路径（已搬则新路径，否则原样）。"""
+    try:
+        p = Path(src)
+        resolved = (p if p.is_absolute() else ROOT / p).resolve()
+        if not (resolved.exists()
+                and resolved.is_relative_to(RECEIPTS_DIR.resolve())):
+            return src
+        dest_dir = DOCUMENTS_DIR / "notes" / date.today().strftime("%Y-%m")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / resolved.name
+        i = 1
+        while dest.exists():
+            dest = dest_dir / f"{resolved.stem}_{i}{resolved.suffix}"
+            i += 1
+        resolved.rename(dest)
+        _log.debug("备忘图片已移动 %s → %s", resolved, dest)
+        return str(dest)
+    except Exception:
+        _log.exception("备忘图片移动失败（保留原路径）")
+        return src
+
+
+def _tool_save_note(args):
+    src = args.get("source-image", "")
+    if src:
+        args = {**args, "source-image": _relocate_note_image(src)}
+    return _run_cli("note-add", args)
 def _tool_list_notes(args): return _run_cli("note-list", args)
 def _tool_search_notes(args): return _run_cli("note-search", args)
 def _tool_delete_note(args): return _run_cli("note-delete", args)
@@ -684,6 +715,8 @@ class Agent:
                     f"4) 其他有信息价值的图片（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
                     f"content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
                     f"source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。\n"
+                    f"注意：开出去的发票/报价单/还没付的账单 = 没有实际现金流，绝不要直接记成收入或支出；"
+                    f"先问用户是记备忘（等实际收付款再记账）还是其他处理。\n"
                     f"信息不完整就先问用户。记完简要汇报记了什么。"
                 )
                 return self.handle(prompt, user=user, member=member)
