@@ -212,7 +212,7 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 
 ## 远程通道
 
-- **微信**：用户可通过微信发送文字或图片与 Agent 交互（基础设施，后台常驻运行，Agent 无需管理）
+- **微信 / Telegram**：用户可通过远程频道发送文字或图片与 Agent 交互（基础设施，后台常驻运行，Agent 无需管理；详见 [Agent Runtime](../Agent_Runtime/SKILL.md)）
 - **OCR**：票据图片自动识别 → 结构化提取（通过 `.codewhale/skills/OCR/ocr.py` 调用腾讯云 OCR，详见 [OCR Skill](../OCR/SKILL.md)）
 
 ## 技能边界
