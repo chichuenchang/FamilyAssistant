@@ -499,7 +499,9 @@ class Agent:
 
         reply = ""
         tool_log = ""  # 收集工具执行日志
-        for _ in range(4):
+        # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
+        # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
+        for _ in range(8):
             message = self._call_llm(msgs)
             if message is None:
                 return "抱歉，暂时出错了。"
@@ -541,9 +543,16 @@ class Agent:
             if ocr_text:
                 prompt = (
                     f"用户发了一张图片，已保存为 {image_path}，OCR结果:\n{ocr_text}\n"
-                    f"若是消费票据：提取金额/日期/类别帮用户记账（add_transaction）。\n"
-                    f"若内容或用户语境表明是重要文档（合同/保单/证件）：用 add_document 归档，"
-                    f"file 参数传上面的保存路径，ocr-text 传 OCR 全文。信息不完整就先问用户。"
+                    f"判断图片内容，按三种情况处理：\n"
+                    f"1) 单张消费票据：提取金额/日期/类别，调 add_transaction 记一笔。\n"
+                    f"2) 银行/支付App流水或账单列表（多行消费）：逐行记账，每行调一次 add_transaction"
+                    f"（可在一条回复里并发多次调用）。每笔的 desc 带上能区分该行的信息（商家+时间，"
+                    f"OCR 里有就带），这样同日同额的不同消费不会被误判为重复，而重复发同一张截图会被正确"
+                    f"拦截。某行确属独立消费却被重复检查拦下时，对该行加 force=true 重记。行数多一条回复"
+                    f"记不完就分多条继续记。无法确定金额/日期的行先列出来问用户，不要瞎记。\n"
+                    f"3) 重要文档（合同/保单/证件）：用 add_document 归档，file 传上面的保存路径，"
+                    f"ocr-text 传 OCR 全文。\n"
+                    f"信息不完整就先问用户。记完简要汇报记了几笔、各是什么。"
                 )
                 return self.handle(prompt, user=user, member=member)
         return "📷 图片已收到。请用文字描述（如\"午餐45块\"），或配置腾讯云 OCR。"
@@ -560,7 +569,7 @@ class Agent:
             "model": "deepseek-v4-flash",
             "messages": messages,
             "tools": TOOL_SCHEMAS,
-            "temperature": 0.3, "max_tokens": 800,
+            "temperature": 0.3, "max_tokens": 1500,
         }).encode("utf-8")
         req = urllib.request.Request(
             f"{base_url}/v1/chat/completions", data=body,

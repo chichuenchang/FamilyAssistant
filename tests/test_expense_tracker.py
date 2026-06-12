@@ -159,6 +159,30 @@ def test_duplicate_substring_match(db):
     assert dupes[0]["description"] == "午餐"
 
 
+def test_statement_distinct_rows_not_flagged(db):
+    """账单逐行记账的基石：同日同额同币种但描述互不为子串的两行，均应写入、不误判重复。
+
+    支撑银行/支付流水截图批量记账——例如同一天两笔 ¥20（不同商家/时间）须各记一笔；
+    desc 带区分信息即可绕过 find_duplicates 的相似判定，而重复发同一张截图（desc 全等）仍会被拦。
+    """
+    common = dict(
+        type_="expense", amount=20.00, currency="CNY",
+        date_="2025-06-20", category="餐饮", db_path=db,
+    )
+
+    id1, d1 = dbm.add_transaction(description="星巴克 09:12", **common)
+    id2, d2 = dbm.add_transaction(description="瑞幸 14:30", **common)
+    assert id1 > 0 and id2 > 0          # 两笔都写入
+    assert d1 == [] and d2 == []        # 都不算重复
+    assert id1 != id2
+
+    # 重复发同一张截图（同一行 desc 全等）→ 仍被重复检查拦下
+    id3, d3 = dbm.add_transaction(description="星巴克 09:12", **common)
+    assert id3 == 0 and len(d3) == 1
+
+    assert len(dbm.get_transactions(db_path=db)) == 2
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # 8. get_transactions filters
 # ═══════════════════════════════════════════════════════════════════════
