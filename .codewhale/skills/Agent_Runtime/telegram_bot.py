@@ -11,7 +11,9 @@ Telegram Bot API 是全球最开放的 IM Bot 协议：
     2. 设环境变量 TELEGRAM_BOT_TOKEN
 
 用法:
-    python .codewhale/skills/Agent_Runtime/telegram_bot.py
+    python .codewhale/skills/Agent_Runtime/telegram_bot.py [--debug]
+
+    --debug: 调试日志写 data/bot_debug.log（默认关）
 """
 
 from __future__ import annotations
@@ -34,14 +36,21 @@ if sys.platform == "win32":
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
-from agent_core import Agent, receipt_month_dir
+import logging
+
+from agent_core import Agent, receipt_month_dir, setup_logging
 from members import resolve
+
+log = logging.getLogger("familyassist.telegram")
 
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
 from reminder import check_and_push as _doc_reminder_check
 
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
 from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
+
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
+from calendar_sync import calendar_tick as _calendar_tick
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
@@ -160,6 +169,8 @@ def run() -> None:
                 print(f"[tg] 忽略未注册来源 chat_id={chat_id}")
                 offset = max(offset, update_id)
                 continue
+            # 已注册成员的消息 → 静默节流刷新远程日历（内部把关，永不抛）
+            _calendar_tick()
             user_name = msg.get("from", {}).get("first_name", "unknown")
             text = msg.get("text", "")
 
@@ -182,10 +193,12 @@ def run() -> None:
                 print(f"[tg] 图片消息 from {user_name}")
                 file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
                 dest = download_photo(file_id) if file_id else None
+                log.debug("图片 from %s(%s) → %s", user_name, member, dest)
                 if dest:
                     reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
                 else:
                     reply = "图片下载失败，请重发。"
+                log.debug("图片回复 → %s", reply[:200])
                 send_message(chat_id, reply)
                 offset = max(offset, update_id)
                 continue
@@ -194,9 +207,11 @@ def run() -> None:
                 continue
 
             print(f"[tg] {user_name}: {text[:60]}")
+            log.debug("文字 from %s(%s): %s", user_name, member, text)
 
             # 处理消息
             reply = agent.handle(text, user=str(chat_id), member=member)
+            log.debug("文字回复 → %s", (reply or "")[:200])
             if reply:
                 send_message(chat_id, reply)
 
@@ -209,12 +224,23 @@ def run() -> None:
             _doc_reminder_check(send_message, "telegram")
         except Exception as e:
             print(f"[tg] 文档提醒检查异常: {e}", file=sys.stderr)
+            log.exception("文档提醒检查异常")
 
         # 用户数据备份：脏 + 静默期满则镜像一轮（backup_sync 内部把关，永不抛）
         _backup_tick()
 
 
-if __name__ == "__main__":
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Family Assistant — Telegram Bot")
+    parser.add_argument("--debug", action="store_true",
+                        help="开启调试日志（写 data/bot_debug.log，默认关）")
+    args = parser.parse_args()
+    setup_logging(args.debug)
     print("Family Assistant — Telegram Bot")
     print(f"Token: {'已设置' if TOKEN else '未设置'}")
     run()
+
+
+if __name__ == "__main__":
+    main()

@@ -29,13 +29,19 @@ _UPDATABLE = {
 
 
 def get_db(db_path: Optional[str] = None) -> sqlite3.Connection:
-    """获取数据库连接，自动启用 WAL 和 foreign keys。"""
+    """获取数据库连接，自动启用 WAL 和 foreign keys，并确保 documents 表存在。
+
+    幂等建表（CREATE ... IF NOT EXISTS）放在连接处：reminder 每轮轮询都读
+    documents，但账本在首次 doc-add 前从未 init_db，会 "no such table"。
+    在所有读写经过的唯一入口建表，虚拟账本上的读取返回空而非崩溃。
+    """
     path = db_path or str(DB_PATH)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.executescript(SCHEMA)
     return conn
 
 

@@ -360,9 +360,10 @@ def cmd_fx_get(args):
 
 
 def cmd_member_add(args):
-    if not args.telegram and not args.wechat:
-        raise ValueError("至少提供一个 --telegram 或 --wechat 频道 id")
-    members_registry.add_member(args.name, telegram=args.telegram, wechat=args.wechat)
+    if not args.telegram and not args.wechat and not args.alias:
+        raise ValueError("至少提供一个 --telegram / --wechat 频道 id 或 --alias 别名")
+    members_registry.add_member(args.name, telegram=args.telegram,
+                                wechat=args.wechat, aliases=args.alias)
     print(f"已登记成员 {args.name}")
     cmd_member_list(args)
 
@@ -375,7 +376,8 @@ def cmd_member_list(_args):
     for name, b in members.items():
         tg = ",".join(b.get("telegram") or []) or "-"
         wx = ",".join(b.get("wechat") or []) or "-"
-        print(f"{name}: telegram={tg} wechat={wx}")
+        als = ",".join(b.get("aliases") or []) or "-"
+        print(f"{name}: telegram={tg} wechat={wx} aliases={als}")
 
 
 def cmd_member_remove(args):
@@ -499,10 +501,12 @@ def main():
     p.add_argument("--country")
 
     # member 管理（仅本机使用；不在 wechat.allowed_commands 白名单内，Agent 调不到）
-    p = sub.add_parser("member-add", help="登记成员并绑定频道 id（仅本机）")
+    p = sub.add_parser("member-add", help="登记成员并绑定频道 id / 别名（仅本机）")
     p.add_argument("name")
     p.add_argument("--telegram", action="append", help="Telegram chat id，可多次")
     p.add_argument("--wechat", action="append", help="微信用户 id，可多次")
+    p.add_argument("--alias", action="append",
+                   help="别名/法定名（文档票据里的名字，供 Agent 对应成员），可多次")
 
     sub.add_parser("member-list", help="列出已登记成员")
 

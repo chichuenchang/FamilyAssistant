@@ -10,7 +10,7 @@
 .codewhale/skills/Agent_Runtime/
 ├── SKILL.md          ← 本文件
 ├── agent_core.py     ← 频道无关 Agent（共用大脑）
-├── members.py        ← 成员注册表（频道 id → 成员名）
+├── members.py        ← 成员注册表（频道 id → 成员名；存 git 忽略的 data/members.json）
 ├── wechat_ilink.py   ← 微信传输层
 └── telegram_bot.py   ← Telegram 传输层
 ```
@@ -59,6 +59,10 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 
 # Telegram：设好 token 直接跑
 python .codewhale/skills/Agent_Runtime/telegram_bot.py
+
+# 两个 Bot 均支持 --debug：调试日志写 data/bot_debug.log（默认关）
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --debug
+python .codewhale/skills/Agent_Runtime/telegram_bot.py --debug
 ```
 
 微信凭据加密存于 `data/wechat_creds.json`；Telegram 去重 offset 存于 `data/.telegram_offset`。
@@ -96,7 +100,7 @@ if __name__ == "__main__":
 
 - **命令白名单**：来自 `config.json` 的 `wechat.allowed_commands`（`agent_core.ALLOWED_COMMANDS` 读取，config 缺失才回退内置集）。Agent 只能调白名单内的 CLI 子命令，其余一律拒绝。增删命令改 `config.json` 即可。
 - **票据目录**：`agent_core.RECEIPTS_DIR` 来自 `config.json` `receipts_dir`，不在代码里硬编码。
-- **成员注册表**：`config.json` `members` 只在本机用 `cli.py member-add/list/remove` 管理（不在命令白名单内，Agent 调不到）。未注册频道 id 一律静默丢弃；写入类账目的归属由 `agent_core` 注入解析出的成员名，LLM 给的 member 一律剥离（防冒名）。
+- **成员注册表**：`data/members.json`（git 不跟踪 — 姓名/频道 id 属隐私）只在本机用 `cli.py member-add/list/remove` 管理（不在命令白名单内，Agent 调不到）。未注册频道 id 一律静默丢弃；写入类账目的归属由 `agent_core` 注入解析出的成员名，LLM 给的 member 一律剥离（防冒名）。
 - **凭据本地化**：所有频道凭据（微信扫码态、Telegram token）只存本地，不外传。
 - Telegram token 走环境变量，不写进仓库。
 
@@ -106,6 +110,7 @@ if __name__ == "__main__":
 |------|------|------|
 | `DEEPSEEK_API_KEY` | Agent LLM（所有频道共用） | ✅ |
 | `DEEPSEEK_BASE_URL` | LLM 自定义端点（默认官方） | ❌ |
+| `DEEPSEEK_MODEL` | Agent LLM 模型（默认 `deepseek-v4-pro`） | ❌ |
 | `TELEGRAM_BOT_TOKEN` | Telegram 频道 | Telegram 时必需 |
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 图片 OCR（见 [OCR Skill](../OCR/SKILL.md)） | 收图片时 |
 | `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` / `GDRIVE_REFRESH_TOKEN` | 云盘备份（`backup_tick` 在传输层轮询里跑，见 [Remote Backup](../Remote_Backup/SKILL.md)） | backup.enabled 时 |

@@ -28,6 +28,7 @@ Agent Core — 频道无关的全量上下文智能助手。
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -48,7 +49,12 @@ if sys.platform == "win32":
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "OCR"))  # OCR skill 的 ocr.py
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 members
 # 注：CLI 经 subprocess 调用（见 _run_cli），无需加入 sys.path
+
+import members as _members_registry
+
+_log = logging.getLogger("familyassist.agent")
 
 
 # ── config.json（值的单一事实来源；不在代码里重复硬编码） ──────
@@ -76,11 +82,40 @@ def receipt_month_dir(dt: date | None = None) -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
+
+# ── 调试日志（各 Bot 共用；--debug 开，默认关） ─────────────────
+
+def setup_logging(debug: bool = False) -> logging.Logger:
+    """配置 "familyassist" 日志器，各传输层（telegram/wechat）调一次即可。
+
+    debug=False（默认）：仅 WARNING 及以上，安静运行。
+    debug=True：DEBUG 全量，同时写 stderr 和 data/bot_debug.log（含完整 traceback），
+                供排查 OCR/记账/工具调用链路。
+    子日志器（familyassist.telegram 等）自动继承本配置。
+    """
+    logger = logging.getLogger("familyassist")
+    logger.setLevel(logging.DEBUG if debug else logging.WARNING)
+    if logger.handlers:  # 幂等：重复调用不叠加 handler
+        return logger
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                            datefmt="%Y-%m-%d %H:%M:%S")
+    sh = logging.StreamHandler(sys.stderr)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+    if debug:
+        log_dir = ROOT / "data"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_dir / "bot_debug.log", encoding="utf-8")
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
+        logger.debug("调试日志已开启 → %s", log_dir / "bot_debug.log")
+    return logger
+
 # CLI 命令白名单（config.json wechat.allowed_commands，缺失回退内置集）
 _FALLBACK_ALLOWED = {
     "add", "list", "summary", "monthly", "delete",
     "deposit-add", "deposit-list", "tax-add", "tax-list",
-    "fx-get", "fx-set", "categories",
+    "fx-get", "fx-set",
     "transfer-add", "transfer-list",
 }
 ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FALLBACK_ALLOWED)
@@ -89,6 +124,13 @@ ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FAL
 _DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
                  "doc-update", "doc-ack", "doc-remove"}
 _BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify", "backup-restore"}
+_NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
+_CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
+                 "cal-sync", "cal-status"}
+
+# 备忘/日程命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
+ALLOWED_COMMANDS |= _NOTE_COMMANDS
+ALLOWED_COMMANDS |= _CAL_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
@@ -97,6 +139,10 @@ def _cli_path(cmd: str) -> Path:
         skill = "Document_Keeper"
     elif cmd in _BACKUP_COMMANDS:
         skill = "Remote_Backup"
+    elif cmd in _NOTE_COMMANDS:
+        skill = "Note_Keeper"
+    elif cmd in _CAL_COMMANDS:
+        skill = "Calendar_Keeper"
     else:
         skill = "Expense_Tracker"
     return ROOT / ".codewhale" / "skills" / skill / "cli.py"
@@ -116,11 +162,25 @@ def _build_system_prompt() -> str:
     currencies = "/".join(_CURRENCIES)
     doc_types = "/".join(_DOC_TYPES)
 
+    # 家庭成员 + 别名/法定名（data/members.json；空注册表则整段省略）
+    members_cfg = _members_registry.load_members()
+    member_block = ""
+    if isinstance(members_cfg, dict) and members_cfg:
+        rows = []
+        for n, b in members_cfg.items():
+            als = [str(a) for a in (b.get("aliases") or [])] if isinstance(b, dict) else []
+            rows.append(f"- {n}" + (f"（别名/法定名: {'、'.join(als)}）" if als else ""))
+        member_block = (
+            "\n\n## 家庭成员\n" + "\n".join(rows) +
+            "\n- 票据/合同/证件等文档或对话里出现上述别名/法定名时，视为对应成员"
+            "（用于文档标题、按成员查询过滤、理解\"这是谁的\"）。"
+            "\n- 写入类操作的归属永远是发消息的成员（代码强制），别名不改变归属。")
+
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 
 ## 你是谁
-- 你可以帮用户记账、查账、汇总开销、管理定期存款、查询汇率、OCR 票据等
-- 你友好、简洁、直接——回复不用太长
+- 你可以帮用户记账、查账、汇总开销、管理定期存款、查询汇率、OCR 票据、记私人备忘等
+- 你友好、简洁、直接——回复不用太长{member_block}
 
 ## 记账合法值（来自配置，必须从中选）
 - 交易类型: {tx_types}
@@ -135,6 +195,16 @@ def _build_system_prompt() -> str:
 - 用户说"续约了""换新证了"→ update_document 改到期日；旧文档另存时把旧的 status 改 superseded
 - 用户说"知道了""别再提醒"→ ack_document
 
+## 家庭日程与待办（与远程日历静默同步）
+- 未来{_CAL_LOOKAHEAD}天的家庭日程/待办会自动注入上下文（家庭共享，全员可见）
+- **不要主动播报日程**：仅当用户问到（"接下来有什么安排""待办清单"）或与当前话题直接相关时才提及
+- 用户说"安排/约了/X号要做Y/加个日程/活动"→ add_event（活动必须有日期；有具体时间则给 start/end）
+- 用户说"要做X/记个待办/任务"→ add_task（有截止日给 due）
+- 用户问"接下来有什么安排/这周有什么事/我的待办"→ 按上下文回答或调 list_schedule
+- 用户说"做完了/办完了"→ complete_task；"取消/不去了"→ remove_schedule_item
+- 用户说"刷新日历/同步日历"→ sync_calendar；问同步状态 → calendar_status
+- 新增/完成/取消会自动同步到远程日历；"待同步"= 暂未推送会自动重试，无需向用户解释技术细节
+
 ## 数据备份（可选功能）
 - 用户问"备份了吗""上次备份什么时候"→ backup_status
 - 用户说"立刻备份""把数据同步到云盘"→ backup_now
@@ -142,6 +212,12 @@ def _build_system_prompt() -> str:
 - backup_status 显示未启用/未配置时：告知备份是可选功能，需要在电脑上按
   Remote_Backup/SKILL.md 完成 Google Drive 授权并启用；不要反复推销
 - 数据恢复（backup-restore）只能在电脑上手动执行，你调不到
+
+## 回复风格
+- 简洁、易读是第一优先级：先给结论/结果，能一句话说清就不写三句
+- 永远不要向用户刷屏式罗列命令、操作步骤或功能菜单；一次回复聚焦当前这件事
+- 不要主动列"你可以让我做X/Y/Z"的能力清单，除非用户明确问"你能干什么"
+- 列表只在确实有多条并列信息时用（如多笔账单汇总），且每条尽量一行
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
@@ -151,6 +227,9 @@ def _build_system_prompt() -> str:
 - 用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）
 - 用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）
 - 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
+- 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
+- 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
+- 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
 - 用户闲聊/问候 → 直接友好回复，不用调工具
 - 需要精确信息时（金额、日期）才调工具，闲聊不调
 - 工具执行后会返回结果，你基于结果用自然语言回复
@@ -216,6 +295,62 @@ def _tool_ack_document(args): return _run_cli("doc-ack", args)
 def _tool_backup_now(args): return _run_cli("backup-now", args)
 def _tool_backup_status(args): return _run_cli("backup-status", args)
 def _tool_backup_verify(args): return _run_cli("backup-verify", args)
+def _relocate_note_image(src: str) -> str:
+    """备忘图片若还在票据收件箱 receipts/，搬到 documents/notes/YYYY-MM/。
+
+    传输层把所有来图先存 receipts/（收件箱），分类后备忘图不该留在那。
+    代码确定性执行（不交给 LLM 决定）。失败保留原路径，绝不丢图。
+    返回最终路径（已搬则新路径，否则原样）。"""
+    try:
+        p = Path(src)
+        resolved = (p if p.is_absolute() else ROOT / p).resolve()
+        if not (resolved.exists()
+                and resolved.is_relative_to(RECEIPTS_DIR.resolve())):
+            return src
+        dest_dir = DOCUMENTS_DIR / "notes" / date.today().strftime("%Y-%m")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / resolved.name
+        i = 1
+        while dest.exists():
+            dest = dest_dir / f"{resolved.stem}_{i}{resolved.suffix}"
+            i += 1
+        resolved.rename(dest)
+        _log.debug("备忘图片已移动 %s → %s", resolved, dest)
+        return str(dest)
+    except Exception:
+        _log.exception("备忘图片移动失败（保留原路径）")
+        return src
+
+
+def _tool_save_note(args):
+    src = args.get("source-image", "")
+    if src:
+        args = {**args, "source-image": _relocate_note_image(src)}
+    return _run_cli("note-add", args)
+def _tool_list_notes(args): return _run_cli("note-list", args)
+def _tool_search_notes(args): return _run_cli("note-search", args)
+def _tool_delete_note(args): return _run_cli("note-delete", args)
+def _tool_pin_note(args): return _run_cli("note-pin", args)
+
+
+def _tool_add_event(args):
+    return _run_cli("cal-add", {**args, "kind": "event"})
+
+
+def _tool_add_task(args):
+    # LLM 用 due 表达截止日，CLI 统一收 --date
+    args = dict(args)
+    due = args.pop("due", "")
+    if due:
+        args["date"] = due
+    return _run_cli("cal-add", {**args, "kind": "task"})
+
+
+def _tool_list_schedule(args): return _run_cli("cal-list", args)
+def _tool_complete_task(args): return _run_cli("cal-done", args)
+def _tool_remove_schedule_item(args): return _run_cli("cal-delete", args)
+def _tool_sync_calendar(args): return _run_cli("cal-sync", args)
+def _tool_calendar_status(args): return _run_cli("cal-status", args)
 
 def _tool_ocr_image(args):
     path = args.get("path", "")
@@ -263,16 +398,32 @@ _TOOL_MAP = {
     "backup_now": _tool_backup_now,
     "backup_status": _tool_backup_status,
     "backup_verify": _tool_backup_verify,
+    "save_note": _tool_save_note,
+    "list_notes": _tool_list_notes,
+    "search_notes": _tool_search_notes,
+    "delete_note": _tool_delete_note,
+    "pin_note": _tool_pin_note,
+    "add_event": _tool_add_event,
+    "add_task": _tool_add_task,
+    "list_schedule": _tool_list_schedule,
+    "complete_task": _tool_complete_task,
+    "remove_schedule_item": _tool_remove_schedule_item,
+    "sync_calendar": _tool_sync_calendar,
+    "calendar_status": _tool_calendar_status,
 }
 
 # 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
 _MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_tax",
-                       "add_document"}
+                       "add_document", "add_event", "add_task"}
+
+# 备忘工具全部强制注入 member（读写皆是 — 备忘按成员私有，LLM 不得跨成员读写）
+_NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note"}
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
-    """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。"""
-    if tool_name in _MEMBER_WRITE_TOOLS:
+    """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。
+    备忘工具（含读/删/置顶）一律强制注入，保证按成员隔离。"""
+    if tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS:
         targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
         if member:
             targs["member"] = member
@@ -290,6 +441,7 @@ _BASE_CUR = _CONFIG.get("base_currency") or "USD"
 _CATS_DESC = json.dumps(_CONFIG.get("categories", {}), ensure_ascii=False)
 _DOC_TYPES = list(_CONFIG.get("doc_types") or ["other"])
 _DOC_STATUSES = ["active", "expired", "archived", "superseded"]
+_CAL_LOOKAHEAD = int((_CONFIG.get("calendar") or {}).get("lookahead_days") or 10)
 
 
 def _fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
@@ -409,7 +561,8 @@ TOOL_SCHEMAS = [
         "trace": _s("模糊匹配 描述/银行/账号/备注"),
         "limit": _int("最多返回条数"),
     }),
-    _fn("ocr_image", "OCR 识别票据图片并提取结构化信息", {
+    _fn("ocr_image", "OCR 识别票据/账单图片，逐笔提取交易明细（返回 transactions 数组，"
+        "非账单总额）。拿到后逐笔调 add_transaction 记账", {
         "path": _s("图片路径"),
     }, ["path"]),
     _fn("delete_transaction", "删除一条交易", {
@@ -461,7 +614,113 @@ TOOL_SCHEMAS = [
     _fn("backup_now", "立即把用户数据镜像到云盘（需用户已配置 backup provider）", {}),
     _fn("backup_status", "查看云盘备份状态（是否启用/已配置/待同步/上次同步/错误）", {}),
     _fn("backup_verify", "校验云端镜像与本地清单是否一致", {}),
+    _fn("save_note", "保存一条个人备忘（杂项信息：车位号/wifi密码/课表/名片等）。"
+        "仅本人可见", {
+        "content": _s("备忘内容（图片来源时传 OCR 出的关键信息）"),
+        "source-image": _s("来源图片路径（图片备忘时填已保存路径）"),
+        "pinned": {"type": "boolean", "description": "置顶：重要长期信息每次对话自动带上"},
+    }, ["content"]),
+    _fn("list_notes", "列出本人最近的备忘", {
+        "limit": _int("最多返回条数（默认 20）"),
+    }),
+    _fn("search_notes", "按关键词搜索本人的备忘（用户问\"我记过什么\"\"XX是什么来着\"）", {
+        "keyword": _s("关键词，匹配备忘内容"),
+    }, ["keyword"]),
+    _fn("delete_note", "删除本人的一条备忘", {
+        "id": _int("备忘 id"),
+    }, ["id"]),
+    _fn("pin_note", "置顶/取消置顶本人的一条备忘", {
+        "id": _int("备忘 id"),
+        "unpin": {"type": "boolean", "description": "true=取消置顶"},
+    }, ["id"]),
+    _fn("add_event", "添加家庭日程/活动/安排（自动同步到远程日历）", {
+        "title": _s("活动标题，如 孩子游泳课"),
+        "date": _s("日期 YYYY-MM-DD"),
+        "start": _s("开始时间 HH:MM（不知道具体时间就不填=全天）"),
+        "end": _s("结束时间 HH:MM"),
+        "all-day": {"type": "boolean", "description": "全天活动"},
+        "location": _s("地点"),
+        "notes": _s("备注"),
+    }, ["title", "date"]),
+    _fn("add_task", "添加待办/任务（自动同步到远程待办清单）", {
+        "title": _s("待办内容，如 买生日蛋糕"),
+        "due": _s("截止日期 YYYY-MM-DD（没有就不填）"),
+        "notes": _s("备注"),
+    }, ["title"]),
+    _fn("list_schedule", "查询未来日程与开放待办（用户问\"接下来有什么安排\"\"待办清单\"）", {
+        "days": _int(f"窗口天数（默认 {_CAL_LOOKAHEAD}）"),
+        "kind": _s("只看活动或待办", enum=["event", "task"]),
+        "member": _s("按创建成员过滤"),
+        "all": {"type": "boolean", "description": "包含已完成/已取消"},
+    }),
+    _fn("complete_task", "标记一条待办完成（同步到远程）", {
+        "id": _int("日程 id"),
+    }, ["id"]),
+    _fn("remove_schedule_item", "取消一条日程/待办（已上云的同步删除远端）", {
+        "id": _int("日程 id"),
+    }, ["id"]),
+    _fn("sync_calendar", "立即与远程日历强制同步一轮（用户说\"刷新/同步日历\"）", {}),
+    _fn("calendar_status", "查看日历同步状态（启用/配置/上次刷新/待同步/错误）", {}),
 ]
+
+
+# ── 备忘上下文注入 ──────────────────────────────────────────
+
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Note_Keeper"))
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
+
+
+def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
+    """取该成员置顶 + 最近备忘，拼成 system prompt 附加块。
+
+    进程内直调 note_db（每条消息都要取，subprocess 太重）。
+    任何失败返回空串 —— 备忘注入绝不能拖垮 handle()。
+    """
+    try:
+        import note_db
+        notes = note_db.pinned_and_recent(member, recent_limit=recent_limit)
+        if not notes:
+            return ""
+        lines = []
+        for n in notes:
+            content = n["content"][:clip] + ("…" if len(n["content"]) > clip else "")
+            mark = "📌" if n.get("pinned") else "·"
+            lines.append(f"{mark} #{n['id']} {content}")
+        return (f"\n\n## 已存备忘（仅 {member} 可见；内容超长已截断，"
+                f"完整内容用 search_notes 查）\n" + "\n".join(lines))
+    except Exception:
+        _log.exception("备忘上下文注入失败（已跳过）")
+        return ""
+
+
+def _schedule_context(db_path: str | None = None, clip: int = 60,
+                      max_lines: int = 15) -> str:
+    """未来 N 天家庭日程 + 开放待办，拼成 system prompt 附加块（家庭共享，不分成员）。
+
+    进程内直调 cal_db（每条消息都要取，subprocess 太重）。
+    任何失败返回空串 —— 日程注入绝不能拖垮 handle()。
+    """
+    try:
+        import cal_db
+        rows = cal_db.list_upcoming(days=_CAL_LOOKAHEAD, db_path=db_path)
+        if not rows:
+            return ""
+        lines = []
+        for r in rows[:max_lines]:
+            title = r["title"][:clip] + ("…" if len(r["title"]) > clip else "")
+            if r["kind"] == "event":
+                s = r["start_at"]
+                when = (s[5:10] + (" " + s[11:16] if len(s) > 10 else " 全天")) if s else ""
+                loc = f" @{r['location']}" if r["location"] else ""
+                lines.append(f"- {when} {title}{loc}".strip())
+            else:
+                due = f"（截止 {r['start_at'][5:10]}）" if r["start_at"] else ""
+                lines.append(f"- ☐ {title}{due}")
+        return (f"\n\n## 未来{_CAL_LOOKAHEAD}天家庭日程与待办（已静默同步自远程日历；"
+                f"不要主动播报，仅在用户问到或相关时使用）\n" + "\n".join(lines))
+    except Exception:
+        _log.exception("日程上下文注入失败（已跳过）")
+        return ""
 
 
 # ── Agent ───────────────────────────────────────────────────
@@ -493,13 +752,16 @@ class Agent:
 
         member_note = (f"\n\n## 当前对话成员\n{member} —— 写入类操作自动归到该成员名下；"
                        f"查询类工具可用 member 参数按成员过滤。")
-        msgs = [{"role": "system", "content": self.system_prompt + member_note}]
+        msgs = [{"role": "system",
+                 "content": self.system_prompt + member_note
+                 + _notes_context(member) + _schedule_context()}]
         user_history = self.history[user]
         msgs.extend(user_history[-self.history_size * 2:])
         msgs.append({"role": "user", "content": text})
 
         reply = ""
-        tool_log = ""  # 收集工具执行日志
+        tool_log = ""  # 回复里展示的工具调用摘要（按名计数）
+        tool_counts: dict[str, int] = {}
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
         for _ in range(8):
@@ -522,13 +784,17 @@ class Agent:
                 fn = _TOOL_MAP.get(name)
                 targs = _apply_member(name, targs, member)
                 result = fn(targs) if fn else f"[错误] 未知工具: {name}"
-                # 只展示工具调用，代码输出交给 LLM 转述
+                # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
-                tool_log += f"  ⚙️ {name}({brief})\n"
+                _log.debug("工具 %s(%s) → %s", name, brief, result[:200])
+                tool_counts[name] = tool_counts.get(name, 0) + 1
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
                              "content": result})
 
+        if tool_counts:
+            tool_log = "⚙️ " + ", ".join(
+                f"{n}×{c}" if c > 1 else n for n, c in tool_counts.items()) + "\n"
         if not reply:
             reply = "（工具已执行，但生成回复失败）" if tool_log else "抱歉，暂时出错了。"
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
@@ -544,16 +810,23 @@ class Agent:
             if ocr_text:
                 prompt = (
                     f"用户发了一张图片，已保存为 {image_path}，OCR结果:\n{ocr_text}\n"
-                    f"判断图片内容，按三种情况处理：\n"
+                    f"判断图片内容，按四种情况处理：\n"
                     f"1) 单张消费票据：提取金额/日期/类别，调 add_transaction 记一笔。\n"
-                    f"2) 银行/支付App流水或账单列表（多行消费）：逐行记账，每行调一次 add_transaction"
-                    f"（可在一条回复里并发多次调用）。每笔的 desc 带上能区分该行的信息（商家+时间，"
-                    f"OCR 里有就带），这样同日同额的不同消费不会被误判为重复，而重复发同一张截图会被正确"
-                    f"拦截。某行确属独立消费却被重复检查拦下时，对该行加 force=true 重记。行数多一条回复"
-                    f"记不完就分多条继续记。无法确定金额/日期的行先列出来问用户，不要瞎记。\n"
+                    f"2) 银行/信用卡/支付App流水或账单（多行消费）：逐笔记账，每条明细调一次 add_transaction"
+                    f"（可在一条回复里并发多次调用）。**重点：记的是每一笔交易明细，绝不要把账单总额、"
+                    f"应还款额、最低还款额、已还款额当成一笔记账**——那些是汇总数字，不是消费。"
+                    f"每笔的 desc 带上能区分该行的信息（商家+时间，OCR 里有就带），这样同日同额的不同消费"
+                    f"不会被误判为重复，而重复发同一张截图会被正确拦截。某行确属独立消费却被重复检查拦下时，"
+                    f"对该行加 force=true 重记。行数多一条回复记不完就分多条继续记。"
+                    f"无法确定金额/日期的行先列出来问用户，不要瞎记。\n"
                     f"3) 重要文档（合同/保单/证件）：用 add_document 归档，file 传上面的保存路径，"
                     f"ocr-text 传 OCR 全文。\n"
-                    f"信息不完整就先问用户。记完简要汇报记了几笔、各是什么。"
+                    f"4) 其他有信息价值的图片（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
+                    f"content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
+                    f"source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。\n"
+                    f"注意：开出去的发票/报价单/还没付的账单 = 没有实际现金流，绝不要直接记成收入或支出；"
+                    f"先问用户是记备忘（等实际收付款再记账）还是其他处理。\n"
+                    f"信息不完整就先问用户。记完简要汇报记了什么。"
                 )
                 return self.handle(prompt, user=user, member=member)
         return "📷 图片已收到。请用文字描述（如\"午餐45块\"），或配置腾讯云 OCR。"
@@ -566,21 +839,33 @@ class Agent:
         import urllib.request
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        model = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro")
         body = json.dumps({
-            "model": "deepseek-v4-flash",
+            "model": model,
             "messages": messages,
             "tools": TOOL_SCHEMAS,
-            "temperature": 0.3, "max_tokens": 1500,
+            # DeepSeek V4 是推理模型，reasoning 占用 completion 预算，
+            # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
+            # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足。
+            "temperature": 0.3, "max_tokens": 10000,
         }).encode("utf-8")
         req = urllib.request.Request(
             f"{base_url}/v1/chat/completions", data=body,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         )
         try:
-            resp = json.loads(urllib.request.urlopen(req, timeout=30).read())
-            return resp["choices"][0]["message"]
+            resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
+            choice = resp["choices"][0]
+            _log.debug("LLM finish=%s tokens=%s tool_calls=%d",
+                       choice.get("finish_reason"),
+                       resp.get("usage", {}).get("completion_tokens"),
+                       len(choice["message"].get("tool_calls") or []))
+            if choice.get("finish_reason") == "length":
+                _log.warning("LLM 输出被 max_tokens 截断（推理模型预算不足的信号）")
+            return choice["message"]
         except Exception as e:
             print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
+            _log.exception("LLM 调用失败")
             return None
 
     def _save_history(self, user, user_msg, assistant_msg):

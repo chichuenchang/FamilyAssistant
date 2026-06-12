@@ -27,6 +27,18 @@ BACKUP_DIR = (
 )
 sys.path.insert(0, str(BACKUP_DIR))
 
+NOTE_DIR = (
+    Path(__file__).resolve().parent.parent
+    / ".codewhale" / "skills" / "Note_Keeper"
+)
+sys.path.insert(0, str(NOTE_DIR))
+
+CAL_DIR = (
+    Path(__file__).resolve().parent.parent
+    / ".codewhale" / "skills" / "Calendar_Keeper"
+)
+sys.path.insert(0, str(CAL_DIR))
+
 import pytest
 import db as dbm  # the fixture below is named ``db`` — alias avoids shadowing
 
@@ -49,4 +61,24 @@ def doc_db_path(tmp_path):
     import doc_db as doc_dbm
     path = str(tmp_path / "docs.db")
     doc_dbm.init_db(db_path=path)
+    return path
+
+
+@pytest.fixture
+def note_db_path(tmp_path):
+    """Temporary SQLite database initialised with the notes table."""
+    import note_db as note_dbm
+    path = str(tmp_path / "notes.db")
+    conn = note_dbm._connect(db_path=path)
+    conn.close()
+    return path
+
+
+@pytest.fixture
+def cal_db_path(tmp_path):
+    """Temporary SQLite database initialised with the schedule_items table."""
+    import cal_db as cal_dbm
+    path = str(tmp_path / "cal.db")
+    conn = cal_dbm._connect(db_path=path)
+    conn.close()
     return path

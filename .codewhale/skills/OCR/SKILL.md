@@ -35,7 +35,10 @@ if not is_available():
 
 text = ocr_image("path/to/image.jpg")
 info = ocr_extract("path/to/receipt.jpg")
-# → {"amount": 45.0, "currency": "CNY", "date": "2026-06-01", "category": "餐饮", "desc": "午餐"}
+# → {"currency": "CAD", "transactions": [
+#      {"amount": 45.0, "date": "2026-06-01", "category": "餐饮", "desc": "午餐"},
+#      ...  # 账单逐笔；只含明细，不含账单总额/应还款
+#    ]}
 ```
 
 ## API
@@ -44,7 +47,7 @@ info = ocr_extract("path/to/receipt.jpg")
 |------|------|------|
 | `is_available()` | `bool` | 是否配置了腾讯云密钥 |
 | `ocr_image(path)` | `str` / `None` | 通用文字识别；`None` = 不可用或文件不存在 |
-| `ocr_extract(path)` | `dict` / `None` | OCR + LLM 结构化票据信息；无 `DEEPSEEK_API_KEY` 时返回 `{"raw_text": ...}` |
+| `ocr_extract(path)` | `dict` / `None` | OCR + LLM 逐笔交易提取，返回 `{"currency", "transactions":[...]}`（账单只取明细行，不取总额）；无 `DEEPSEEK_API_KEY` 时返回 `{"raw_text": ...}` |
 
 ## 配置
 

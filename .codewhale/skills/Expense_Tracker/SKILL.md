@@ -108,8 +108,9 @@
 - 写入：`add` / `deposit-add` / `transfer-add` / `tax-add` 支持 `--member <名>`（须已登记）。
 - 查询：`list` / `summary` / `monthly` 支持 `--member` 过滤；`summary --by-member` 按成员汇总。
 - 登记（仅本机，Agent 白名单外）：
-  `member-add 爸爸 --telegram 123456789 --wechat wxid_abc` / `member-list` / `member-remove 爸爸`
-- 注册表存 `config.json` `members` 段；改后重启机器人生效。
+  `member-add 爸爸 --telegram 123456789 --wechat wxid_abc --alias 法定名` / `member-list` / `member-remove 爸爸`
+  （`--alias` 可多次：文档票据里的法定名/别名，供 Agent 对应成员；不参与频道闸门）
+- 注册表存 `data/members.json`（git 不跟踪，随云备份镜像）；改后重启机器人生效。
 
 ## 接收票据（截图 / 发票照片）
 

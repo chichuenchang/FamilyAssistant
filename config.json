@@ -1,34 +1,103 @@
 {
   "base_currency": "USD",
-  "supported_currencies": ["CNY", "USD", "CAD"],
+  "supported_currencies": [
+    "CNY",
+    "USD",
+    "CAD"
+  ],
   "categories": {
-    "expense": ["餐饮", "购物", "房租", "医疗", "每月孩子", "汽油", "水电煤网手机流量", "每月订阅", "机票", "其他"],
-    "income": ["收入", "其他"],
-    "investment": ["股票", "基金", "定期存款", "理财", "其他"],
-    "savings": ["活期"]
+    "expense": [
+      "餐饮",
+      "购物",
+      "房租",
+      "医疗",
+      "每月孩子",
+      "汽油",
+      "水电煤网手机流量",
+      "每月订阅",
+      "机票",
+      "其他"
+    ],
+    "income": [
+      "收入",
+      "其他"
+    ],
+    "investment": [
+      "股票",
+      "基金",
+      "定期存款",
+      "理财",
+      "其他"
+    ],
+    "savings": [
+      "活期"
+    ]
   },
   "db_path": "data/ledger.db",
   "receipts_dir": "receipts",
   "documents_dir": "documents",
-  "doc_types": ["lease", "insurance", "health", "id_document", "other"],
+  "doc_types": [
+    "lease",
+    "insurance",
+    "health",
+    "id_document",
+    "other"
+  ],
   "reminder_lead_days": 30,
+  "calendar": {
+    "_comment": "家庭日程与远程日历同步。凭据走 GCAL_* 环境变量，日历 id 走 GCAL_CALENDAR_ID，均不入 git。",
+    "enabled": true,
+    "lookahead_days": 10,
+    "refresh_minutes": 15
+  },
   "backup": {
     "enabled": true,
     "debounce_seconds": 60,
-    "include": ["data/ledger.db", "receipts", "documents", "config.json"],
+    "include": [
+      "data/ledger.db",
+      "data/members.json",
+      "receipts",
+      "documents",
+      "config.json"
+    ],
     "remote_root": "FamilyAssistant"
   },
-  "members": {},
   "wechat": {
     "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。",
     "allowed_commands": [
-      "add", "list", "summary", "monthly", "delete",
-      "deposit-add", "deposit-list",
-      "transfer-add", "transfer-list",
-      "tax-add", "tax-list",
-      "fx-get", "fx-set", "categories",
-      "doc-add", "doc-list", "doc-show", "doc-due", "doc-update", "doc-ack",
-      "backup-now", "backup-status", "backup-verify"
+      "add",
+      "list",
+      "summary",
+      "monthly",
+      "delete",
+      "deposit-add",
+      "deposit-list",
+      "transfer-add",
+      "transfer-list",
+      "tax-add",
+      "tax-list",
+      "fx-get",
+      "fx-set",
+      "doc-add",
+      "doc-list",
+      "doc-show",
+      "doc-due",
+      "doc-update",
+      "doc-ack",
+      "backup-now",
+      "backup-status",
+      "backup-verify",
+      "note-add",
+      "note-list",
+      "note-search",
+      "note-delete",
+      "note-pin",
+      "cal-add",
+      "cal-list",
+      "cal-done",
+      "cal-delete",
+      "cal-sync",
+      "cal-status"
     ]
   }
 }

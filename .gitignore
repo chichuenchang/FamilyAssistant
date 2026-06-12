@@ -1,7 +1,6 @@
-# 数据库 & 凭据
-data/ledger.db
-data/wechat_creds.json*
-data/.telegram_offset
+# 用户数据目录整体不入库（数据库/凭据/成员注册表/调试日志等，
+# 隐私：姓名/法定名/频道 id/账目绝不进 git）
+data/
 
 # Python
 __pycache__/
@@ -15,17 +14,13 @@ receipts/*
 documents/*
 !documents/.gitkeep
 
-# 文档提醒状态
-data/.doc_reminder_state
-
-# 备份引擎状态（本机的镜像清单，不入库）
-data/.backup_manifest.json
-data/.backup_state.json
-
 # 防御：OAuth 凭据文件绝不入库（provider 实现只允许用环境变量）
 **/Remote_Backup/token*.json
 **/Remote_Backup/*secret*
 **/Remote_Backup/*.pickle
+**/Calendar_Keeper/token*.json
+**/Calendar_Keeper/*secret*
+**/Calendar_Keeper/*.pickle
 client_secret*.json
 
 # IDE

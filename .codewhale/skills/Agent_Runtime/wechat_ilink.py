@@ -21,6 +21,9 @@
     # 重新扫码（切换账号）
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 
+    # 调试日志（写 data/bot_debug.log，默认关）
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --debug
+
 安全:
     所有 CLI 调用受同目录 agent_core.py 白名单约束。
     凭据加密存储在 data/wechat_creds.json，不对外传输。
@@ -47,14 +50,21 @@ if sys.platform == "win32":
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
-from agent_core import Agent, receipt_month_dir
+import logging
+
+from agent_core import Agent, receipt_month_dir, setup_logging
 from members import resolve
+
+log = logging.getLogger("familyassist.wechat")
 
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
 from reminder import check_and_push as _doc_reminder_check
 
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
 from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
+
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
+from calendar_sync import calendar_tick as _calendar_tick
 
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
@@ -90,10 +100,14 @@ def run_bot(relogin: bool = False) -> None:
             print(f"[wx] 忽略未注册来源 {msg.from_user}")
             return
         print(f"[wx] 文字消息 from {msg.from_user}({member}): {msg.text[:60]}")
+        log.debug("文字 from %s(%s): %s", msg.from_user, member, msg.text)
+        _calendar_tick()  # 已注册成员消息 → 静默节流刷新远程日历（内部把关，永不抛）
         try:
             reply = agent.handle(msg.text, user=msg.from_user, member=member)
+            log.debug("文字回复 → %s", (reply or "")[:200])
             msg.reply_text(reply)
         except Exception as e:
+            log.exception("文字处理出错")
             msg.reply_text(f"处理出错: {e}")
 
     # 注册图片消息处理器
@@ -104,15 +118,19 @@ def run_bot(relogin: bool = False) -> None:
             print(f"[wx] 忽略未注册来源 {msg.from_user}")
             return
         print(f"[wx] 图片消息 from {msg.from_user}({member})")
+        _calendar_tick()
         try:
             now = datetime.now()
             ts = now.strftime("%Y%m%d_%H%M%S")
             img_path = receipt_month_dir(now) / f"{ts}_wechat.jpg"
             msg.save(str(img_path))
             _backup_mark_dirty()
+            log.debug("图片 from %s(%s) 保存 → %s", msg.from_user, member, img_path)
             reply = agent.handle_image(str(img_path), user=msg.from_user, member=member)
+            log.debug("图片回复 → %s", (reply or "")[:200])
             msg.reply_text(reply)
         except Exception as e:
+            log.exception("图片处理出错")
             msg.reply_text(f"图片处理出错: {e}")
 
     # 其他消息类型：友好提示
@@ -145,6 +163,7 @@ def run_bot(relogin: bool = False) -> None:
                 _doc_reminder_check(lambda wxid, text: bot.send_text(wxid, text), "wechat")
             except Exception as e:
                 print(f"[wx] 文档提醒检查异常: {e}", file=sys.stderr)
+                log.exception("文档提醒检查异常")
             _backup_tick()
             _time.sleep(600)
 
@@ -187,7 +206,10 @@ def main():
                         default="run", help="运行模式 (默认: run)")
     parser.add_argument("--relogin", action="store_true",
                         help="重新扫码登录（忽略已有凭据）")
+    parser.add_argument("--debug", action="store_true",
+                        help="开启调试日志（写 data/bot_debug.log，默认关）")
     args = parser.parse_args()
+    setup_logging(args.debug)
 
     if args.mode == "test":
         run_test()
