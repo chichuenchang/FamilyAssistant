@@ -82,6 +82,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `config.json` — 全局配置（分类/币种/路径/命令白名单的单一事实来源）
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
 - `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒）
+- `.codewhale/skills/Note_Keeper/` — 个人备忘 skill（cli.py 入口 + note_db.py 数据层；按成员私有）
 - `.codewhale/skills/Remote_Backup/` — 用户数据云盘镜像 skill（backup_provider.py 当前为 Google Drive 实现；按其文件头契约重写即可换成其他云盘）
 - `.codewhale/skills/Calendar_Keeper/` — 家庭日程/待办 + 远程日历同步 skill（calendar_provider.py 当前为 Google Calendar + Tasks 实现；按其文件头契约重写即可换成其他日历服务）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md

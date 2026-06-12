@@ -30,6 +30,16 @@ import note_db
 _DB_OVERRIDE = os.environ.get("NOTE_DB_PATH") or None
 
 
+def _mark_backup_dirty() -> None:
+    """写入后通知备份引擎（失败静默，绝不影响写入本身）。"""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
+        from backup_sync import mark_dirty
+        mark_dirty()
+    except Exception:
+        pass
+
+
 def _fmt_note(note: dict) -> str:
     """单条备忘的显示格式。"""
     pinned_mark = " [置顶]" if note["pinned"] else ""
@@ -47,6 +57,7 @@ def cmd_note_add(args):
         pinned=args.pinned,
         db_path=_DB_OVERRIDE,
     )
+    _mark_backup_dirty()
     print(f"已记录备忘 #{note_id}")
 
 
@@ -83,6 +94,7 @@ def cmd_note_delete(args):
         db_path=_DB_OVERRIDE,
     )
     if ok:
+        _mark_backup_dirty()
         print(f"已删除备忘 #{args.id}")
     else:
         print(f"[错误] 无此备忘", file=sys.stderr)
@@ -98,6 +110,7 @@ def cmd_note_pin(args):
         db_path=_DB_OVERRIDE,
     )
     if ok:
+        _mark_backup_dirty()
         if pinned:
             print(f"已置顶备忘 #{args.id}")
         else:

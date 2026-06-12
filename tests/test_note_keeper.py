@@ -15,7 +15,11 @@ _CLI = str(
 
 def _run_cli(*args, env=None):
     import os as _os
+    import tempfile as _tempfile
     env = {**_os.environ, **(env or {})}
+    # note-add 等写命令会 mark_dirty —— 状态文件重定向到临时目录，别碰真实 data/
+    env.setdefault("BACKUP_STATE_DIR",
+                   _os.path.join(_tempfile.gettempdir(), "fa_note_test_backup"))
     return subprocess.run(
         [_sys.executable, _CLI, *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace", env=env,
