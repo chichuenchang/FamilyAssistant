@@ -15,7 +15,9 @@ OCR 模块 — 腾讯云 OCR 文字识别封装。
 
     from ocr import ocr_extract
     info = ocr_extract("receipts/2026-06/photo.jpg")
-    print(info)  # → {"amount": 45.0, "date": "2026-06-01", ...}
+    # → {"currency": "CAD", "transactions": [{"amount": 45.0,
+    #     "date": "2026-06-01", "category": "餐饮", "desc": "麦当劳"}, ...]}
+    print(info)
 """
 
 from __future__ import annotations
@@ -155,10 +157,18 @@ def ocr_image(image_path: str) -> Optional[str]:
 # ── 票据结构化提取 ──────────────────────────────────────────
 
 def ocr_extract(image_path: str) -> Optional[dict]:
-    """对票据图片 OCR 后提取结构化信息。
+    """对票据/账单图片 OCR 后提取结构化「逐笔交易」。
 
     先调腾讯云 OCR 获取原始文字，再调 LLM 解析为 JSON。
-    返回: {"amount": 45.0, "currency": "CNY", ...} 或 None
+    重点是逐笔消费/收支，而非账单总额/应还款额。
+    返回:
+        {"currency": "CAD",
+         "transactions": [
+            {"amount": 65.51, "date": "2026-05-01",
+             "category": "汽油", "desc": "CENTEX STRATHCONA"},
+            ...
+         ]}
+    无 DEEPSEEK_API_KEY 时返回 {"raw_text": ...}；OCR 失败返回 None。
     """
     raw = ocr_image(image_path)
     if not raw:
@@ -169,9 +179,16 @@ def ocr_extract(image_path: str) -> Optional[dict]:
         return {"raw_text": raw}
 
     prompt = (
-        "从以下 OCR 识别结果中提取票据信息。严格返回 JSON，不要额外文字。\n"
-        "{\"amount\": 浮点数, \"currency\": \"CNY\", "
-        "\"date\": \"YYYY-MM-DD\", \"category\": \"分类\", \"desc\": \"描述\"}\n\n"
+        "从以下 OCR 识别结果中提取所有「逐笔交易」。严格返回 JSON，不要额外文字。\n"
+        "重点：若是银行/信用卡/支付App账单或流水，请逐笔提取每条交易；"
+        "绝不要返回账单总额、应还款额、最低还款额、已还款额等汇总数字——只要明细行。\n"
+        "单张小票通常只有一笔，返回单元素数组即可。\n"
+        "格式:\n"
+        "{\"currency\": \"币种，从单据推断(如 CNY/USD/CAD)\", "
+        "\"transactions\": [{\"amount\": 浮点数(正数), "
+        "\"date\": \"YYYY-MM-DD\", \"category\": \"分类\", "
+        "\"desc\": \"商家或描述\"}]}\n"
+        "金额或日期无法确定的行直接跳过，不要瞎填。\n\n"
         f"OCR结果:\n{raw}"
     )
 
@@ -180,14 +197,14 @@ def ocr_extract(image_path: str) -> Optional[dict]:
     body = json.dumps({
         "model": "deepseek-v4-flash",
         "messages": [
-            {"role": "system", "content": "你是票据信息提取器。只输出JSON。"},
+            {"role": "system", "content": "你是逐笔交易提取器，从票据/账单里抽取每一笔消费收支。只输出JSON。"},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0,
-        # deepseek-v4-flash 是推理模型，reasoning 占用 completion 预算，
-        # 单张票据约需 ~430 推理 token；多页账单更多。DeepSeek 价格低，
-        # 预算给足，避免 content 被 reasoning 耗尽而为空。
-        "max_tokens": 4096,
+        # deepseek-v4-flash 是推理模型，reasoning 占用 completion 预算。
+        # 单张票据约 ~480 token；多页账单逐笔提取（实测 22 笔需 ~5300）。
+        # DeepSeek 价格低，预算给足，避免逐笔交易被截断或 content 为空。
+        "max_tokens": 8192,
     }).encode("utf-8")
 
     try:
@@ -195,7 +212,8 @@ def ocr_extract(image_path: str) -> Optional[dict]:
             f"{base_url}/v1/chat/completions", data=body,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         )
-        resp = json.loads(urllib.request.urlopen(req, timeout=15).read())
+        # 多页账单逐笔推理可能耗时数十秒，超时给足。
+        resp = json.loads(urllib.request.urlopen(req, timeout=90).read())
         content = resp["choices"][0]["message"]["content"].strip()
         m = re.search(r"\{.*\}", content, re.DOTALL)
         if m:
