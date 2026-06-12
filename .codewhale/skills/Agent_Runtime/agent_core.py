@@ -54,6 +54,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 members
 
 import members as _members_registry
 
+_log = logging.getLogger("familyassist.agent")
+
 
 # ── config.json（值的单一事实来源；不在代码里重复硬编码） ──────
 
@@ -547,7 +549,8 @@ class Agent:
         msgs.append({"role": "user", "content": text})
 
         reply = ""
-        tool_log = ""  # 收集工具执行日志
+        tool_log = ""  # 回复里展示的工具调用摘要（按名计数）
+        tool_counts: dict[str, int] = {}
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
         for _ in range(8):
@@ -570,13 +573,17 @@ class Agent:
                 fn = _TOOL_MAP.get(name)
                 targs = _apply_member(name, targs, member)
                 result = fn(targs) if fn else f"[错误] 未知工具: {name}"
-                # 只展示工具调用，代码输出交给 LLM 转述
+                # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
-                tool_log += f"  ⚙️ {name}({brief})\n"
+                _log.debug("工具 %s(%s) → %s", name, brief, result[:200])
+                tool_counts[name] = tool_counts.get(name, 0) + 1
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
                              "content": result})
 
+        if tool_counts:
+            tool_log = "⚙️ " + ", ".join(
+                f"{n}×{c}" if c > 1 else n for n, c in tool_counts.items()) + "\n"
         if not reply:
             reply = "（工具已执行，但生成回复失败）" if tool_log else "抱歉，暂时出错了。"
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
@@ -620,17 +627,28 @@ class Agent:
             "model": "deepseek-v4-flash",
             "messages": messages,
             "tools": TOOL_SCHEMAS,
-            "temperature": 0.3, "max_tokens": 1500,
+            # deepseek-v4-flash 是推理模型，reasoning 占用 completion 预算，
+            # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
+            # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足。
+            "temperature": 0.3, "max_tokens": 10000,
         }).encode("utf-8")
         req = urllib.request.Request(
             f"{base_url}/v1/chat/completions", data=body,
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         )
         try:
-            resp = json.loads(urllib.request.urlopen(req, timeout=30).read())
-            return resp["choices"][0]["message"]
+            resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
+            choice = resp["choices"][0]
+            _log.debug("LLM finish=%s tokens=%s tool_calls=%d",
+                       choice.get("finish_reason"),
+                       resp.get("usage", {}).get("completion_tokens"),
+                       len(choice["message"].get("tool_calls") or []))
+            if choice.get("finish_reason") == "length":
+                _log.warning("LLM 输出被 max_tokens 截断（推理模型预算不足的信号）")
+            return choice["message"]
         except Exception as e:
             print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
+            _log.exception("LLM 调用失败")
             return None
 
     def _save_history(self, user, user_msg, assistant_msg):
