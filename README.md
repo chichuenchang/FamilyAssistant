@@ -2,6 +2,46 @@
 
 > 个人/家庭多功能 AI 助手。电脑上跑 Agent，手机上用微信远程操控。
 
+## 功能特性
+
+### 📒 记账（Expense Tracker）
+- **多币种流水**：日常开销 / 收入 / 投资 / 活期，CNY · USD · CAD，每笔保留原币种，汇总按币种分组不混算
+- **分类可自定义**：开支 / 收入（及投资 / 储蓄）分类都在 `config.json` 的 `categories` 段，**鼓励按自家需要增删改**（如把"每月孩子"换成自己的开销类目）；改后重启进程生效
+- **定期存款追踪**：本金、利率、期限、到期日，`deposit-list --active` 查在存
+- **资金划转 / 换汇溯源**：记录"源账户 → 换汇 → 目标账户"全链路，多年后可回查任意一笔存款的资金来源（`transfer-list --trace`）；转入定期时自动建定期存款记录并链接
+- **报税记录存档**：按年度/国家（US/CA）存申报记录与税表文件
+- **手工汇率表**：`fx-set` / `fx-get`，按基准币种折算
+- **重复检测**：同日同金额同币种且描述相近自动拦截
+
+### 🧾 票据 OCR
+- 发票/小票照片 → 腾讯云 OCR 文字识别（1000 次/月免费）→ DeepSeek 结构化提取（金额/日期/分类/描述）→ 自动记账
+- 原始票据按月存档 `receipts/YYYY-MM/`，与账目记录关联
+
+### 📁 家庭文档管理（Document Keeper）
+- 重要文档归档：租约、保险单、证件、健康卡等，原件存 `documents/<类型>/`
+- OCR 全文索引，关键词检索（"我们有哪些保险"）
+- **到期跟踪 + 每日主动提醒**：到期前 Bot 每天推送（如 "租约 20 天后到期 — 提前60天通知房东"），`doc-ack` 确认后不再重复
+- 重复检测（证件编号 / 文件哈希）
+
+### 👨‍👩‍👧 家庭成员
+- 成员注册表（仅本机管理，Agent 无权增删）；每笔账自动归到发消息的成员名下
+- `summary --by-member` 按成员汇总；`--member` 过滤查询
+- **默认锁定**：未登记的频道来源一律静默忽略；账目归属由代码注入，LLM 无法冒名
+
+### 💬 远程频道（微信 / Telegram）
+- 手机发自然语言即可操作："花了45块 午餐"、"这个月花了多少"、发照片说"存一下这份租约"
+- 一个频道无关的 Agent 大脑（DeepSeek 函数调用），多个轻量传输层；新增频道只需实现一个薄适配文件
+- 每用户独立对话上下文，`/clear` 远程清空
+
+### ☁️ 云盘备份（Remote Backup，可选）
+- 用户数据（账本/票据/文档/配置）单向镜像到云盘，写入后防抖增量同步，本地永远是事实源
+- 当前内置 Google Drive 实现（最小 `drive.file` 权限，只能看到自己上传的文件）；按 provider 契约可换任意云端存储
+- 换电脑 `backup-restore` 一键恢复全部数据
+
+### 🔒 安全设计
+- Agent 只能调 `config.json` 白名单内的 CLI 命令；成员/文档删除等敏感命令仅限本机
+- OCR 路径限制在票据目录内，防文件外泄；所有凭据走环境变量或本地加密存储，永不入库
+
 ## 快速开始
 
 ### 电脑端
@@ -13,16 +53,26 @@ pip install "weixin-ilink[qr]"
 # 2. 设 LLM API key（必须）
 setx DEEPSEEK_API_KEY "sk-xxx"
 
-# 3. 启动 Agent（终端出二维码）
-python scripts/wechat_ilink.py --mode run
+# 3. 登记家庭成员（必须 — 未登记的来源一律静默忽略）
+python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx
+python .codewhale/skills/Expense_Tracker/cli.py member-list
+
+# 4. 启动 Agent（终端出二维码）
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # （可选）设 OCR：
 #   setx TENCENT_SECRET_ID "xxx"
 #   setx TENCENT_SECRET_KEY "xxx"
 
+# （可选）云盘备份（当前为 Google Drive 实现，可换其他云盘；步骤详见 Remote_Backup/SKILL.md）：
+#   setx GDRIVE_CLIENT_ID "xxx"
+#   setx GDRIVE_CLIENT_SECRET "xxx"
+#   python .codewhale/skills/Remote_Backup/backup_provider.py --auth  # 一次性授权，按提示设 GDRIVE_REFRESH_TOKEN
+#   config.json 设 backup.enabled: true
+
 # ── 或用 Telegram（多人，推荐） ──
 #   setx TELEGRAM_BOT_TOKEN "xxx"
-#   python scripts/telegram_bot.py
+#   python .codewhale/skills/Agent_Runtime/telegram_bot.py
 ```
 
 ### 手机端
@@ -35,27 +85,49 @@ python scripts/wechat_ilink.py --mode run
 **方式二：Telegram**（多人使用，推荐）
 1. Telegram 搜 **@BotFather** → `/newbot` → 获取 Token
 2. `setx TELEGRAM_BOT_TOKEN "xxx"`
-3. `python scripts/telegram_bot.py`
-4. 把 Bot 链接发给家人，拉进群一起用
+3. `python .codewhale/skills/Agent_Runtime/telegram_bot.py`
+4. 把 Bot 链接发给家人，并在电脑上用 `member-add` 登记每个人的 chat id（未登记的人 Bot 不会回应）
 
-发什么都可以，比如 `花了45块 午餐` 或 `这个月花了多少`
+发什么都可以，比如 `花了45块 午餐`、`这个月花了多少`，或发一张租约照片说 `存一下这份租约`。
+每笔账自动归到发消息的成员名下；`summary --by-member` 可看谁花了多少。
+归档的文档到期前 Bot 会每天主动提醒（如 "租约 20 天后到期 — 提前60天通知房东"）。
+（可选）配置云盘备份后，所有数据自动镜像到你自己的网盘；换电脑 `backup-restore` 一键恢复。
 
 ## 目录结构
 
 ```
 FamilyAssistant/
-├── .codewhale/           ← Agent 技能目录（CodeWhale 按需加载）
-├── scripts/
-│   ├── cli.py            ← 记账 CLI
-│   ├── db.py             ← 数据库层
-│   ├── wechat_ilink.py   ← 微信传输层
-│   ├── wechat_skill.py   ← 微信 Agent（全量上下文）
-│   ├── ocr.py            ← OCR（腾讯云）
-│   ├── telegram_bot.py   ← Telegram 传输层
-│   └── feishu_inbox.py   ← 飞书收件箱
-├── config.json           ← 分类 & 白名单
+├── .codewhale/
+│   └── skills/
+│       ├── Expense_Tracker/  ← 记账技能
+│       │   ├── SKILL.md
+│       │   ├── models.py        ← 数据模型
+│       │   ├── db.py            ← SQLite 数据层
+│       │   └── cli.py           ← 记账 CLI 入口
+│       ├── OCR/              ← OCR 技能
+│       │   ├── SKILL.md
+│       │   └── ocr.py            ← OCR（腾讯云）
+│       ├── Document_Keeper/  ← 家庭文档管理技能
+│       │   ├── SKILL.md
+│       │   ├── doc_models.py     ← 数据模型
+│       │   ├── doc_db.py         ← SQLite 数据层
+│       │   ├── cli.py            ← 文档 CLI 入口
+│       │   └── reminder.py       ← 每日到期提醒
+│       ├── Remote_Backup/    ← 用户数据云盘镜像（可选）
+│       │   ├── SKILL.md
+│       │   ├── backup_sync.py    ← 同步引擎
+│       │   ├── backup_provider.py← Google Drive 实现（可按契约换成其他云盘）
+│       │   └── cli.py            ← 备份 CLI 入口
+│       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
+│           ├── SKILL.md
+│           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
+│           ├── members.py        ← 成员注册表（频道 id → 成员名）
+│           ├── wechat_ilink.py   ← 微信传输层
+│           └── telegram_bot.py   ← Telegram 传输层
+├── config.json           ← 分类 & 白名单 & 成员注册表
 ├── data/                 ← SQLite + 凭据
-└── receipts/             ← 票据存档
+├── receipts/             ← 票据存档
+└── documents/            ← 家庭文档存档（按类型子目录）
 ```
 
 ## 技术栈

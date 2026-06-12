@@ -11,7 +11,7 @@ Telegram Bot API 是全球最开放的 IM Bot 协议：
     2. 设环境变量 TELEGRAM_BOT_TOKEN
 
 用法:
-    python scripts/telegram_bot.py
+    python .codewhale/skills/Agent_Runtime/telegram_bot.py
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 if sys.platform == "win32":
@@ -30,10 +31,17 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
-from scripts.wechat_skill import WechatAgent
+from agent_core import Agent, receipt_month_dir
+from members import resolve
+
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
+from reminder import check_and_push as _doc_reminder_check
+
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
+from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
@@ -44,13 +52,13 @@ OFFSET_FILE = ROOT / "data" / ".telegram_offset"
 
 def _load_offset() -> int:
     if OFFSET_FILE.exists():
-        return int(OFFSET_FILE.read_text().strip())
+        return int(OFFSET_FILE.read_text(encoding="utf-8").strip())
     return 0
 
 
 def _save_offset(update_id: int) -> None:
     OFFSET_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OFFSET_FILE.write_text(str(update_id))
+    OFFSET_FILE.write_text(str(update_id), encoding="utf-8")
 
 
 def _api(method: str, data: dict | None = None) -> dict | None:
@@ -64,6 +72,28 @@ def _api(method: str, data: dict | None = None) -> dict | None:
         return json.loads(urllib.request.urlopen(req, timeout=30).read())
     except Exception as e:
         print(f"[tg] API 错误: {e}", file=sys.stderr)
+        return None
+
+
+def download_photo(file_id: str) -> Path | None:
+    """getFile 拿到路径后下载图片到票据收件箱，返回保存路径。"""
+    import urllib.request
+    r = _api("getFile", {"file_id": file_id})
+    if not r or not r.get("ok"):
+        return None
+    file_path = r["result"].get("file_path", "")
+    if not file_path:
+        return None
+    url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+    now = datetime.now()
+    ts = now.strftime("%Y%m%d_%H%M%S")
+    dest = receipt_month_dir(now) / f"{ts}_telegram.jpg"
+    try:
+        dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
+        _backup_mark_dirty()
+        return dest
+    except Exception as e:
+        print(f"[tg] 图片下载失败: {e}", file=sys.stderr)
         return None
 
 
@@ -95,7 +125,7 @@ def run() -> None:
         return
     print(f"[tg] 已连接 — @{me['result']['username']}")
 
-    agent = WechatAgent()
+    agent = Agent()
     offset = _load_offset()
     print(f"[tg] 等待消息... (Ctrl+C 停止)")
 
@@ -124,6 +154,12 @@ def run() -> None:
                 continue
 
             chat_id = msg["chat"]["id"]
+            # 成员闸门：未注册 id 静默丢弃（不回复、不进 LLM），本地留一行日志
+            member = resolve("telegram", str(chat_id))
+            if member is None:
+                print(f"[tg] 忽略未注册来源 chat_id={chat_id}")
+                offset = max(offset, update_id)
+                continue
             user_name = msg.get("from", {}).get("first_name", "unknown")
             text = msg.get("text", "")
 
@@ -140,19 +176,42 @@ def run() -> None:
                 offset = max(offset, update_id)
                 continue
 
+            # 图片消息 → 下载到票据收件箱 → OCR 记账流程（与微信一致）
+            photos = msg.get("photo") or []
+            if photos:
+                print(f"[tg] 图片消息 from {user_name}")
+                file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
+                dest = download_photo(file_id) if file_id else None
+                if dest:
+                    reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
+                else:
+                    reply = "图片下载失败，请重发。"
+                send_message(chat_id, reply)
+                offset = max(offset, update_id)
+                continue
+
             if not text:
                 continue
 
             print(f"[tg] {user_name}: {text[:60]}")
 
             # 处理消息
-            reply = agent.handle(text, user=str(chat_id))
+            reply = agent.handle(text, user=str(chat_id), member=member)
             if reply:
                 send_message(chat_id, reply)
 
             offset = max(offset, update_id)
 
         _save_offset(offset)
+
+        # 文档到期提醒：每天最多推一次（reminder 内部按日去重）
+        try:
+            _doc_reminder_check(send_message, "telegram")
+        except Exception as e:
+            print(f"[tg] 文档提醒检查异常: {e}", file=sys.stderr)
+
+        # 用户数据备份：脏 + 静默期满则镜像一轮（backup_sync 内部把关，永不抛）
+        _backup_tick()
 
 
 if __name__ == "__main__":

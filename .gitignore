@@ -1,16 +1,32 @@
 # 数据库 & 凭据
 data/ledger.db
 data/wechat_creds.json*
-data/.feishu_*
 data/.telegram_offset
 
 # Python
 __pycache__/
 *.pyc
 
-# 票据
-receipts/inbox/*
-!receipts/inbox/.gitkeep
+# 票据（按月子目录 receipts/YYYY-MM/）
+receipts/*
+!receipts/.gitkeep
+
+# 文档存档（按类型子目录 documents/<type>/）
+documents/*
+!documents/.gitkeep
+
+# 文档提醒状态
+data/.doc_reminder_state
+
+# 备份引擎状态（本机的镜像清单，不入库）
+data/.backup_manifest.json
+data/.backup_state.json
+
+# 防御：OAuth 凭据文件绝不入库（provider 实现只允许用环境变量）
+**/Remote_Backup/token*.json
+**/Remote_Backup/*secret*
+**/Remote_Backup/*.pickle
+client_secret*.json
 
 # IDE
 .vscode/

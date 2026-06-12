@@ -9,12 +9,12 @@ OCR 模块 — 腾讯云 OCR 文字识别封装。
     TENCENT_SECRET_KEY     — 腾讯云 SecretKey
 
 用法:
-    from scripts.ocr import ocr_image
-    text = ocr_image("receipts/inbox/photo.jpg")
+    from ocr import ocr_image   # 调用方需把本 skill 目录加入 sys.path
+    text = ocr_image("receipts/2026-06/photo.jpg")
     print(text)  # → "午餐 45元 2026-06-01"
 
-    from scripts.ocr import ocr_extract
-    info = ocr_extract("receipts/inbox/photo.jpg")
+    from ocr import ocr_extract
+    info = ocr_extract("receipts/2026-06/photo.jpg")
     print(info)  # → {"amount": 45.0, "date": "2026-06-01", ...}
 """
 
@@ -31,7 +31,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-ROOT = Path(__file__).resolve().parent.parent
+# Windows 控制台编码容错（命令行直接调用时）
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 SECRET_ID = os.environ.get("TENCENT_SECRET_ID", "")
 SECRET_KEY = os.environ.get("TENCENT_SECRET_KEY", "")
@@ -201,3 +208,38 @@ def ocr_extract(image_path: str) -> Optional[dict]:
 def is_available() -> bool:
     """检查 OCR 是否配置了就绪。"""
     return bool(SECRET_ID and SECRET_KEY)
+
+
+# ── 命令行入口 ──────────────────────────────────────────────
+# 让 user / agent / 任意调用方都能直接跑：
+#   python .codewhale/skills/OCR/ocr.py <图片路径>            → 纯文字
+#   python .codewhale/skills/OCR/ocr.py <图片路径> --extract  → 结构化 JSON
+
+def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="OCR — 图片文字识别 / 票据结构化提取")
+    parser.add_argument("image", help="图片路径")
+    parser.add_argument("--extract", action="store_true",
+                        help="结构化提取票据信息（需 DEEPSEEK_API_KEY），输出 JSON")
+    args = parser.parse_args()
+
+    if not is_available():
+        print("OCR 未配置：请设置环境变量 TENCENT_SECRET_ID 和 TENCENT_SECRET_KEY",
+              file=sys.stderr)
+        return 1
+
+    if not Path(args.image).exists():
+        print(f"文件不存在: {args.image}", file=sys.stderr)
+        return 1
+
+    if args.extract:
+        info = ocr_extract(args.image)
+        print(json.dumps(info, ensure_ascii=False, indent=2) if info else "[未识别到文字]")
+    else:
+        text = ocr_image(args.image)
+        print(text if text else "[未识别到文字]")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -13,16 +13,16 @@
 
 用法:
     # 测试模式（命令行交互，不需要微信）
-    python scripts/wechat_ilink.py --mode test
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode test
 
     # 运行模式（扫码登录 + 长轮询）
-    python scripts/wechat_ilink.py --mode run
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
     # 重新扫码（切换账号）
-    python scripts/wechat_ilink.py --mode run --relogin
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 
 安全:
-    所有 CLI 调用受 scripts/wechat_skill.py 白名单约束。
+    所有 CLI 调用受同目录 agent_core.py 白名单约束。
     凭据加密存储在 data/wechat_creds.json，不对外传输。
 """
 
@@ -43,11 +43,18 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 项目根
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+# 项目根（本文件向上 3 级）
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
-from scripts.wechat_skill import WechatAgent
+from agent_core import Agent, receipt_month_dir
+from members import resolve
+
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
+from reminder import check_and_push as _doc_reminder_check
+
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
+from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
 
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
@@ -73,14 +80,18 @@ def run_bot(relogin: bool = False) -> None:
     print(f"[wechat_ilink] 登录成功 — 账号: {bot.account_id}")
     print("[wechat_ilink] 等待微信消息... (Ctrl+C 停止)")
 
-    agent = WechatAgent()
+    agent = Agent()
 
     # 注册文字消息处理器
     @bot.on_text
     def handle_text(msg):
-        print(f"[wx] 文字消息 from {msg.from_user}: {msg.text[:60]}")
+        member = resolve("wechat", msg.from_user)
+        if member is None:
+            print(f"[wx] 忽略未注册来源 {msg.from_user}")
+            return
+        print(f"[wx] 文字消息 from {msg.from_user}({member}): {msg.text[:60]}")
         try:
-            reply = agent.handle(msg.text, user=msg.from_user)
+            reply = agent.handle(msg.text, user=msg.from_user, member=member)
             msg.reply_text(reply)
         except Exception as e:
             msg.reply_text(f"处理出错: {e}")
@@ -88,13 +99,18 @@ def run_bot(relogin: bool = False) -> None:
     # 注册图片消息处理器
     @bot.on_image
     def handle_image(msg):
-        print(f"[wx] 图片消息 from {msg.from_user}")
+        member = resolve("wechat", msg.from_user)
+        if member is None:
+            print(f"[wx] 忽略未注册来源 {msg.from_user}")
+            return
+        print(f"[wx] 图片消息 from {msg.from_user}({member})")
         try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            img_path = ROOT / "receipts" / "inbox" / f"{ts}_wechat.jpg"
-            img_path.parent.mkdir(parents=True, exist_ok=True)
+            now = datetime.now()
+            ts = now.strftime("%Y%m%d_%H%M%S")
+            img_path = receipt_month_dir(now) / f"{ts}_wechat.jpg"
             msg.save(str(img_path))
-            reply = agent.handle_image(str(img_path), user=msg.from_user)
+            _backup_mark_dirty()
+            reply = agent.handle_image(str(img_path), user=msg.from_user, member=member)
             msg.reply_text(reply)
         except Exception as e:
             msg.reply_text(f"图片处理出错: {e}")
@@ -102,15 +118,37 @@ def run_bot(relogin: bool = False) -> None:
     # 其他消息类型：友好提示
     @bot.on_voice
     def handle_voice(msg):
+        if resolve("wechat", msg.from_user) is None:
+            return
         msg.reply_text("目前不支持语音消息，请发文字或图片。")
 
     @bot.on_file
     def handle_file(msg):
+        if resolve("wechat", msg.from_user) is None:
+            return
         msg.reply_text(f"收到文件: {msg.file_name}（暂不支持文件处理）")
 
     @bot.on_video
     def handle_video(msg):
+        if resolve("wechat", msg.from_user) is None:
+            return
         msg.reply_text("收到视频（暂不支持视频处理）")
+
+    # 文档到期提醒：后台线程每 10 分钟检查（reminder 内部按日去重，
+    # weixin-ilink bot.run() 阻塞，无轮询循环可挂钩）
+    import threading
+    import time as _time
+
+    def _reminder_loop():
+        while True:
+            try:
+                _doc_reminder_check(lambda wxid, text: bot.send_text(wxid, text), "wechat")
+            except Exception as e:
+                print(f"[wx] 文档提醒检查异常: {e}", file=sys.stderr)
+            _backup_tick()
+            _time.sleep(600)
+
+    threading.Thread(target=_reminder_loop, daemon=True, name="doc-reminder").start()
 
     try:
         bot.run()
@@ -127,7 +165,7 @@ def run_test() -> None:
     llm_ready = bool(os.environ.get("DEEPSEEK_API_KEY"))
     print(f"LLM: {'已启用' if llm_ready else '未配置 — 设置 DEEPSEEK_API_KEY'}")
     print("-" * 40)
-    agent = WechatAgent()
+    agent = Agent()
     while True:
         try:
             msg = input("微信> ").strip()
@@ -135,7 +173,7 @@ def run_test() -> None:
             break
         if msg.lower() in ("quit", "exit", "q"):
             break
-        reply = agent.handle(msg)
+        reply = agent.handle(msg, member="本地测试")
         print(f"助手> {reply}")
         print()
 
