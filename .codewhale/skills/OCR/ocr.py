@@ -204,7 +204,7 @@ def ocr_extract(image_path: str) -> Optional[dict]:
         # deepseek-v4-flash 是推理模型，reasoning 占用 completion 预算。
         # 单张票据约 ~480 token；多页账单逐笔提取（实测 22 笔需 ~5300）。
         # DeepSeek 价格低，预算给足，避免逐笔交易被截断或 content 为空。
-        "max_tokens": 8192,
+        "max_tokens": 10000,
     }).encode("utf-8")
 
     try:
