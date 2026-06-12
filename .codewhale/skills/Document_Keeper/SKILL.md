@@ -94,7 +94,8 @@ python .codewhale/skills/Document_Keeper/cli.py doc-remove --id 3 --delete-file
 
 ## 隐私
 
-所有文档图片走腾讯云 OCR、提取文本走 DeepSeek（用户已知情选择）。原始文件与数据库均只存本机。
+所有文档图片走腾讯云 OCR、提取文本走 DeepSeek（用户已知情选择）。原始文件与数据库默认只存本机；
+启用 Remote Backup（可选）后会镜像到用户自己的云盘（见 [Remote Backup](../Remote_Backup/SKILL.md)）。
 
 ## 技能边界
 

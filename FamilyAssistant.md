@@ -57,7 +57,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 |-----------|--------|
 | `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验；`agent_core` 独立读取同一来源（工具 enum） |
 | `db_path` | `models.DB_PATH` |
-| `receipts_dir` | `agent_core.RECEIPTS_DIR` |
+| `receipts_dir` | `agent_core.RECEIPTS_DIR`；`Expense_Tracker/models.py`（RECEIPTS_DIR，cli `--receipt` 归档用） |
 | `documents_dir` | `Document_Keeper/doc_models.py`（DOCUMENTS_DIR）、`agent_core.DOCUMENTS_DIR` |
 | `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |

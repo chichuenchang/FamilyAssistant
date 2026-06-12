@@ -11,9 +11,10 @@ Agent Core — 频道无关的全量上下文智能助手。
     LLM 自主选择工具 → 执行 → LLM 生成自然语言回复
 
 频道接入契约（详见 .codewhale/skills/Agent_Runtime/SKILL.md）:
-    agent.handle(text, user)        # 文字消息
-    agent.handle_image(path, user)  # 图片消息
+    agent.handle(text, user, member)        # 文字消息
+    agent.handle_image(path, user, member)  # 图片消息
     user = 频道内唯一 id（隔离各用户对话历史）
+    member = members.resolve 解析出的成员名；为空直接返回空串（未注册来源不碰 LLM）
 
 依赖:
     DEEPSEEK_API_KEY
@@ -138,8 +139,8 @@ def _build_system_prompt() -> str:
 - 用户问"备份了吗""上次备份什么时候"→ backup_status
 - 用户说"立刻备份""把数据同步到云盘"→ backup_now
 - 用户问"云端和本地一致吗"→ backup_verify
-- backup_status 显示未启用/未实现时：告知备份是可选功能，需要在电脑上让编码
-  Agent 按 Remote_Backup/SKILL.md 实现 provider 并启用；不要反复推销
+- backup_status 显示未启用/未配置时：告知备份是可选功能，需要在电脑上按
+  Remote_Backup/SKILL.md 完成 Google Drive 授权并启用；不要反复推销
 - 数据恢复（backup-restore）只能在电脑上手动执行，你调不到
 
 ## 行为准则

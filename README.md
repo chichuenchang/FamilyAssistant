@@ -126,8 +126,11 @@ FamilyAssistant/
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── config.json           ← 分类 & 白名单 & 成员注册表
 ├── data/                 ← SQLite + 凭据
-├── receipts/             ← 票据存档
-└── documents/            ← 家庭文档存档（按类型子目录）
+├── receipts/             ← 票据存档（按月子目录）
+├── documents/            ← 家庭文档存档（按类型子目录）
+├── tests/                ← pytest 套件（python -m pytest）
+├── docs/                 ← 设计 spec 与实现 plan 存档
+└── requirements-dev.txt  ← 开发依赖（pytest）
 ```
 
 ## 技术栈
