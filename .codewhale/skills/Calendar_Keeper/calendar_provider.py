@@ -42,11 +42,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+
+# Windows 控制台编码容错（--auth 流程要打印中文提示，cp1252 控制台会炸）
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 SCOPES = ("https://www.googleapis.com/auth/calendar.events "
           "https://www.googleapis.com/auth/tasks")
@@ -333,7 +343,6 @@ def _run_auth() -> None:
 
 
 if __name__ == "__main__":
-    import sys
     if "--auth" in sys.argv:
         _run_auth()
     else:
