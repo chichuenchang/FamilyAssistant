@@ -28,6 +28,7 @@ Agent Core — 频道无关的全量上下文智能助手。
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -78,6 +79,35 @@ def receipt_month_dir(dt: date | None = None) -> Path:
     d = RECEIPTS_DIR / (dt or date.today()).strftime("%Y-%m")
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+# ── 调试日志（各 Bot 共用；--debug 开，默认关） ─────────────────
+
+def setup_logging(debug: bool = False) -> logging.Logger:
+    """配置 "familyassist" 日志器，各传输层（telegram/wechat）调一次即可。
+
+    debug=False（默认）：仅 WARNING 及以上，安静运行。
+    debug=True：DEBUG 全量，同时写 stderr 和 data/bot_debug.log（含完整 traceback），
+                供排查 OCR/记账/工具调用链路。
+    子日志器（familyassist.telegram 等）自动继承本配置。
+    """
+    logger = logging.getLogger("familyassist")
+    logger.setLevel(logging.DEBUG if debug else logging.WARNING)
+    if logger.handlers:  # 幂等：重复调用不叠加 handler
+        return logger
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                            datefmt="%Y-%m-%d %H:%M:%S")
+    sh = logging.StreamHandler(sys.stderr)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+    if debug:
+        log_dir = ROOT / "data"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_dir / "bot_debug.log", encoding="utf-8")
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
+        logger.debug("调试日志已开启 → %s", log_dir / "bot_debug.log")
+    return logger
 
 # CLI 命令白名单（config.json wechat.allowed_commands，缺失回退内置集）
 _FALLBACK_ALLOWED = {
