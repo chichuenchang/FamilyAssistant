@@ -833,11 +833,12 @@ class Agent:
         import urllib.request
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        model = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro")
         body = json.dumps({
-            "model": "deepseek-v4-flash",
+            "model": model,
             "messages": messages,
             "tools": TOOL_SCHEMAS,
-            # deepseek-v4-flash 是推理模型，reasoning 占用 completion 预算，
+            # DeepSeek V4 是推理模型，reasoning 占用 completion 预算，
             # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
             # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足。
             "temperature": 0.3, "max_tokens": 10000,
