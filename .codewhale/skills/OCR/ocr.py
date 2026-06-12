@@ -184,7 +184,10 @@ def ocr_extract(image_path: str) -> Optional[dict]:
             {"role": "user", "content": prompt},
         ],
         "temperature": 0,
-        "max_tokens": 300,
+        # deepseek-v4-flash 是推理模型，reasoning 占用 completion 预算，
+        # 单张票据约需 ~430 推理 token；多页账单更多。DeepSeek 价格低，
+        # 预算给足，避免 content 被 reasoning 耗尽而为空。
+        "max_tokens": 4096,
     }).encode("utf-8")
 
     try:
