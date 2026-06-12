@@ -9,6 +9,7 @@
 | **Expense Tracker** | 记账、查账、汇总、存款、报税、汇率 | [SKILL.md](.codewhale/skills/Expense_Tracker/SKILL.md) | 记账、查账、汇总、存款、报税、汇率、票据 |
 | **OCR** | 图片文字识别、票据结构化提取 | [SKILL.md](.codewhale/skills/OCR/SKILL.md) | 图片文字识别、票据结构化提取 |
 | **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒 | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
+| **Note Keeper** | 个人备忘（杂项信息长期记忆，按成员私有，支持图片 OCR 入忘、置顶常驻上下文） | [SKILL.md](.codewhale/skills/Note_Keeper/SKILL.md) | 记一下、帮我记住、备忘、我记过什么 |
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
 
@@ -16,6 +17,7 @@
 
 - 用户意图涉及记账/查账/财务 → 加载 Expense Tracker（如需票据识别，同时加载 OCR）
 - 用户意图涉及文档归档/合同/保险/证件/到期提醒 → 加载 Document Keeper（如需图片识别，同时加载 OCR）
+- 用户意图涉及备忘/杂项信息记忆（"记一下""帮我记住"）→ 加载 Note Keeper
 - 用户意图涉及备份/恢复/云盘同步 → 加载 Remote Backup
 - 仅闲聊/问候 → 不加载
 

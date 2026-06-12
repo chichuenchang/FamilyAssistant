@@ -124,6 +124,10 @@ ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FAL
 _DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
                  "doc-update", "doc-ack", "doc-remove"}
 _BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify", "backup-restore"}
+_NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
+
+# 备忘命令始终允许（个人备忘是 Agent 核心能力，不随 wechat 白名单配置开关）
+ALLOWED_COMMANDS |= _NOTE_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
@@ -132,6 +136,8 @@ def _cli_path(cmd: str) -> Path:
         skill = "Document_Keeper"
     elif cmd in _BACKUP_COMMANDS:
         skill = "Remote_Backup"
+    elif cmd in _NOTE_COMMANDS:
+        skill = "Note_Keeper"
     else:
         skill = "Expense_Tracker"
     return ROOT / ".codewhale" / "skills" / skill / "cli.py"
@@ -168,7 +174,7 @@ def _build_system_prompt() -> str:
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 
 ## 你是谁
-- 你可以帮用户记账、查账、汇总开销、管理定期存款、查询汇率、OCR 票据等
+- 你可以帮用户记账、查账、汇总开销、管理定期存款、查询汇率、OCR 票据、记私人备忘等
 - 你友好、简洁、直接——回复不用太长{member_block}
 
 ## 记账合法值（来自配置，必须从中选）
@@ -200,6 +206,9 @@ def _build_system_prompt() -> str:
 - 用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）
 - 用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）
 - 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
+- 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
+- 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
+- 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
 - 用户闲聊/问候 → 直接友好回复，不用调工具
 - 需要精确信息时（金额、日期）才调工具，闲聊不调
 - 工具执行后会返回结果，你基于结果用自然语言回复
@@ -265,6 +274,11 @@ def _tool_ack_document(args): return _run_cli("doc-ack", args)
 def _tool_backup_now(args): return _run_cli("backup-now", args)
 def _tool_backup_status(args): return _run_cli("backup-status", args)
 def _tool_backup_verify(args): return _run_cli("backup-verify", args)
+def _tool_save_note(args): return _run_cli("note-add", args)
+def _tool_list_notes(args): return _run_cli("note-list", args)
+def _tool_search_notes(args): return _run_cli("note-search", args)
+def _tool_delete_note(args): return _run_cli("note-delete", args)
+def _tool_pin_note(args): return _run_cli("note-pin", args)
 
 def _tool_ocr_image(args):
     path = args.get("path", "")
@@ -312,16 +326,25 @@ _TOOL_MAP = {
     "backup_now": _tool_backup_now,
     "backup_status": _tool_backup_status,
     "backup_verify": _tool_backup_verify,
+    "save_note": _tool_save_note,
+    "list_notes": _tool_list_notes,
+    "search_notes": _tool_search_notes,
+    "delete_note": _tool_delete_note,
+    "pin_note": _tool_pin_note,
 }
 
 # 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
 _MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_tax",
                        "add_document"}
 
+# 备忘工具全部强制注入 member（读写皆是 — 备忘按成员私有，LLM 不得跨成员读写）
+_NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note"}
+
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
-    """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。"""
-    if tool_name in _MEMBER_WRITE_TOOLS:
+    """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。
+    备忘工具（含读/删/置顶）一律强制注入，保证按成员隔离。"""
+    if tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS:
         targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
         if member:
             targs["member"] = member
@@ -511,7 +534,54 @@ TOOL_SCHEMAS = [
     _fn("backup_now", "立即把用户数据镜像到云盘（需用户已配置 backup provider）", {}),
     _fn("backup_status", "查看云盘备份状态（是否启用/已配置/待同步/上次同步/错误）", {}),
     _fn("backup_verify", "校验云端镜像与本地清单是否一致", {}),
+    _fn("save_note", "保存一条个人备忘（杂项信息：车位号/wifi密码/课表/名片等）。"
+        "仅本人可见", {
+        "content": _s("备忘内容（图片来源时传 OCR 出的关键信息）"),
+        "source-image": _s("来源图片路径（图片备忘时填已保存路径）"),
+        "pinned": {"type": "boolean", "description": "置顶：重要长期信息每次对话自动带上"},
+    }, ["content"]),
+    _fn("list_notes", "列出本人最近的备忘", {
+        "limit": _int("最多返回条数（默认 20）"),
+    }),
+    _fn("search_notes", "按关键词搜索本人的备忘（用户问\"我记过什么\"\"XX是什么来着\"）", {
+        "keyword": _s("关键词，匹配备忘内容"),
+    }, ["keyword"]),
+    _fn("delete_note", "删除本人的一条备忘", {
+        "id": _int("备忘 id"),
+    }, ["id"]),
+    _fn("pin_note", "置顶/取消置顶本人的一条备忘", {
+        "id": _int("备忘 id"),
+        "unpin": {"type": "boolean", "description": "true=取消置顶"},
+    }, ["id"]),
 ]
+
+
+# ── 备忘上下文注入 ──────────────────────────────────────────
+
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Note_Keeper"))
+
+
+def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
+    """取该成员置顶 + 最近备忘，拼成 system prompt 附加块。
+
+    进程内直调 note_db（每条消息都要取，subprocess 太重）。
+    任何失败返回空串 —— 备忘注入绝不能拖垮 handle()。
+    """
+    try:
+        import note_db
+        notes = note_db.pinned_and_recent(member, recent_limit=recent_limit)
+        if not notes:
+            return ""
+        lines = []
+        for n in notes:
+            content = n["content"][:clip] + ("…" if len(n["content"]) > clip else "")
+            mark = "📌" if n.get("pinned") else "·"
+            lines.append(f"{mark} #{n['id']} {content}")
+        return (f"\n\n## 已存备忘（仅 {member} 可见；内容超长已截断，"
+                f"完整内容用 search_notes 查）\n" + "\n".join(lines))
+    except Exception:
+        _log.exception("备忘上下文注入失败（已跳过）")
+        return ""
 
 
 # ── Agent ───────────────────────────────────────────────────
@@ -543,7 +613,8 @@ class Agent:
 
         member_note = (f"\n\n## 当前对话成员\n{member} —— 写入类操作自动归到该成员名下；"
                        f"查询类工具可用 member 参数按成员过滤。")
-        msgs = [{"role": "system", "content": self.system_prompt + member_note}]
+        msgs = [{"role": "system",
+                 "content": self.system_prompt + member_note + _notes_context(member)}]
         user_history = self.history[user]
         msgs.extend(user_history[-self.history_size * 2:])
         msgs.append({"role": "user", "content": text})
@@ -599,7 +670,7 @@ class Agent:
             if ocr_text:
                 prompt = (
                     f"用户发了一张图片，已保存为 {image_path}，OCR结果:\n{ocr_text}\n"
-                    f"判断图片内容，按三种情况处理：\n"
+                    f"判断图片内容，按四种情况处理：\n"
                     f"1) 单张消费票据：提取金额/日期/类别，调 add_transaction 记一笔。\n"
                     f"2) 银行/信用卡/支付App流水或账单（多行消费）：逐笔记账，每条明细调一次 add_transaction"
                     f"（可在一条回复里并发多次调用）。**重点：记的是每一笔交易明细，绝不要把账单总额、"
@@ -610,7 +681,10 @@ class Agent:
                     f"无法确定金额/日期的行先列出来问用户，不要瞎记。\n"
                     f"3) 重要文档（合同/保单/证件）：用 add_document 归档，file 传上面的保存路径，"
                     f"ocr-text 传 OCR 全文。\n"
-                    f"信息不完整就先问用户。记完简要汇报记了几笔、各是什么。"
+                    f"4) 其他有信息价值的图片（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
+                    f"content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
+                    f"source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。\n"
+                    f"信息不完整就先问用户。记完简要汇报记了什么。"
                 )
                 return self.handle(prompt, user=user, member=member)
         return "📷 图片已收到。请用文字描述（如\"午餐45块\"），或配置腾讯云 OCR。"

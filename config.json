@@ -81,7 +81,12 @@
       "doc-ack",
       "backup-now",
       "backup-status",
-      "backup-verify"
+      "backup-verify",
+      "note-add",
+      "note-list",
+      "note-search",
+      "note-delete",
+      "note-pin"
     ]
   }
 }
