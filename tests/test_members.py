@@ -91,11 +91,11 @@ def test_remove_member(cfg):
 
 def test_add_member_with_aliases_only(cfg):
     """仅别名也可登记（如还没手机的孩子）；不影响频道闸门。"""
-    mm.add_member("娃", aliases=["Ruiyi Li", "李芮仪"], members_path=cfg)
-    assert mm.load_members(cfg)["娃"]["aliases"] == ["Ruiyi Li", "李芮仪"]
+    mm.add_member("娃", aliases=["Legal Name", "法定名"], members_path=cfg)
+    assert mm.load_members(cfg)["娃"]["aliases"] == ["Legal Name", "法定名"]
     assert "telegram" not in mm.load_members(cfg)["娃"]
     # 别名不参与 resolve（不是频道 id）
-    assert mm.resolve("telegram", "Ruiyi Li", cfg) is None
+    assert mm.resolve("telegram", "Legal Name", cfg) is None
 
 
 def test_add_member_appends_aliases_dedup(cfg):
