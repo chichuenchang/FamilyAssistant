@@ -383,6 +383,7 @@ class TestRestoreVerifyStatus:
         assert s["dirty_since"] is not None
 
 
+import json
 import os
 import subprocess
 import sys as _sys
@@ -401,28 +402,31 @@ def _run_cli(*args, env_extra=None):
     )
 
 
+def _disabled_cfg(tmp_path):
+    """生成 backup.enabled=false 的隔离配置（不依赖真实 config.json 的开关状态）。"""
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"backup": {"enabled": False}}), encoding="utf-8")
+    return {"BACKUP_STATE_DIR": str(tmp_path), "BACKUP_CONFIG": str(cfg)}
+
+
 class TestCli:
     def test_backup_status_works_unconfigured(self, tmp_path):
-        r = _run_cli("backup-status",
-                     env_extra={"BACKUP_STATE_DIR": str(tmp_path)})
+        r = _run_cli("backup-status", env_extra=_disabled_cfg(tmp_path))
         assert r.returncode == 0
         assert "enabled" in r.stdout and "False" in r.stdout
 
     def test_backup_now_disabled_exits_1(self, tmp_path):
-        # 真实 config.json: backup.enabled = false → 拒绝
-        r = _run_cli("backup-now",
-                     env_extra={"BACKUP_STATE_DIR": str(tmp_path)})
+        # 隔离配置 backup.enabled = false → 拒绝
+        r = _run_cli("backup-now", env_extra=_disabled_cfg(tmp_path))
         assert r.returncode == 1
         assert "未启用" in r.stderr or "未实现" in r.stderr
 
     def test_backup_verify_unconfigured_exits_1(self, tmp_path):
-        r = _run_cli("backup-verify",
-                     env_extra={"BACKUP_STATE_DIR": str(tmp_path)})
+        r = _run_cli("backup-verify", env_extra=_disabled_cfg(tmp_path))
         assert r.returncode == 1
 
     def test_backup_restore_unconfigured_exits_1(self, tmp_path):
-        r = _run_cli("backup-restore",
-                     env_extra={"BACKUP_STATE_DIR": str(tmp_path)})
+        r = _run_cli("backup-restore", env_extra=_disabled_cfg(tmp_path))
         assert r.returncode == 1
 
 

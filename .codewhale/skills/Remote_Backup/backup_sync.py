@@ -41,8 +41,10 @@ _FALLBACK_CFG = {
 
 
 def _load_cfg() -> dict:
+    # BACKUP_CONFIG 环境变量可指向替代 config.json（测试隔离用，不依赖真实配置）
+    cfg_path = Path(os.environ.get("BACKUP_CONFIG") or (ROOT / "config.json"))
     try:
-        raw = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
+        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
         cfg = raw.get("backup")
         if isinstance(cfg, dict):
             return {**_FALLBACK_CFG, **cfg}

@@ -21,6 +21,9 @@
     # 重新扫码（切换账号）
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 
+    # 调试日志（写 data/bot_debug.log，默认关）
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --debug
+
 安全:
     所有 CLI 调用受同目录 agent_core.py 白名单约束。
     凭据加密存储在 data/wechat_creds.json，不对外传输。

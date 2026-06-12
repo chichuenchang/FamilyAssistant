@@ -38,7 +38,7 @@ python .codewhale/skills/Expense_Tracker/cli.py list --start 2026-05-01 --end 20
 python .codewhale/skills/Document_Keeper/cli.py doc-add --type lease --title "2026公寓租约" --expiry 2027-02-28
 python .codewhale/skills/Document_Keeper/cli.py doc-due
 
-# 启动微信 Bot
+# 启动微信 Bot（加 --debug 写调试日志 data/bot_debug.log）
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 ```
 

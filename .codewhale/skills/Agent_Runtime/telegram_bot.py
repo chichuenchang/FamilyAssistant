@@ -11,7 +11,9 @@ Telegram Bot API 是全球最开放的 IM Bot 协议：
     2. 设环境变量 TELEGRAM_BOT_TOKEN
 
 用法:
-    python .codewhale/skills/Agent_Runtime/telegram_bot.py
+    python .codewhale/skills/Agent_Runtime/telegram_bot.py [--debug]
+
+    --debug: 调试日志写 data/bot_debug.log（默认关）
 """
 
 from __future__ import annotations
