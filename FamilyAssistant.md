@@ -45,7 +45,11 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 ## 成员注册（仅本机）
 
 - `member-add <名> --telegram <chat_id> --wechat <wxid>`（可多次传同一 flag 绑多个 id）、`member-list`、`member-remove <名>`。
-- 注册表存 `config.json` `members` 段；改后重启机器人生效。空注册表 = 锁定，所有远程消息静默丢弃。
+- `--alias <别名/法定名>`（可多次）：登记文档票据里出现的名字（如法定中文名）。Agent 的 system prompt
+  会带上成员+别名清单，识别"这份保单是谁的"；别名不参与频道闸门，仅别名登记也可（如还没手机的孩子）。
+- 注册表存 `data/members.json`（**git 不跟踪** — 姓名/法定名/频道 id 属隐私，不入仓库；已加入
+  `backup.include` 随云备份镜像，新设备 `backup-restore` 一并恢复）；改后重启机器人生效。
+  文件缺失/空注册表 = 锁定，所有远程消息静默丢弃。
 - 这三个命令**不在** `wechat.allowed_commands` 白名单内 —— Agent 只读注册表（`members.resolve`），无法增删成员。
 - 账目归属由代码注入解析出的成员名（LLM 给的 member 一律剥离，防冒名）。
 
@@ -62,7 +66,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
 | `backup`（enabled/debounce/include/remote_root） | `Remote_Backup/backup_sync.py`（CFG，读一次） |
-| `members` | `Agent_Runtime/members.py`（只读：resolve）、`cli.py member-*`（本机写入） |
+| ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
 
 改这些值只改 `config.json`（改后重启进程生效）。config 缺失/损坏时各处有应急回退默认值。

@@ -25,6 +25,8 @@
 
 ### 👨‍👩‍👧 家庭成员
 - 成员注册表（仅本机管理，Agent 无权增删）；每笔账自动归到发消息的成员名下
+- 注册表存 **git 忽略的 `data/members.json`**（姓名/法定名/频道 id 属隐私，永不入仓库），随云备份镜像，新设备自动恢复
+- `--alias` 登记法定名/别名 → Bot 能认出文档里"这是谁的"（如保单上的法定中文名）
 - `summary --by-member` 按成员汇总；`--member` 过滤查询
 - **默认锁定**：未登记的频道来源一律静默忽略；账目归属由代码注入，LLM 无法冒名
 
@@ -41,6 +43,8 @@
 ### 🔒 安全设计
 - Agent 只能调 `config.json` 白名单内的 CLI 命令；成员/文档删除等敏感命令仅限本机
 - OCR 路径限制在票据目录内，防文件外泄；所有凭据走环境变量或本地加密存储，永不入库
+- **隐私分层**：git 跟踪的文件（代码 + `config.json`）不含任何个人数据；隐私数据（成员注册表/账本/票据/文档）
+  全部在 git 忽略路径（`data/` `receipts/` `documents/`），只存本机 + 你自己的云盘镜像
 
 ## 快速开始
 
@@ -53,8 +57,8 @@ pip install "weixin-ilink[qr]"
 # 2. 设 LLM API key（必须）
 setx DEEPSEEK_API_KEY "sk-xxx"
 
-# 3. 登记家庭成员（必须 — 未登记的来源一律静默忽略）
-python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx
+# 3. 登记家庭成员（必须 — 未登记的来源一律静默忽略；--alias 登记文档里的法定名，Agent 据此识别"这是谁的"）
+python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx --alias 法定名
 python .codewhale/skills/Expense_Tracker/cli.py member-list
 
 # 4. 启动 Agent（终端出二维码）
@@ -121,11 +125,11 @@ FamilyAssistant/
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
-│           ├── members.py        ← 成员注册表（频道 id → 成员名）
+│           ├── members.py        ← 成员注册表（存 git 忽略的 data/members.json）
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
-├── config.json           ← 分类 & 白名单 & 成员注册表
-├── data/                 ← SQLite + 凭据
+├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）
+├── data/                 ← SQLite + 凭据 + 成员注册表 members.json（均 git 不跟踪）
 ├── receipts/             ← 票据存档（按月子目录）
 ├── documents/            ← 家庭文档存档（按类型子目录）
 ├── tests/                ← pytest 套件（python -m pytest）

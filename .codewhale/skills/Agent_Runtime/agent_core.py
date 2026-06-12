@@ -48,7 +48,10 @@ if sys.platform == "win32":
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "OCR"))  # OCR skill 的 ocr.py
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 members
 # 注：CLI 经 subprocess 调用（见 _run_cli），无需加入 sys.path
+
+import members as _members_registry
 
 
 # ── config.json（值的单一事实来源；不在代码里重复硬编码） ──────
@@ -116,11 +119,25 @@ def _build_system_prompt() -> str:
     currencies = "/".join(_CURRENCIES)
     doc_types = "/".join(_DOC_TYPES)
 
+    # 家庭成员 + 别名/法定名（data/members.json；空注册表则整段省略）
+    members_cfg = _members_registry.load_members()
+    member_block = ""
+    if isinstance(members_cfg, dict) and members_cfg:
+        rows = []
+        for n, b in members_cfg.items():
+            als = [str(a) for a in (b.get("aliases") or [])] if isinstance(b, dict) else []
+            rows.append(f"- {n}" + (f"（别名/法定名: {'、'.join(als)}）" if als else ""))
+        member_block = (
+            "\n\n## 家庭成员\n" + "\n".join(rows) +
+            "\n- 票据/合同/证件等文档或对话里出现上述别名/法定名时，视为对应成员"
+            "（用于文档标题、按成员查询过滤、理解\"这是谁的\"）。"
+            "\n- 写入类操作的归属永远是发消息的成员（代码强制），别名不改变归属。")
+
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 
 ## 你是谁
 - 你可以帮用户记账、查账、汇总开销、管理定期存款、查询汇率、OCR 票据等
-- 你友好、简洁、直接——回复不用太长
+- 你友好、简洁、直接——回复不用太长{member_block}
 
 ## 记账合法值（来自配置，必须从中选）
 - 交易类型: {tx_types}

@@ -1,7 +1,8 @@
-# 数据库 & 凭据
+# 数据库 & 凭据 & 成员注册表（隐私：姓名/法定名/频道 id 不入库）
 data/ledger.db
 data/wechat_creds.json*
 data/.telegram_offset
+data/members.json
 
 # Python
 __pycache__/
