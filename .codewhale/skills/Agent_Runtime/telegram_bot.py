@@ -11,9 +11,9 @@ Telegram Bot API 是全球最开放的 IM Bot 协议：
     2. 设环境变量 TELEGRAM_BOT_TOKEN
 
 用法:
-    python .codewhale/skills/Agent_Runtime/telegram_bot.py [--debug]
+    python .codewhale/skills/Agent_Runtime/telegram_bot.py [--no-debug]
 
-    --debug: 调试日志写 data/bot_debug.log（默认关）
+    调试日志默认开（写 data/bot_debug.log）；关闭用 --no-debug
 """
 
 from __future__ import annotations
@@ -233,8 +233,10 @@ def run() -> None:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Family Assistant — Telegram Bot")
-    parser.add_argument("--debug", action="store_true",
-                        help="开启调试日志（写 data/bot_debug.log，默认关）")
+    parser.add_argument("--debug", action="store_true", default=True,
+                        help="开启调试日志（写 data/bot_debug.log，默认开）")
+    parser.add_argument("--no-debug", dest="debug", action="store_false",
+                        help="关闭调试日志")
     args = parser.parse_args()
     setup_logging(args.debug)
     print("Family Assistant — Telegram Bot")

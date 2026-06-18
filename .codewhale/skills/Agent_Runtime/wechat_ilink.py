@@ -21,8 +21,8 @@
     # 重新扫码（切换账号）
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 
-    # 调试日志（写 data/bot_debug.log，默认关）
-    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --debug
+    # 调试日志默认开（写 data/bot_debug.log）；关闭用 --no-debug
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --no-debug
 
 安全:
     所有 CLI 调用受同目录 agent_core.py 白名单约束。
@@ -206,8 +206,10 @@ def main():
                         default="run", help="运行模式 (默认: run)")
     parser.add_argument("--relogin", action="store_true",
                         help="重新扫码登录（忽略已有凭据）")
-    parser.add_argument("--debug", action="store_true",
-                        help="开启调试日志（写 data/bot_debug.log，默认关）")
+    parser.add_argument("--debug", action="store_true", default=True,
+                        help="开启调试日志（写 data/bot_debug.log，默认开）")
+    parser.add_argument("--no-debug", dest="debug", action="store_false",
+                        help="关闭调试日志")
     args = parser.parse_args()
     setup_logging(args.debug)
 
