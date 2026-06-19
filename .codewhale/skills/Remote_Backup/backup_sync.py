@@ -269,14 +269,19 @@ def sync(member: str) -> dict:
                 except OSError:
                     pass
 
-    for rel in [r for r in list(manifest) if r not in local]:
-        try:
-            prov.delete(rel)
-            del manifest[rel]
-            _save_json(manifest_file, manifest)
-            deleted.append(rel)
-        except Exception as e:
-            errors.append(f"{rel}: {e}")
+    # 镜像删除守卫：local 全空但清单非空 = 可疑（盘未挂/数据根配置错/scope 误清空）。
+    # 跳过删除以防一轮抹掉整个远端备份；真要清空远端需人工介入。本地始终是事实源。
+    if not local and manifest:
+        errors.append("scope 解析为空但清单非空：跳过镜像删除以防误删远端（检查 scopes/数据根）")
+    else:
+        for rel in [r for r in list(manifest) if r not in local]:
+            try:
+                prov.delete(rel)
+                del manifest[rel]
+                _save_json(manifest_file, manifest)
+                deleted.append(rel)
+            except Exception as e:
+                errors.append(f"{rel}: {e}")
 
     mst = _load_json(_member_state_file(pref))
     mst["last_sync"] = _now_iso()

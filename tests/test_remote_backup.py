@@ -231,6 +231,19 @@ class TestSync:
         assert "data/Family/old.pdf" in r["deleted"]
         assert "data/Family/old.pdf" not in fake.files
 
+    def test_empty_scope_skips_mirror_delete(self, bk):
+        # 守卫：local 全空但清单非空时不镜像删除（防盘未挂/误清空 scope 抹掉整个远端）
+        root, fake, _ = bk
+        (root / "data" / "Family" / "keep.pdf").write_bytes(b"x")
+        backup_sync.sync("Jim")
+        assert "data/Family/keep.pdf" in fake.files
+        (root / "data" / "Family" / "keep.pdf").unlink()
+        (root / "config.json").unlink()          # 现在所有 scope 都解析为空
+        r = backup_sync.sync("Jim")
+        assert r["deleted"] == []                 # 未删任何远端
+        assert "data/Family/keep.pdf" in fake.files
+        assert r["errors"]                        # 记录告警
+
     def test_sqlite_snapshot_with_open_connection(self, bk):
         import os
         import sqlite3 as sq
