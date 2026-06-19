@@ -1,28 +1,24 @@
 """
-Calendar Keeper — 同步引擎（远程日历 ↔ 本地缓存）
+Calendar Keeper — 同步引擎（远程日历 ↔ 本地缓存），按成员 + 域分别同步。
 
-本模块是 provider 的唯一调用方：静默刷新、推送本地改动、对账、状态。
-远程日历是日程数据的事实源（家人会直接在手机上改日历）；
-本地 schedule_items 表是缓存 + 离线缓冲，provider 未配置时一切照常本地工作。
+每个成员的活动（schedule 域，kind=event）与待办（tasks 域，kind=task）各自独立：
+    存储      paths.member_store(member, "schedule"|"tasks")
+    状态      paths.member_sync_state(member, "schedule"|"tasks")  {last_refresh,last_error}
+    provider  members.sync_pref(member, domain) → providers.get(domain, name)；无则本地模式
 
 调用契约：
-    calendar_tick()   传输层在已注册成员的消息到达后调用（"known member" 触发）。
-                      enabled + 距上次刷新 >= refresh_minutes + provider 就绪
-                      → 跑一轮 refresh()。静默、节流、永不抛异常。
-    refresh()         先推后拉：
-                      1) 推送 synced=0 行（新建→create，完成→complete，取消→delete）
-                      2) 拉取未来 lookahead_days 窗口的活动 + 全部待办，按 uid 合并
-                         （remote wins；本地待推送行跳过）
-                      3) 对账：窗口内活动 uid 消失→cancelled；待办 uid 消失→cancelled，
-                         远端已完成→done
-    push_pending()    cal-add/cal-done/cal-delete 写入后即时尽力推送。
-    force_sync()      cal-sync 用：忽略节流立即刷新；provider 未配置返回 None。
-    status()          cal-status 用。
+    calendar_tick()   传输层在已注册成员消息到达后调用。enabled + 遍历每个成员 × 每个域，
+                      对启用且 provider 就绪的域按各自节流刷新。单成员/单域失败被隔离，
+                      永不抛异常。本地模式成员（无 sync 偏好）一律跳过。
+    refresh_domain()  刷新某成员某域：先推后拉 + 对账，写该域状态。
+    force_sync()      cal-sync。给 member → 刷新其所有启用域；否则回退单库全局 provider。
+    status()          cal-status。给 member+domain → 该域状态；否则单库全局视图。
 
-状态文件（不入备份、不入 git）：
-    data/.calendar_state.json   {last_refresh, last_error}
-    节流按"尝试时间"算：失败也记 last_refresh，避免断网时每条消息都重试。
-测试钩子：CALENDAR_STATE_DIR 重定位状态文件；CALENDAR_CONFIG 指向替代 config.json。
+兼容路径（测试与简单场景）：refresh()/push_pending()/status() 在不给 member 时走
+"单库 + 模块全局 provider"，provider 模块全局默认 = calendar_provider，可注入/monkeypatch。
+
+状态文件（不入备份、不入 git）。测试钩子：CALENDAR_STATE_DIR（全局状态目录）、
+CALENDAR_CONFIG（替代 config.json）、DATA_ROOT（数据根，经 paths）。
 """
 
 from __future__ import annotations
@@ -36,14 +32,20 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
 import cal_db
-import calendar_provider as provider
+import calendar_provider as provider          # 模块全局默认 provider（可注入/monkeypatch）
+import providers as _providers
+import members as _members
+import paths as _paths
 
 _FALLBACK_CFG = {
     "enabled": False,
     "lookahead_days": 10,
     "refresh_minutes": 15,
 }
+
+_DOMAIN_KIND = {"schedule": "event", "tasks": "task"}
 
 
 def _load_cfg() -> dict:
@@ -62,63 +64,89 @@ def _load_cfg() -> dict:
 CFG = _load_cfg()
 
 
-def _state_file() -> Path:
+# ── 状态文件 ────────────────────────────────────────────────
+
+def _global_state_file() -> Path:
+    """兼容老路径的全局状态文件（无 member 的 refresh/status 用）。"""
     return Path(os.environ.get("CALENDAR_STATE_DIR") or (ROOT / "data")) \
         / ".calendar_state.json"
 
 
-def _load_state() -> dict:
+def _load_state(path: Path) -> dict:
     try:
-        return json.loads(_state_file().read_text(encoding="utf-8"))
+        return json.loads(Path(path).read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
-def _save_state(st: dict) -> None:
-    p = _state_file()
+def _save_state(path: Path, st: dict) -> None:
+    p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
 
 
-def _record_error(msg: str) -> None:
+def _record_error(path: Path, msg: str) -> None:
     try:
-        st = _load_state()
+        st = _load_state(path)
         st["last_error"] = msg
-        _save_state(st)
+        _save_state(path, st)
     except Exception:
         pass
 
 
-def push_pending(db_path: str | None = None) -> tuple[int, list[str]]:
-    """推送全部待同步行。逐行隔离：单行失败不影响其余，留待下轮重试。
+# ── provider 解析 ───────────────────────────────────────────
 
-    返回 (成功处理行数, 错误列表)。provider 未配置 → (0, [])。
+def _registered_members() -> list[str]:
+    return _members.member_names()
+
+
+def provider_for(member: str, domain: str):
+    """成员某域的 provider；未启用/无偏好 → None（本地模式，不推不拉）。"""
+    pref = _members.sync_pref(member, domain)
+    if not pref or not pref.get("enabled"):
+        return None
+    return _providers.get(domain, pref.get("provider"))
+
+
+# ── 推送（先推） ────────────────────────────────────────────
+
+def push_pending(db_path=None, prov=None, kind: str | None = None):
+    """推送待同步行（synced=0）。prov 缺省用模块全局 provider；kind 给定则只推该类。
+
+    逐行隔离：单行失败不影响其余，留待下轮重试。返回 (成功行数, 错误列表)。
+    provider 未配置 → (0, [])。
     """
-    if not provider.is_configured():
+    p = prov if prov is not None else provider
+    try:
+        if not p.is_configured():
+            return 0, []
+    except Exception:
         return 0, []
     pushed = 0
     errors: list[str] = []
     for row in cal_db.pending(db_path=db_path):
+        if kind and row["kind"] != kind:
+            continue
         try:
             if row["status"] == "active" and not row["uid"]:
                 if row["kind"] == "event":
-                    uid = provider.create_event(row)
+                    uid = p.create_event(row)
                 else:
-                    uid = provider.create_task(row)
+                    uid = p.create_task(row)
                 cal_db.mark_synced(row["id"], uid=uid, db_path=db_path)
             elif row["status"] == "done":
                 if row["kind"] == "task" and row["uid"]:
-                    provider.complete_task(row["uid"])
+                    p.complete_task(row["uid"])
                 cal_db.mark_synced(row["id"], db_path=db_path)
             elif row["status"] == "cancelled":
                 if row["uid"]:
                     if row["kind"] == "event":
-                        provider.delete_event(row["uid"])
+                        p.delete_event(row["uid"])
                     else:
-                        provider.delete_task(row["uid"])
+                        p.delete_task(row["uid"])
                 cal_db.mark_synced(row["id"], db_path=db_path)
             else:
-                # active 且已有 uid（v1 无编辑路径）：标记已同步，避免卡死在待推送
+                # active 且已有 uid（无编辑路径）：标记已同步，避免卡死在待推送
                 cal_db.mark_synced(row["id"], db_path=db_path)
             pushed += 1
         except Exception as e:
@@ -126,25 +154,18 @@ def push_pending(db_path: str | None = None) -> tuple[int, list[str]]:
     return pushed, errors
 
 
-def refresh(db_path: str | None = None, today: date | None = None,
-            now: datetime | None = None) -> dict:
-    """先推后拉 + 对账。错误收集进返回值与状态文件，不抛出。"""
-    now = now or datetime.now()
-    today = today or now.date()
-    horizon = today + timedelta(days=int(CFG.get("lookahead_days", 10)))
+# ── 拉取 + 对账（后拉），按域分半 ────────────────────────────
+
+def _sync_events(db_path, p, today: date, horizon: date) -> tuple[int, list[str]]:
+    """活动半：拉窗口活动，按 uid 合并（remote wins）；窗口内远端消失 → 本地取消。"""
     errors: list[str] = []
-
-    pushed, push_errors = push_pending(db_path=db_path)
-    errors.extend(push_errors)
-
-    n_events = n_tasks = 0
-    # 活动：拉窗口 + 对账（remote wins）
+    n = 0
     try:
         time_min = datetime.combine(today, dtime.min).astimezone() \
             .isoformat(timespec="seconds")
         time_max = datetime.combine(horizon, dtime(23, 59, 59)).astimezone() \
             .isoformat(timespec="seconds")
-        events = provider.list_events(time_min, time_max)
+        events = p.list_events(time_min, time_max)
         seen = set()
         for e in events:
             cal_db.upsert_remote("event", e["uid"], {
@@ -153,7 +174,7 @@ def refresh(db_path: str | None = None, today: date | None = None,
                 "location": e["location"], "notes": e["notes"],
                 "status": "active"}, db_path=db_path)
             seen.add(e["uid"])
-        n_events = len(seen)
+        n = len(seen)
         t_iso, h_iso = today.isoformat(), horizon.isoformat()
         for row in cal_db.synced_active("event", db_path=db_path):
             d = row["start_at"][:10]
@@ -162,10 +183,15 @@ def refresh(db_path: str | None = None, today: date | None = None,
                                   db_path=db_path)
     except Exception as e:
         errors.append(f"events: {e}")
+    return n, errors
 
-    # 待办：全量拉 + 对账（远端完成→done，远端删除→cancelled）
+
+def _sync_tasks(db_path, p) -> tuple[int, list[str]]:
+    """待办半：全量拉，按 uid 合并；远端完成 → 本地完成，远端消失 → 本地取消。"""
+    errors: list[str] = []
+    n = 0
     try:
-        tasks = provider.list_tasks()
+        tasks = p.list_tasks()
         seen = set()
         for t in tasks:
             cal_db.upsert_remote("task", t["uid"], {
@@ -173,47 +199,130 @@ def refresh(db_path: str | None = None, today: date | None = None,
                 "all_day": 0, "location": "", "notes": t["notes"],
                 "status": "done" if t["done"] else "active"}, db_path=db_path)
             seen.add(t["uid"])
-        n_tasks = len(seen)
+        n = len(seen)
         for row in cal_db.synced_active("task", db_path=db_path):
             if row["uid"] not in seen:
                 cal_db.set_status(row["id"], "cancelled", from_remote=True,
                                   db_path=db_path)
     except Exception as e:
         errors.append(f"tasks: {e}")
+    return n, errors
 
-    st = _load_state()
+
+# ── 兼容路径：单库 + 全局 provider（两半都跑，全局状态） ──────
+
+def refresh(db_path=None, today: date | None = None,
+            now: datetime | None = None, prov=None) -> dict:
+    """单库刷新（活动 + 待办两半），写全局状态。错误收集进返回值，不抛出。"""
+    now = now or datetime.now()
+    today = today or now.date()
+    horizon = today + timedelta(days=int(CFG.get("lookahead_days", 10)))
+    errors: list[str] = []
+
+    pushed, push_errors = push_pending(db_path=db_path, prov=prov)
+    errors.extend(push_errors)
+    p = prov if prov is not None else provider
+    n_events, e1 = _sync_events(db_path, p, today, horizon)
+    n_tasks, e2 = _sync_tasks(db_path, p)
+    errors.extend(e1)
+    errors.extend(e2)
+
+    sf = _global_state_file()
+    st = _load_state(sf)
     st["last_refresh"] = now.isoformat(timespec="seconds")
     st["last_error"] = "; ".join(errors[:5]) if errors else None
-    _save_state(st)
+    _save_state(sf, st)
     return {"pushed": pushed, "events": n_events, "tasks": n_tasks,
             "errors": errors}
 
 
-def calendar_tick(db_path: str | None = None, now: datetime | None = None) -> bool:
-    """已注册成员消息到达后调用。静默节流刷新，返回是否跑了 refresh。永不抛异常。"""
+# ── 按成员 + 域刷新（真·分库分 provider） ────────────────────
+
+def refresh_domain(member: str, domain: str, *, db_path=None, prov=None,
+                   state_path=None, today: date | None = None,
+                   now: datetime | None = None) -> dict:
+    """刷新某成员某域（schedule=活动 / tasks=待办）：先推后拉 + 对账，写该域状态。"""
+    if domain not in _DOMAIN_KIND:
+        raise ValueError(f"domain 必须是 {tuple(_DOMAIN_KIND)}")
+    now = now or datetime.now()
+    today = today or now.date()
+    horizon = today + timedelta(days=int(CFG.get("lookahead_days", 10)))
+    db_path = db_path or str(_paths.member_store(member, domain))
+    p = prov if prov is not None else provider_for(member, domain)
+    state_path = state_path or _paths.member_sync_state(member, domain)
+    kind = _DOMAIN_KIND[domain]
+    errors: list[str] = []
+
+    pushed, push_errors = push_pending(db_path=db_path, prov=p, kind=kind)
+    errors.extend(push_errors)
+    if domain == "schedule":
+        n, e = _sync_events(db_path, p, today, horizon)
+    else:
+        n, e = _sync_tasks(db_path, p)
+    errors.extend(e)
+
+    st = _load_state(state_path)
+    st["last_refresh"] = now.isoformat(timespec="seconds")
+    st["last_error"] = "; ".join(errors[:5]) if errors else None
+    _save_state(state_path, st)
+    return {"pushed": pushed, "synced": n, "errors": errors}
+
+
+def calendar_tick(now: datetime | None = None) -> bool:
+    """已注册成员消息到达后调用。遍历成员 × 域，按各自节流静默刷新。永不抛异常。"""
     try:
         if not CFG.get("enabled"):
             return False
         now = now or datetime.now()
-        last = _load_state().get("last_refresh")
-        if last:
-            try:
-                elapsed = (now - datetime.fromisoformat(last)).total_seconds()
-                if elapsed < float(CFG.get("refresh_minutes", 15)) * 60:
-                    return False
-            except ValueError:
-                pass
-        if not provider.is_configured():
-            return False
-        refresh(db_path=db_path, today=now.date(), now=now)
-        return True
-    except Exception as e:
-        _record_error(str(e))
+        throttle = float(CFG.get("refresh_minutes", 15)) * 60
+        ran = False
+        for member in _registered_members():
+            for domain in ("schedule", "tasks"):
+                state_path = _paths.member_sync_state(member, domain)
+                try:
+                    p = provider_for(member, domain)
+                    if p is None or not p.is_configured():
+                        continue
+                    last = _load_state(state_path).get("last_refresh")
+                    if last:
+                        try:
+                            if (now - datetime.fromisoformat(last)).total_seconds() < throttle:
+                                continue
+                        except ValueError:
+                            pass
+                    refresh_domain(member, domain, prov=p, state_path=state_path,
+                                   today=now.date(), now=now)
+                    ran = True
+                except Exception as e:
+                    _record_error(state_path, str(e))
+        return ran
+    except Exception:
         return False
 
 
-def force_sync(db_path: str | None = None) -> dict | None:
-    """忽略节流立即刷新（cal-sync）。provider 未配置返回 None。"""
+def force_sync(member: str | None = None, domain: str | None = None,
+               db_path=None) -> dict | None:
+    """cal-sync。给 member → 刷新其启用域（aggregate）；否则单库全局 provider 路径。
+
+    provider 全未配置 → None（CLI 据此提示未配置）。
+    """
+    if member:
+        domains = [domain] if domain else ["schedule", "tasks"]
+        agg = {"pushed": 0, "synced": 0, "errors": [], "ran": 0}
+        for d in domains:
+            p = provider_for(member, d)
+            try:
+                if p is None or not p.is_configured():
+                    continue
+            except Exception:
+                continue
+            r = refresh_domain(member, d, prov=p)
+            agg["pushed"] += r["pushed"]
+            agg["synced"] += r.get("synced", 0)
+            agg["errors"].extend(r["errors"])
+            agg["ran"] += 1
+        return agg if agg["ran"] else None
+    # 兼容：单库全局 provider
     try:
         if not provider.is_configured():
             return None
@@ -222,8 +331,25 @@ def force_sync(db_path: str | None = None) -> dict | None:
     return refresh(db_path=db_path)
 
 
-def status(db_path: str | None = None) -> dict:
-    st = _load_state()
+def status(member: str | None = None, domain: str | None = None,
+           db_path=None) -> dict:
+    """cal-status。给 member+domain → 该域状态；否则单库 + 全局 provider 视图。"""
+    if member and domain:
+        st = _load_state(_paths.member_sync_state(member, domain))
+        p = provider_for(member, domain)
+        try:
+            configured = bool(p.is_configured()) if p else False
+        except Exception:
+            configured = False
+        store = db_path or str(_paths.member_store(member, domain))
+        return {
+            "enabled": bool(CFG.get("enabled")),
+            "configured": configured,
+            "last_refresh": st.get("last_refresh"),
+            "last_error": st.get("last_error"),
+            "pending": len(cal_db.pending(db_path=store)),
+        }
+    st = _load_state(_global_state_file())
     try:
         configured = bool(provider.is_configured())
     except Exception:

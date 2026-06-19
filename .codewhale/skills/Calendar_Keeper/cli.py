@@ -75,10 +75,18 @@ def _mark_backup_dirty() -> None:
         pass
 
 
-def _push_quietly(db_path: str) -> None:
-    """写入后即时尽力推送（provider 未配置/失败都静默，留待下轮 tick）。"""
+def _push_quietly(db_path: str, member: str = "", kind: str = "") -> None:
+    """写入后即时尽力推送，按成员的域 provider；本地模式成员/覆盖库不推。静默。"""
     try:
-        calendar_sync.push_pending(db_path=db_path)
+        if _DB_OVERRIDE:
+            return                         # 单库覆盖（测试）：不触发真实推送
+        if not member:
+            return
+        domain = "schedule" if kind == "event" else "tasks"
+        prov = calendar_sync.provider_for(member, domain)
+        if prov is None:
+            return                         # 本地模式成员：不推不拉
+        calendar_sync.push_pending(db_path=db_path, prov=prov, kind=kind)
     except Exception:
         pass
 
@@ -156,7 +164,7 @@ def cmd_cal_add(args):
         db_path=db,
     )
     _mark_backup_dirty()
-    _push_quietly(db)
+    _push_quietly(db, args.member, args.kind)
     tag = "活动" if args.kind == "event" else "待办"
     print(f"已添加{tag} #{item_id}（{_sync_suffix(item_id, db)}）")
 
@@ -190,7 +198,7 @@ def cmd_cal_done(args):
         sys.exit(1)
     cal_db.set_status(args.id, "done", db_path=db)
     _mark_backup_dirty()
-    _push_quietly(db)
+    _push_quietly(db, args.member, "task")
     print(f"已完成待办 #{args.id}（{_sync_suffix(args.id, db)}）")
 
 
@@ -206,23 +214,41 @@ def cmd_cal_delete(args):
         sys.exit(1)
     cal_db.set_status(args.id, "cancelled", db_path=db)
     _mark_backup_dirty()
-    _push_quietly(db)
+    _push_quietly(db, args.member, item["kind"])
     print(f"已取消日程 #{args.id}「{item['title']}」（{_sync_suffix(args.id, db)}）")
 
 
 def cmd_cal_sync(args):
-    result = calendar_sync.force_sync(db_path=_DB_OVERRIDE)
+    member = getattr(args, "member", "") or ""
+    if member and not _DB_OVERRIDE:
+        result = calendar_sync.force_sync(member=member)
+    else:
+        result = calendar_sync.force_sync(db_path=_DB_OVERRIDE)
     if result is None:
         print("日历 provider 未配置（需 GCAL_CLIENT_ID / GCAL_CLIENT_SECRET / "
               "GCAL_REFRESH_TOKEN 环境变量），当前仅本地记录。")
         return
-    print(f"已刷新：推送 {result['pushed']} 条，"
-          f"拉取活动 {result['events']} 个、待办 {result['tasks']} 条")
+    pushed = result.get("pushed", 0)
+    synced = result.get("synced")
+    if synced is None:
+        synced = result.get("events", 0) + result.get("tasks", 0)
+    print(f"已刷新：推送 {pushed} 条，同步 {synced} 项")
     for e in result["errors"]:
         print(f"  ⚠ {e}")
 
 
 def cmd_cal_status(args):
+    member = getattr(args, "member", "") or ""
+    if member and not _DB_OVERRIDE:
+        print(f"日历同步（{member}）: {'已启用' if calendar_sync.CFG.get('enabled') else '未启用'}")
+        for d, label in (("schedule", "活动"), ("tasks", "待办")):
+            st = calendar_sync.status(member=member, domain=d)
+            line = (f"  {label}: {'已配置' if st['configured'] else '未配置'}，"
+                    f"上次刷新 {st['last_refresh'] or '从未'}，待同步 {st['pending']} 条")
+            if st["last_error"]:
+                line += f"，上次错误 {st['last_error']}"
+            print(line)
+        return
     st = calendar_sync.status(db_path=_DB_OVERRIDE)
     print(f"日历同步: {'已启用' if st['enabled'] else '未启用（config.json calendar.enabled）'}")
     print(f"Provider: {'已配置' if st['configured'] else '未配置（GCAL_* 环境变量）'}")
@@ -264,8 +290,11 @@ def main() -> int:
     p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
     p.add_argument("--id", type=int, required=True, help="日程 ID")
 
-    sub.add_parser("cal-sync", help="立即强制刷新远程日历")
-    sub.add_parser("cal-status", help="同步状态")
+    p = sub.add_parser("cal-sync", help="立即强制刷新远程日历")
+    p.add_argument("--member", default="", help="按成员刷新其活动+待办；不给则单库全局视图")
+
+    p = sub.add_parser("cal-status", help="同步状态")
+    p.add_argument("--member", default="", help="按成员查看其活动+待办同步状态")
 
     args = parser.parse_args()
 
