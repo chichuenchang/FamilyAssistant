@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -57,6 +58,43 @@ def resolve(channel: str, channel_id, members_path: Path | None = None) -> str |
 def member_names(members_path: Path | None = None) -> list[str]:
     """已登记成员名列表。"""
     return list(load_members(members_path).keys())
+
+
+def _slug(name: str) -> str:
+    """成员名 → 文件系统安全目录 slug（取首个空白分隔词，小写，去特殊字符）。"""
+    tok = (name or "").strip().split()
+    base = tok[0] if tok else (name or "")
+    s = re.sub(r"[^0-9A-Za-z_-]+", "", base).lower()
+    return s or "member"
+
+
+def member_dir_name(name: str, members_path: Path | None = None) -> str:
+    """成员的磁盘目录名：members.json 的 dir 字段，缺省取 slug(name)。
+
+    名字含空格/中文/PII，不能直接当目录名 → 显式 dir 优先，回退 slug。
+    """
+    entry = load_members(members_path).get(name)
+    if isinstance(entry, dict) and entry.get("dir"):
+        return str(entry["dir"])
+    return _slug(name)
+
+
+def sync_pref(name: str, domain: str, members_path: Path | None = None) -> dict | None:
+    """成员某 domain（schedule/tasks）的远程同步偏好。
+
+    返回 {"provider": str, "enabled": bool}；未配置（无 sync 块或无该 domain）→ None
+    （= 本地模式，不推不拉）。凭据永远不在此，走 GCAL_* 环境变量。
+    """
+    entry = load_members(members_path).get(name)
+    if not isinstance(entry, dict):
+        return None
+    sync = entry.get("sync")
+    if not isinstance(sync, dict):
+        return None
+    d = sync.get(domain)
+    if not isinstance(d, dict):
+        return None
+    return {"provider": d.get("provider", ""), "enabled": bool(d.get("enabled", False))}
 
 
 def _save_members(members: dict, members_path: Path | None = None) -> None:

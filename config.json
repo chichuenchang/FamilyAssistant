@@ -33,9 +33,8 @@
       "活期"
     ]
   },
-  "db_path": "data/ledger.db",
-  "receipts_dir": "receipts",
-  "documents_dir": "documents",
+  "data_root": "data",
+  "family_dir_name": "Family",
   "doc_types": [
     "lease",
     "insurance",
@@ -45,7 +44,7 @@
   ],
   "reminder_lead_days": 30,
   "calendar": {
-    "_comment": "家庭日程与远程日历同步。凭据走 GCAL_* 环境变量，日历 id 走 GCAL_CALENDAR_ID，均不入 git。",
+    "_comment": "日历引擎旋钮。enabled=总开关；按成员/域的同步偏好在 data/members.json 的 sync 块。凭据走 GCAL_* 环境变量，日历 id 走 GCAL_CALENDAR_ID，均不入 git。",
     "enabled": true,
     "lookahead_days": 10,
     "refresh_minutes": 15
@@ -54,10 +53,7 @@
     "enabled": true,
     "debounce_seconds": 60,
     "include": [
-      "data/ledger.db",
-      "data/members.json",
-      "receipts",
-      "documents",
+      "data",
       "config.json"
     ],
     "remote_root": "FamilyAssistant"

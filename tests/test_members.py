@@ -118,3 +118,44 @@ def test_add_member_rejects_alias_equal_to_other_member_name(cfg):
 def test_add_member_blank_aliases_ignored(cfg):
     mm.add_member("爸爸", aliases=["  ", ""], members_path=cfg)
     assert "aliases" not in mm.load_members(cfg)["爸爸"]
+
+
+# ── 成员目录名 + 同步偏好（dir / sync 字段） ──────────────────
+
+@pytest.fixture
+def cfg_dirsync(tmp_path):
+    """临时 members.json，含 dir 目录名与 sync 同步偏好。"""
+    p = tmp_path / "members.json"
+    p.write_text(json.dumps({
+        "Jim Zheng": {"dir": "Jim", "wechat": ["wx_j"],
+                      "sync": {"schedule": {"provider": "google_calendar", "enabled": True},
+                               "tasks": {"provider": "google_tasks", "enabled": True}}},
+        "Wenliang Li": {"dir": "Wenliang"},
+        "Euphie": {},
+    }, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_member_dir_name_explicit(cfg_dirsync):
+    assert mm.member_dir_name("Jim Zheng", cfg_dirsync) == "Jim"
+    assert mm.member_dir_name("Wenliang Li", cfg_dirsync) == "Wenliang"
+
+
+def test_member_dir_name_slug_fallback(cfg_dirsync):
+    # 无 dir 字段 → 取首词小写 slug
+    assert mm.member_dir_name("Euphie", cfg_dirsync) == "euphie"
+    # 完全未登记的成员
+    assert mm.member_dir_name("New Person", cfg_dirsync) == "new"
+
+
+def test_sync_pref(cfg_dirsync):
+    assert mm.sync_pref("Jim Zheng", "schedule", cfg_dirsync) == {
+        "provider": "google_calendar", "enabled": True}
+    assert mm.sync_pref("Jim Zheng", "tasks", cfg_dirsync) == {
+        "provider": "google_tasks", "enabled": True}
+
+
+def test_sync_pref_absent_is_none(cfg_dirsync):
+    assert mm.sync_pref("Wenliang Li", "schedule", cfg_dirsync) is None
+    assert mm.sync_pref("Euphie", "tasks", cfg_dirsync) is None
+    assert mm.sync_pref("New Person", "schedule", cfg_dirsync) is None
