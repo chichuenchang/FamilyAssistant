@@ -14,9 +14,19 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
+
+# Windows 控制台 cp1252 无法编码中文输出 → 与 cli.py / backup_provider.py 同款防御
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 _JIM = "Jim Zheng"
 _JIM_SCOPES = ["Jim", "Family", "members.json", "config.json"]

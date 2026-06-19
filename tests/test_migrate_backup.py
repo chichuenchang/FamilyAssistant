@@ -73,3 +73,16 @@ def test_migrate_aborts_on_nonempty_other_member(tmp_path):
     (root / "data" / "Wenliang" / "stray.db").write_bytes(b"x")
     with pytest.raises(SystemExit):
         migrate_backup.migrate(root)
+
+
+def test_migrate_cli_runs_without_encoding_crash(tmp_path):
+    # 防御 Windows cp1252 控制台：脚本作为子进程跑完应 0 退出并打印中文成功行
+    import subprocess
+    import sys
+    _old_tree(tmp_path)
+    mig = str(Path(__file__).resolve().parent.parent
+              / ".codewhale" / "skills" / "Agent_Runtime" / "migrate_backup.py")
+    r = subprocess.run([sys.executable, mig, "--root", str(tmp_path)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, r.stderr
+    assert "迁移完成" in r.stdout
