@@ -63,14 +63,31 @@ class TestGdriveProvider:
         prov, fake, calls, tmp_path = gdrive
         f = tmp_path / "a.jpg"
         f.write_bytes(b"IMGBYTES")
-        fake.responses = [_files_resp(), (200, b'{"id": "NEW1"}')]
+        fake.responses = [
+            _files_resp(),                       # _find: no existing
+            _files_resp(), (200, b'{"id": "Fd"}'),   # folder: data
+            _files_resp(), (200, b'{"id": "FF"}'),   # folder: Family
+            _files_resp(), (200, b'{"id": "Fr"}'),   # folder: receipts
+            _files_resp(), (200, b'{"id": "Fm"}'),   # folder: 2026-06
+            (200, b'{"id": "NEW1"}'),            # multipart create
+        ]
         prov.upload(f, "data/Family/receipts/2026-06/a.jpg")
         up = calls[-1]
         assert up["method"] == "POST"
         assert "uploadType=multipart" in up["url"]
         assert b"IMGBYTES" in up["data"]
         assert b'"rel": "data/Family/receipts/2026-06/a.jpg"' in up["data"]
-        assert b'"parents": ["FOLDER1"]' in up["data"]
+        assert b'"parents": ["Fm"]' in up["data"]      # leaf folder, not remote_root
+
+    def test_upload_dirless_parents_to_root(self, gdrive):
+        prov, fake, calls, tmp_path = gdrive
+        f = tmp_path / "config.json"
+        f.write_bytes(b"{}")
+        fake.responses = [_files_resp(), (200, b'{"id": "C1"}')]   # _find miss, create
+        prov.upload(f, "config.json")
+        up = calls[-1]
+        assert up["method"] == "POST"
+        assert b'"parents": ["FOLDER1"]' in up["data"]   # remote_root
 
     def test_upload_existing_file_patches(self, gdrive):
         prov, fake, calls, tmp_path = gdrive

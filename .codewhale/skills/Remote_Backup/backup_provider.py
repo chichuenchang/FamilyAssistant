@@ -185,7 +185,7 @@ class GoogleDriveProvider:
         meta: dict = {"name": remote_rel.rsplit("/", 1)[-1],
                       "appProperties": {"rel": remote_rel}}
         if existing is None:
-            meta["parents"] = [self._folder_id()]
+            meta["parents"] = [self._ensure_folder_path(remote_rel)]
             method, url = "POST", f"{UPLOAD_API}/files?uploadType=multipart"
         else:
             method, url = "PATCH", f"{UPLOAD_API}/files/{existing}?uploadType=multipart"
