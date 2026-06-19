@@ -9,18 +9,19 @@ import backup_provider
 
 @pytest.fixture
 def gdrive(monkeypatch, tmp_path):
-    """Google Drive provider with env creds set and HTTP layer faked."""
+    """A GoogleDriveProvider instance with creds in env and the HTTP layer faked."""
     monkeypatch.setenv("GDRIVE_CLIENT_ID", "cid")
     monkeypatch.setenv("GDRIVE_CLIENT_SECRET", "cs")
     monkeypatch.setenv("GDRIVE_REFRESH_TOKEN", "rt")
-    monkeypatch.setattr(backup_provider, "_token", lambda: "TOK")
-    backup_provider._folder_cache["id"] = "FOLDER1"
+    prov = backup_provider.GoogleDriveProvider("GDRIVE", "FamilyAssistant")
+    monkeypatch.setattr(prov, "_token", lambda: "TOK")
+    prov._folder_cache["id"] = "FOLDER1"
 
     calls = []
 
     class FakeHttp:
         def __init__(self):
-            self.responses = []  # list of (status, body-bytes)
+            self.responses = []
         def __call__(self, method, url, data=None, headers=None):
             calls.append({"method": method, "url": url, "data": data,
                           "headers": headers or {}})
@@ -28,8 +29,7 @@ def gdrive(monkeypatch, tmp_path):
 
     fake = FakeHttp()
     monkeypatch.setattr(backup_provider, "_http", fake)
-    yield fake, calls, tmp_path
-    backup_provider._folder_cache["id"] = None
+    return prov, fake, calls, tmp_path
 
 
 def _files_resp(*files, next_token=None):
@@ -41,88 +41,89 @@ def _files_resp(*files, next_token=None):
 
 
 class TestGdriveProvider:
-    def test_is_configured_requires_all_env(self, monkeypatch):
-        for var in ("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN"):
+    def test_is_configured_uses_prefix(self, monkeypatch):
+        for var in ("WLI_GDRIVE_CLIENT_ID", "WLI_GDRIVE_CLIENT_SECRET",
+                    "WLI_GDRIVE_REFRESH_TOKEN"):
             monkeypatch.delenv(var, raising=False)
-        assert backup_provider.is_configured() is False
+        prov = backup_provider.GoogleDriveProvider("WLI_GDRIVE", "WenliangBackup")
+        assert prov.is_configured() is False
+        monkeypatch.setenv("WLI_GDRIVE_CLIENT_ID", "x")
+        monkeypatch.setenv("WLI_GDRIVE_CLIENT_SECRET", "y")
+        assert prov.is_configured() is False
+        monkeypatch.setenv("WLI_GDRIVE_REFRESH_TOKEN", "z")
+        assert prov.is_configured() is True
+
+    def test_default_prefix_is_gdrive(self, monkeypatch):
         monkeypatch.setenv("GDRIVE_CLIENT_ID", "x")
         monkeypatch.setenv("GDRIVE_CLIENT_SECRET", "y")
-        assert backup_provider.is_configured() is False
         monkeypatch.setenv("GDRIVE_REFRESH_TOKEN", "z")
-        assert backup_provider.is_configured() is True
+        assert backup_provider.GoogleDriveProvider().is_configured() is True
 
     def test_upload_new_file_multipart_create(self, gdrive):
-        fake, calls, tmp_path = gdrive
+        prov, fake, calls, tmp_path = gdrive
         f = tmp_path / "a.jpg"
         f.write_bytes(b"IMGBYTES")
-        fake.responses = [
-            _files_resp(),                       # _find: no existing
-            (200, b'{"id": "NEW1"}'),            # multipart POST
-        ]
-        backup_provider.upload(f, "receipts/2026-06/a.jpg")
+        fake.responses = [_files_resp(), (200, b'{"id": "NEW1"}')]
+        prov.upload(f, "data/Family/receipts/2026-06/a.jpg")
         up = calls[-1]
         assert up["method"] == "POST"
         assert "uploadType=multipart" in up["url"]
         assert b"IMGBYTES" in up["data"]
-        assert b'"rel": "receipts/2026-06/a.jpg"' in up["data"]
+        assert b'"rel": "data/Family/receipts/2026-06/a.jpg"' in up["data"]
         assert b'"parents": ["FOLDER1"]' in up["data"]
 
     def test_upload_existing_file_patches(self, gdrive):
-        fake, calls, tmp_path = gdrive
+        prov, fake, calls, tmp_path = gdrive
         f = tmp_path / "a.jpg"
         f.write_bytes(b"V2")
-        fake.responses = [
-            _files_resp({"id": "OLD9"}),         # _find: existing
-            (200, b'{"id": "OLD9"}'),            # multipart PATCH
-        ]
-        backup_provider.upload(f, "receipts/a.jpg")
+        fake.responses = [_files_resp({"id": "OLD9"}), (200, b'{"id": "OLD9"}')]
+        prov.upload(f, "data/Family/a.jpg")
         up = calls[-1]
         assert up["method"] == "PATCH"
         assert "/files/OLD9?" in up["url"]
-        assert b'"parents"' not in up["data"]    # update never re-parents
+        assert b'"parents"' not in up["data"]
 
     def test_delete_missing_is_noop(self, gdrive):
-        fake, calls, _ = gdrive
-        fake.responses = [_files_resp()]         # _find: nothing
-        backup_provider.delete("gone.jpg")       # must not raise
-        assert len(calls) == 1                   # no DELETE issued
+        prov, fake, calls, _ = gdrive
+        fake.responses = [_files_resp()]
+        prov.delete("gone.jpg")
+        assert len(calls) == 1
 
     def test_list_remote_paginates_and_maps_rel(self, gdrive):
-        fake, calls, _ = gdrive
+        prov, fake, calls, _ = gdrive
         fake.responses = [
             _files_resp({"id": "1", "size": "10",
-                         "appProperties": {"rel": "config.json"}},
-                        next_token="T2"),
+                         "appProperties": {"rel": "config.json"}}, next_token="T2"),
             _files_resp({"id": "2", "size": "20",
-                         "appProperties": {"rel": "receipts/a.jpg"}},
-                        {"id": "3", "size": "5"}),   # no rel tag → skipped
+                         "appProperties": {"rel": "data/Family/r.jpg"}},
+                        {"id": "3", "size": "5"}),
         ]
-        out = backup_provider.list_remote()
+        out = prov.list_remote()
         assert out == {"config.json": {"size": 10},
-                       "receipts/a.jpg": {"size": 20}}
+                       "data/Family/r.jpg": {"size": 20}}
         assert "pageToken=T2" in calls[-1]["url"]
 
     def test_download_writes_bytes(self, gdrive):
-        fake, calls, tmp_path = gdrive
-        fake.responses = [
-            _files_resp({"id": "F7"}),
-            (200, b"CONTENT"),
-        ]
+        prov, fake, calls, tmp_path = gdrive
+        fake.responses = [_files_resp({"id": "F7"}), (200, b"CONTENT")]
         target = tmp_path / "sub" / "x.bin"
-        backup_provider.download("documents/x.bin", target)
+        prov.download("data/Family/documents/x.bin", target)
         assert target.read_bytes() == b"CONTENT"
         assert "alt=media" in calls[-1]["url"]
 
     def test_api_error_raises_runtimeerror(self, gdrive):
-        fake, calls, tmp_path = gdrive
+        prov, fake, calls, tmp_path = gdrive
         f = tmp_path / "a.jpg"
         f.write_bytes(b"x")
-        fake.responses = [
-            _files_resp(),
-            (403, b'{"error": "rate limit"}'),
-        ]
+        fake.responses = [_files_resp(), (403, b'{"error": "rate limit"}')]
         with pytest.raises(RuntimeError):
-            backup_provider.upload(f, "a.jpg")
+            prov.upload(f, "a.jpg")
+
+    def test_two_instances_isolate_folder_cache(self, monkeypatch):
+        a = backup_provider.GoogleDriveProvider("GDRIVE", "RootA")
+        b = backup_provider.GoogleDriveProvider("WLI_GDRIVE", "RootB")
+        a._folder_cache["id"] = "FA"
+        assert b._folder_cache["id"] is None
 
 
 import backup_sync
