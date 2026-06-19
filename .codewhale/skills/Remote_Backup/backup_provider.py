@@ -141,7 +141,7 @@ class GoogleDriveProvider:
 
     def _find(self, remote_rel: str) -> str | None:
         query = (f"appProperties has {{ key='rel' and value='{_q(remote_rel)}' }} "
-                 f"and '{self._folder_id()}' in parents and trashed = false")
+                 f"and trashed = false")
         r = self._api_json("GET", f"{API}/files?" + urllib.parse.urlencode(
             {"q": query, "fields": "files(id)", "pageSize": 2}))
         files = r.get("files") or []
@@ -215,7 +215,7 @@ class GoogleDriveProvider:
         out: dict = {}
         page_token = None
         while True:
-            params = {"q": f"'{self._folder_id()}' in parents and trashed = false",
+            params = {"q": f"mimeType != '{_FOLDER_MIME}' and trashed = false",
                       "fields": "nextPageToken, files(id, size, appProperties)",
                       "pageSize": 1000}
             if page_token:

@@ -157,6 +157,22 @@ class TestGdriveProvider:
         assert prov._child_folder("FOLDER1", "data") == "EXIST"
         assert len(calls) == 1                                     # no create call
 
+    def test_find_has_no_parent_constraint(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [_files_resp({"id": "NESTED"})]
+        assert prov._find("data/Jim/notes/deep/x.jpg") == "NESTED"
+        assert "parents" not in calls[-1]["url"]      # query no longer parent-scoped
+
+    def test_list_remote_finds_nested_and_drops_parent(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [
+            _files_resp({"id": "1", "size": "7",
+                         "appProperties": {"rel": "data/Jim/notes/n.db"}}),
+        ]
+        out = prov.list_remote()
+        assert out == {"data/Jim/notes/n.db": {"size": 7}}
+        assert "parents" not in calls[-1]["url"]
+
 
 import backup_sync
 
