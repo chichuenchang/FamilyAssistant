@@ -24,3 +24,6 @@ client_secret*.json
 
 # Conda
 env/
+
+# Subagent-driven-development orchestration scratch (ledger + review diffs)
+.superpowers/
