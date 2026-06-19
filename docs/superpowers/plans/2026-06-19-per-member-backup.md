@@ -783,10 +783,10 @@ class TestSync:
 
     def test_manifest_lands_under_member(self, bk):
         root, fake, _ = bk
-        (root / "data" / "Jim" / "n.db").write_bytes(b"x")
+        (root / "data" / "Jim" / "note.txt").write_bytes(b"x")
         backup_sync.sync("Jim")
         assert (root / "data" / "Jim" / ".backup_manifest.json").exists()
-        assert "data/Jim/n.db" in self._jim_manifest(root)
+        assert "data/Jim/note.txt" in self._jim_manifest(root)
 
     def test_reuploads_changed(self, bk):
         root, fake, _ = bk
@@ -1057,6 +1057,10 @@ CFG = _load_cfg()
 ```
 
 Keep `_STATE_DIR` + `STATE_FILE` (global clock) and `mark_dirty` exactly as they are.
+**Ordering:** the new `_load_cfg` calls `_cfg_path()`, and `CFG = _load_cfg()` runs at import
+time — so `_cfg_path` (added in Task 2) MUST be defined before `_load_cfg`. If Task 2 placed it
+after `CFG = _load_cfg()`, move it up to just before `_load_cfg`, otherwise import hits a
+forward-reference `NameError` (silently caught → `CFG` always falls back to disabled).
 
 (c) Add the registry + member-context helpers (after the scope helpers from Task 2):
 
