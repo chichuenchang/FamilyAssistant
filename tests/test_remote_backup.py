@@ -125,6 +125,38 @@ class TestGdriveProvider:
         a._folder_cache["id"] = "FA"
         assert b._folder_cache["id"] is None
 
+    def test_ensure_folder_path_creates_chain(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [
+            _files_resp(),                  # data: query miss
+            (200, b'{"id": "F_data"}'),     # data: create
+            _files_resp(),                  # Jim: query miss
+            (200, b'{"id": "F_Jim"}'),      # Jim: create
+            _files_resp(),                  # notes: query miss
+            (200, b'{"id": "F_notes"}'),    # notes: create
+        ]
+        leaf = prov._ensure_folder_path("data/Jim/notes/x.jpg")
+        assert leaf == "F_notes"
+
+    def test_ensure_folder_path_caches(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [_files_resp(), (200, b'{"id": "F_data"}')]
+        assert prov._ensure_folder_path("data/a.txt") == "F_data"
+        n = len(calls)
+        assert prov._ensure_folder_path("data/b.txt") == "F_data"  # cached
+        assert len(calls) == n                                     # no new HTTP
+
+    def test_ensure_folder_path_dirless_is_root(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        assert prov._ensure_folder_path("config.json") == "FOLDER1"
+        assert calls == []                                         # no folder lookups
+
+    def test_child_folder_reuses_existing(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [_files_resp({"id": "EXIST"})]            # query hit
+        assert prov._child_folder("FOLDER1", "data") == "EXIST"
+        assert len(calls) == 1                                     # no create call
+
 
 import backup_sync
 

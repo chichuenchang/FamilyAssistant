@@ -86,6 +86,7 @@ class GoogleDriveProvider:
         self.remote_root = remote_root
         self._token_cache: dict = {"access": None, "exp": 0.0}
         self._folder_cache: dict = {"id": None}
+        self._path_cache: dict = {}
 
     def _env(self, suffix: str) -> str:
         return os.environ.get(f"{self.cred_prefix}_{suffix}", "")
@@ -145,6 +146,38 @@ class GoogleDriveProvider:
             {"q": query, "fields": "files(id)", "pageSize": 2}))
         files = r.get("files") or []
         return files[0]["id"] if files else None
+
+    def _child_folder(self, parent_id: str, name: str) -> str:
+        """parent 下名为 name 的子文件夹 id，不存在则创建。"""
+        query = (f"name = '{_q(name)}' and mimeType = '{_FOLDER_MIME}' "
+                 f"and '{parent_id}' in parents and trashed = false")
+        r = self._api_json("GET", f"{API}/files?" + urllib.parse.urlencode(
+            {"q": query, "fields": "files(id)", "pageSize": 1}))
+        files = r.get("files") or []
+        if files:
+            return files[0]["id"]
+        created = self._api_json("POST", f"{API}/files",
+                                 {"name": name, "mimeType": _FOLDER_MIME,
+                                  "parents": [parent_id]})
+        return created["id"]
+
+    def _ensure_folder_path(self, remote_rel: str) -> str:
+        """rel 的目录链在云端建好（mkdir -p），返回叶目录 id；无目录则 remote_root。
+
+        路径段逐级缓存（path → id），同目录重复上传零额外查询。
+        """
+        parts = remote_rel.split("/")[:-1]            # 去掉文件名
+        parent = self._folder_id()
+        path = ""
+        for part in parts:
+            path = f"{path}/{part}" if path else part
+            cached = self._path_cache.get(path)
+            if cached:
+                parent = cached
+                continue
+            parent = self._child_folder(parent, part)
+            self._path_cache[path] = parent
+        return parent
 
     def upload(self, local_path, remote_rel: str) -> None:
         content = Path(local_path).read_bytes()
