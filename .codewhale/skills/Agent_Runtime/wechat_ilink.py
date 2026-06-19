@@ -21,8 +21,8 @@
     # 重新扫码（切换账号）
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 
-    # 调试日志（写 data/bot_debug.log，默认关）
-    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --debug
+    # 调试日志默认开（写 data/bot_debug.log）；关闭用 --no-debug
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --no-debug
 
 安全:
     所有 CLI 调用受同目录 agent_core.py 白名单约束。
@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
 import logging
 
-from agent_core import Agent, receipt_month_dir, setup_logging
+from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
 from members import resolve
 
 log = logging.getLogger("familyassist.wechat")
@@ -122,7 +122,7 @@ def run_bot(relogin: bool = False) -> None:
         try:
             now = datetime.now()
             ts = now.strftime("%Y%m%d_%H%M%S")
-            img_path = receipt_month_dir(now) / f"{ts}_wechat.jpg"
+            img_path = member_inbox_dir(member, now) / f"{ts}_wechat.jpg"
             msg.save(str(img_path))
             _backup_mark_dirty()
             log.debug("图片 from %s(%s) 保存 → %s", msg.from_user, member, img_path)
@@ -206,8 +206,10 @@ def main():
                         default="run", help="运行模式 (默认: run)")
     parser.add_argument("--relogin", action="store_true",
                         help="重新扫码登录（忽略已有凭据）")
-    parser.add_argument("--debug", action="store_true",
-                        help="开启调试日志（写 data/bot_debug.log，默认关）")
+    parser.add_argument("--debug", action="store_true", default=True,
+                        help="开启调试日志（写 data/bot_debug.log，默认开）")
+    parser.add_argument("--no-debug", dest="debug", action="store_false",
+                        help="关闭调试日志")
     args = parser.parse_args()
     setup_logging(args.debug)
 

@@ -21,13 +21,22 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把本 skill 目录加入 sys.path（同目录 note_db）
+# 把本 skill 目录加入 sys.path（同目录 note_db）+ Agent_Runtime（paths）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 
 import note_db
+import paths as _paths
 
 # 测试钩子：覆盖数据库路径，避免测试碰真实账本
 _DB_OVERRIDE = os.environ.get("NOTE_DB_PATH") or None
+
+
+def _db_for(member: str) -> str:
+    """备忘库按成员私有：data/<成员目录>/notes/notes.db。NOTE_DB_PATH 测试时覆盖。"""
+    if _DB_OVERRIDE:
+        return _DB_OVERRIDE
+    return str(_paths.member_store(member, "notes"))
 
 
 def _mark_backup_dirty() -> None:
@@ -55,7 +64,7 @@ def cmd_note_add(args):
         content=args.content,
         source_image=args.source_image or "",
         pinned=args.pinned,
-        db_path=_DB_OVERRIDE,
+        db_path=_db_for(args.member),
     )
     _mark_backup_dirty()
     print(f"已记录备忘 #{note_id}")
@@ -65,7 +74,7 @@ def cmd_note_list(args):
     rows = note_db.list_notes(
         member=args.member,
         limit=args.limit,
-        db_path=_DB_OVERRIDE,
+        db_path=_db_for(args.member),
     )
     if not rows:
         print("（无备忘）")
@@ -78,7 +87,7 @@ def cmd_note_search(args):
     rows = note_db.search_notes(
         member=args.member,
         keyword=args.keyword,
-        db_path=_DB_OVERRIDE,
+        db_path=_db_for(args.member),
     )
     if not rows:
         print("（无匹配）")
@@ -91,7 +100,7 @@ def cmd_note_delete(args):
     ok = note_db.delete_note(
         member=args.member,
         note_id=args.id,
-        db_path=_DB_OVERRIDE,
+        db_path=_db_for(args.member),
     )
     if ok:
         _mark_backup_dirty()
@@ -107,7 +116,7 @@ def cmd_note_pin(args):
         member=args.member,
         note_id=args.id,
         pinned=pinned,
-        db_path=_DB_OVERRIDE,
+        db_path=_db_for(args.member),
     )
     if ok:
         _mark_backup_dirty()

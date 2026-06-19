@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # 成员注册表（Agent_Runtime skill；跨 skill 经 sys.path，与 agent_core 引 OCR 同模式）
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 import members as members_registry
+import paths as _paths
 
 # 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）
 _BACKUP_WRITE_COMMANDS = {"init", "add", "delete", "deposit-add", "transfer-add",
@@ -92,7 +93,7 @@ def _store_receipt(src: str, when: str, label: str) -> str:
         raise ValueError(f"票据文件不存在: {src}")
     receipts_root = RECEIPTS_DIR.resolve()
     if abs_p.is_relative_to(receipts_root):
-        return abs_p.relative_to(ROOT.resolve()).as_posix()
+        return _paths.to_rel(abs_p)
     try:
         d = date.fromisoformat(when)
     except (ValueError, TypeError):
@@ -107,7 +108,7 @@ def _store_receipt(src: str, when: str, label: str) -> str:
         dest = dest_dir / f"{stem}_{n}{abs_p.suffix.lower()}"
         n += 1
     shutil.copy2(abs_p, dest)
-    return dest.relative_to(ROOT.resolve()).as_posix()
+    return _paths.to_rel(dest)
 
 
 def cmd_init(_args):

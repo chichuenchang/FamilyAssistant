@@ -1,19 +1,25 @@
 # Calendar Keeper
 
-> 家庭日程（活动/安排）与待办（任务），与远程日历静默双向同步。
-> 远程日历是日程数据的事实源（家人会直接在手机上改日历）；本地是缓存 + 离线缓冲。
-> provider 未配置时一切照常本地工作，配好后自动补推。
+> 日程（活动/安排）与待办（任务），**按成员私有**，与各成员自己的远程日历静默双向同步。
+> 活动与待办分库分 provider：每个成员的 schedule（活动）/ tasks（待办）各有独立存储、同步状态、
+> 同步偏好，可指向不同远程平台。当前只有 Jim 配了 Google（Calendar+Tasks），其余成员本地模式。
+> 远程是事实源（家人直接在手机上改日历）；本地是缓存 + 离线缓冲。未配置 provider 时本地照常工作。
 
 ## 代码位置
 
 ```
 .codewhale/skills/Calendar_Keeper/
 ├── SKILL.md             ← 本文件
-├── cal_db.py            ← 存储层（schedule_items 表，建在 data/ledger.db）
-├── calendar_sync.py     ← 同步引擎：静默节流刷新、先推后拉、对账、状态
+├── cal_db.py            ← 存储层（schedule_items 表；每成员每域各一个 .db）
+├── calendar_sync.py     ← 同步引擎：按(成员,域)先推后拉、对账、状态；calendar_tick 遍历成员
 ├── calendar_provider.py ← Google Calendar + Tasks 实现（契约见文件头注释，可换）
+├── providers.py         ← provider 注册表：(domain, name) → 实现（google_calendar/google_tasks）
 └── cli.py               ← cal-add / cal-list / cal-done / cal-delete / cal-sync / cal-status
 ```
+
+存储分库：活动 `data/<成员>/schedule/schedule.db`，待办 `data/<成员>/tasks/tasks.db`
+（路径经 `Agent_Runtime/paths.member_store`）。同步状态 `.sync_state.json` 与库同目录，不入备份。
+单库迁移见 `Agent_Runtime/migrate_storage.py`（一次性，保留 uid/synced 避免远端重复）。
 
 ## 工作方式
 
@@ -26,8 +32,8 @@
 - **合并规则**：按远端 uid 合并，远端字段覆盖本地（remote wins）；本地有待推送
   改动的行跳过，推完再合并。窗口内活动在远端消失 → 本地标记取消；
   待办远端完成 → 本地完成。
-- 日程数据存共享 `data/ledger.db` → 已在 `backup.include` 内，随云备份镜像。
-- 家庭共享：所有成员可见可改；`member` 字段只记录创建者归属。
+- 日程存各成员 `data/<成员>/{schedule,tasks}/*.db` → 在 `data` 下随云备份镜像；`.sync_state.json` 不入备份。
+- 成员私有：每个成员只见/改自己的日程与待办；`member` 字段记录归属（活动注入上下文也只取当前成员）。
 
 ## CLI
 
@@ -56,8 +62,14 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
    （与备份的 refresh token 互不影响，scope 不同需各自授权。）
 4. （可选）非主日历：`setx GCAL_CALENDAR_ID "..."`（日历 id 形如邮箱，属隐私
    → 环境变量，不进 config.json）。
-5. `config.json` 设 `calendar.enabled: true`，重启机器人。
-6. `cal-sync` 首次全量刷新，`cal-status` 确认。
+5. 在 `data/members.json` 给该成员加 `sync` 块（成员私有文件，凭据不入此处）：
+   `"sync": {"schedule": {"provider":"google_calendar","enabled":true}, "tasks": {"provider":"google_tasks","enabled":true}}`。
+   无 `sync` 块 = 本地模式（不推不拉）。
+6. `config.json` 设 `calendar.enabled: true`（总开关），重启机器人。
+   `cal-sync --member "<名>"` 首次全量刷新，`cal-status --member "<名>"` 确认。
+
+> 多个成员都用 Google：`GCAL_*` 当前是单账号（Jim，复用 Remote_Backup 客户端）。第二个 Google
+> 成员需扩展 provider 读命名空间环境变量（按成员区分凭据）—— 结构已就绪，凭据命名空间待实现。
 
 权限范围（最小化）：`calendar.events`（只能读写日历上的活动，不能管理日历本身）
 + `tasks`（@default 待办清单）。
@@ -74,6 +86,6 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
 ## 边界
 
 - ❌ 编辑日程（取消 + 重建即可）
-- ❌ 邀请/参与人、多日历、按成员私有日历
+- ❌ 邀请/参与人、单成员内多日历（按成员私有日历已支持）
 - ❌ 主动提醒推送（Document_Keeper 负责主动提醒；日程只答不播）
 - ❌ webhook 推送通道（只在成员消息到达时节流拉取）

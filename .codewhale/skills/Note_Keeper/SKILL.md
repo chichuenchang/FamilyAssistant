@@ -9,13 +9,13 @@
 ```
 .codewhale/skills/Note_Keeper/
 ├── SKILL.md    ← 本文件
-├── note_db.py  ← SQLite CRUD（notes 表，建在共享 data/ledger.db）
+├── note_db.py  ← SQLite CRUD（notes 表）
 ├── cli.py      ← 命令行入口（user / agent / 任意调用方）
 ```
 
 数据模块名带 `note_` 前缀（不叫 db）：Expense_Tracker 已在共享进程占用该模块名，避免冲突。
 
-数据库共用 `data/ledger.db`。
+备忘按成员私有分库：`data/<成员目录>/notes/notes.db`（路径经 `Agent_Runtime/paths.member_store(member,"notes")`，`cli.py` 据 `--member` 解析；`NOTE_DB_PATH` 测试时覆盖）。图片存同成员 `notes/YYYY-MM/`，库内 `source_image` 记 data 相对路径。
 
 ## 数据模型
 

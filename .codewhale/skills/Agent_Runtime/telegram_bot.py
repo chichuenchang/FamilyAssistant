@@ -11,9 +11,9 @@ Telegram Bot API 是全球最开放的 IM Bot 协议：
     2. 设环境变量 TELEGRAM_BOT_TOKEN
 
 用法:
-    python .codewhale/skills/Agent_Runtime/telegram_bot.py [--debug]
+    python .codewhale/skills/Agent_Runtime/telegram_bot.py [--no-debug]
 
-    --debug: 调试日志写 data/bot_debug.log（默认关）
+    调试日志默认开（写 data/bot_debug.log）；关闭用 --no-debug
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
 import logging
 
-from agent_core import Agent, receipt_month_dir, setup_logging
+from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
 from members import resolve
 
 log = logging.getLogger("familyassist.telegram")
@@ -84,8 +84,8 @@ def _api(method: str, data: dict | None = None) -> dict | None:
         return None
 
 
-def download_photo(file_id: str) -> Path | None:
-    """getFile 拿到路径后下载图片到票据收件箱，返回保存路径。"""
+def download_photo(file_id: str, member: str = "") -> Path | None:
+    """getFile 拿到路径后下载图片到发送成员的 inbox 暂存，返回保存路径。"""
     import urllib.request
     r = _api("getFile", {"file_id": file_id})
     if not r or not r.get("ok"):
@@ -96,7 +96,8 @@ def download_photo(file_id: str) -> Path | None:
     url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
     now = datetime.now()
     ts = now.strftime("%Y%m%d_%H%M%S")
-    dest = receipt_month_dir(now) / f"{ts}_telegram.jpg"
+    staging = member_inbox_dir(member, now) if member else receipt_month_dir(now)
+    dest = staging / f"{ts}_telegram.jpg"
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
         _backup_mark_dirty()
@@ -192,7 +193,7 @@ def run() -> None:
             if photos:
                 print(f"[tg] 图片消息 from {user_name}")
                 file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
-                dest = download_photo(file_id) if file_id else None
+                dest = download_photo(file_id, member) if file_id else None
                 log.debug("图片 from %s(%s) → %s", user_name, member, dest)
                 if dest:
                     reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
@@ -233,8 +234,10 @@ def run() -> None:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Family Assistant — Telegram Bot")
-    parser.add_argument("--debug", action="store_true",
-                        help="开启调试日志（写 data/bot_debug.log，默认关）")
+    parser.add_argument("--debug", action="store_true", default=True,
+                        help="开启调试日志（写 data/bot_debug.log，默认开）")
+    parser.add_argument("--no-debug", dest="debug", action="store_false",
+                        help="关闭调试日志")
     args = parser.parse_args()
     setup_logging(args.debug)
     print("Family Assistant — Telegram Bot")

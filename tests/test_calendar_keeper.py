@@ -310,6 +310,31 @@ class TestGoogleProvider:
             calendar_provider.list_tasks()
 
 
+# ── provider 注册表 ─────────────────────────────────────────────
+
+import providers
+
+
+class TestProviderRegistry:
+    def test_schedule_google_has_event_half(self):
+        p = providers.get("schedule", "google_calendar")
+        assert p is not None
+        for fn in ("is_configured", "list_events", "create_event", "delete_event"):
+            assert hasattr(p, fn)
+
+    def test_tasks_google_has_task_half(self):
+        p = providers.get("tasks", "google_tasks")
+        assert p is not None
+        for fn in ("is_configured", "list_tasks", "create_task",
+                   "complete_task", "delete_task"):
+            assert hasattr(p, fn)
+
+    def test_unknown_or_local_is_none(self):
+        assert providers.get("schedule", "local") is None
+        assert providers.get("schedule", "") is None
+        assert providers.get("tasks", "nope") is None
+
+
 # ── 同步引擎（provider 全部打桩） ───────────────────────────────
 
 import calendar_sync
@@ -459,37 +484,75 @@ class TestSyncEngine:
         assert st["last_error"]
         assert st["last_refresh"]           # 失败也记尝试时间（节流按尝试算）
 
-    def test_tick_throttles_and_gates(self, engine, monkeypatch):
-        fake, db = engine
-        from datetime import datetime as dt
-        t0 = dt(2026, 6, 12, 9, 0, 0)
-        assert calendar_sync.calendar_tick(db_path=db, now=t0) is True
-        # 10 分钟后：refresh_minutes=15 → 节流
-        assert calendar_sync.calendar_tick(db_path=db, now=dt(2026, 6, 12, 9, 10)) is False
-        # 16 分钟后：再跑
-        assert calendar_sync.calendar_tick(db_path=db, now=dt(2026, 6, 12, 9, 16)) is True
-        # 禁用 → False
-        monkeypatch.setattr(calendar_sync, "CFG", {**calendar_sync.CFG, "enabled": False})
-        assert calendar_sync.calendar_tick(db_path=db, now=dt(2026, 6, 12, 10, 0)) is False
-
-    def test_tick_unconfigured_skips(self, engine):
-        fake, db = engine
-        fake.configured = False
-        assert calendar_sync.calendar_tick(db_path=db) is False
-
-    def test_tick_never_raises(self, engine, monkeypatch):
-        fake, db = engine
-        monkeypatch.setattr(calendar_sync, "refresh",
-                            lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")))
-        assert calendar_sync.calendar_tick(db_path=db) is False
-        assert calendar_sync.status(db_path=db)["last_error"]
-
     def test_status_counts_pending(self, engine):
         fake, db = engine
         _add_event(db)
         st = calendar_sync.status(db_path=db)
         assert st["enabled"] is True and st["configured"] is True
         assert st["pending"] == 1
+
+
+# ── 按成员 + 域同步（tick 遍历成员） ────────────────────────────
+
+
+@pytest.fixture
+def member_engine(monkeypatch, tmp_path):
+    """tick 测试：MemberA 两域都接 fake provider，数据根指向 tmp。"""
+    fake = FakeProvider()
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setattr(calendar_sync, "_registered_members", lambda: ["MemberA"])
+    monkeypatch.setattr(calendar_sync, "provider_for",
+                        lambda m, d: fake if m == "MemberA" else None)
+    monkeypatch.setattr(calendar_sync, "CFG",
+                        {"enabled": True, "lookahead_days": 10, "refresh_minutes": 15})
+    return fake, tmp_path
+
+
+class TestPerMemberTick:
+    def test_tick_pushes_member_store_and_throttles(self, member_engine):
+        import paths
+        from datetime import datetime as dt
+        fake, tmp = member_engine
+        sdb = str(paths.member_store("MemberA", "schedule"))
+        ev = cal_db.add_item(kind="event", title="X", start_at="2026-06-13T10:00",
+                             member="MemberA", db_path=sdb)
+        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is True
+        assert cal_db.get_item(ev, db_path=sdb)["uid"]            # pushed to remote
+        assert ("event", ) and any(k == "event" for k, _ in fake.created)
+        # 节流窗口内 → 不跑
+        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 10)) is False
+        # 超过节流 → 再跑
+        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 16)) is True
+
+    def test_tick_local_member_skipped(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        monkeypatch.setattr(calendar_sync, "_registered_members", lambda: ["LocalOnly"])
+        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
+        monkeypatch.setattr(calendar_sync, "CFG",
+                            {"enabled": True, "lookahead_days": 10, "refresh_minutes": 15})
+        from datetime import datetime as dt
+        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
+
+    def test_tick_disabled_returns_false(self, member_engine, monkeypatch):
+        from datetime import datetime as dt
+        monkeypatch.setattr(calendar_sync, "CFG", {**calendar_sync.CFG, "enabled": False})
+        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
+
+    def test_tick_unconfigured_provider_skipped(self, member_engine):
+        from datetime import datetime as dt
+        fake, tmp = member_engine
+        fake.configured = False
+        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
+
+    def test_tick_never_raises(self, member_engine, monkeypatch):
+        import paths
+        from datetime import datetime as dt
+        fake, tmp = member_engine
+        monkeypatch.setattr(calendar_sync, "refresh_domain",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
+        st = calendar_sync._load_state(paths.member_sync_state("MemberA", "schedule"))
+        assert st.get("last_error")
 
 
 # ── CLI（subprocess，环境变量全隔离） ───────────────────────────
@@ -583,6 +646,53 @@ class TestCli:
         r = _cli(["cal-sync"], cal_db_path, tmp_path)
         assert r.returncode == 0
         assert "未配置" in r.stdout
+
+
+def _cli_member(args, data_root, tmp):
+    """无 CAL_DB_PATH 覆盖：按成员路由到 data/<dir>/{schedule,tasks}/*.db。"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GCAL_")}
+    env["DATA_ROOT"] = str(data_root)
+    env["CALENDAR_STATE_DIR"] = str(tmp)
+    env["CALENDAR_CONFIG"] = str(tmp / "no-such-config.json")
+    env["BACKUP_STATE_DIR"] = str(tmp)
+    env["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.run([_sys.executable, str(_CLI)] + args,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env=env, cwd=str(_ROOT))
+
+
+class TestCliPerMember:
+    """无覆盖时事件入 schedule.db、待办入 tasks.db，按成员私有。依赖真实 members.json。"""
+
+    def test_event_and_task_go_to_separate_stores(self, tmp_path):
+        data_root = tmp_path / "data"
+        r = _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "event",
+                         "--title", "游泳课", "--date", D1, "--start", "14:00"],
+                        data_root, tmp_path)
+        assert r.returncode == 0, r.stderr
+        r = _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "task",
+                         "--title", "买蛋糕"], data_root, tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert (data_root / "Jim" / "schedule" / "schedule.db").exists()
+        assert (data_root / "Jim" / "tasks" / "tasks.db").exists()
+        # event lives in schedule.db only
+        ev = cal_db.list_upcoming(days=10, today=date.today(),
+                                  db_path=str(data_root / "Jim" / "schedule" / "schedule.db"))
+        assert [r["title"] for r in ev] == ["游泳课"]
+        tk = cal_db.list_upcoming(days=10, today=date.today(), include_closed=True,
+                                  db_path=str(data_root / "Jim" / "tasks" / "tasks.db"))
+        assert [r["title"] for r in tk] == ["买蛋糕"]
+
+    def test_list_merges_member_stores(self, tmp_path):
+        data_root = tmp_path / "data"
+        _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "event",
+                     "--title", "游泳课", "--date", D1, "--start", "14:00"],
+                    data_root, tmp_path)
+        _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "task",
+                     "--title", "买蛋糕"], data_root, tmp_path)
+        out = _cli_member(["cal-list", "--member", "Jim Zheng"], data_root, tmp_path)
+        assert out.returncode == 0, out.stderr
+        assert "游泳课" in out.stdout and "买蛋糕" in out.stdout
 
 
 # ── Agent 接线（agent_core） ────────────────────────────────────

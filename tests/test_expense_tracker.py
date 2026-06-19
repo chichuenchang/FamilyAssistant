@@ -11,6 +11,29 @@ import pytest
 import db as dbm
 
 
+def test_default_db_is_family_ledger():
+    """Default ledger lives under data/Family, receipts under data/Family/receipts."""
+    import models
+    assert models.DB_PATH.as_posix().endswith("data/Family/ledger.db")
+    assert models.RECEIPTS_DIR.as_posix().endswith("data/Family/receipts")
+
+
+def test_store_receipt_returns_family_rel(tmp_path, monkeypatch):
+    """A stored receipt path is recorded relative to data_root (Family/receipts/...).
+
+    Uses ``expense_cli`` (loaded by path below) — bare ``import cli`` is ambiguous
+    across skills and resolves to whichever cli.py was imported first.
+    """
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setattr(expense_cli, "RECEIPTS_DIR", tmp_path / "data" / "Family" / "receipts")
+    monkeypatch.setattr(expense_cli, "ROOT", tmp_path)
+    src = tmp_path / "r.jpg"
+    src.write_bytes(b"img")
+    rel = expense_cli._store_receipt(str(src), "2026-06-19", "expense_lunch")
+    assert rel.startswith("Family/receipts/2026-06/")
+    assert rel.endswith(".jpg")
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # 1. init_db is idempotent
 # ═══════════════════════════════════════════════════════════════════════
@@ -591,13 +614,17 @@ _spec.loader.exec_module(expense_cli)
 
 
 def _patch_receipts(monkeypatch, tmp_path):
-    """把 cli 的 ROOT / RECEIPTS_DIR 指向临时目录，避免碰真实 receipts/。"""
+    """把 cli 的 ROOT / RECEIPTS_DIR 与 data_root 指向临时目录，避免碰真实数据。
+
+    票据现归 data/Family/receipts/，存储链接相对 data_root（Family/receipts/...）。
+    """
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.setattr(expense_cli, "ROOT", tmp_path)
-    monkeypatch.setattr(expense_cli, "RECEIPTS_DIR", tmp_path / "receipts")
+    monkeypatch.setattr(expense_cli, "RECEIPTS_DIR", tmp_path / "data" / "Family" / "receipts")
 
 
 def test_store_receipt_archives_external_file(monkeypatch, tmp_path):
-    """receipts/ 外的文件 → 复制进 receipts/YYYY-MM/，规范命名、后缀小写、原件保留。"""
+    """receipts/ 外的文件 → 复制进 Family/receipts/YYYY-MM/，规范命名、后缀小写、原件保留。"""
     _patch_receipts(monkeypatch, tmp_path)
     src = tmp_path / "inbox" / "photo.JPG"
     src.parent.mkdir()
@@ -605,22 +632,23 @@ def test_store_receipt_archives_external_file(monkeypatch, tmp_path):
 
     rel = expense_cli._store_receipt(str(src), "2026-06-01", "expense_午餐")
 
-    assert rel == "receipts/2026-06/2026-06-01_expense_午餐.jpg"
-    assert (tmp_path / rel).read_bytes() == b"img"   # 已复制到目标
-    assert src.exists()                              # copy 非 move，原件还在
+    assert rel == "Family/receipts/2026-06/2026-06-01_expense_午餐.jpg"
+    assert (tmp_path / "data" / rel).read_bytes() == b"img"   # 已复制到目标
+    assert src.exists()                                       # copy 非 move，原件还在
 
 
 def test_store_receipt_keeps_file_already_in_receipts(monkeypatch, tmp_path):
     """已在 receipts/ 内的文件（入站照片）原样返回，不改名、不产生副本。"""
     _patch_receipts(monkeypatch, tmp_path)
-    inbound = tmp_path / "receipts" / "2026-06" / "20260601_222413_wechat.jpg"
+    inbound = (tmp_path / "data" / "Family" / "receipts" / "2026-06"
+               / "20260601_222413_wechat.jpg")
     inbound.parent.mkdir(parents=True)
     inbound.write_bytes(b"x")
 
     rel = expense_cli._store_receipt(str(inbound), "2026-06-01", "expense_午餐")
 
-    assert rel == "receipts/2026-06/20260601_222413_wechat.jpg"
-    assert len(list((tmp_path / "receipts" / "2026-06").iterdir())) == 1
+    assert rel == "Family/receipts/2026-06/20260601_222413_wechat.jpg"
+    assert len(list(inbound.parent.iterdir())) == 1
 
 
 def test_store_receipt_missing_file_raises(monkeypatch, tmp_path):
@@ -639,8 +667,8 @@ def test_store_receipt_collision_suffixes(monkeypatch, tmp_path):
     r1 = expense_cli._store_receipt(str(src), "2026-06-01", "expense_lunch")
     r2 = expense_cli._store_receipt(str(src), "2026-06-01", "expense_lunch")
 
-    assert r1 == "receipts/2026-06/2026-06-01_expense_lunch.png"
-    assert r2 == "receipts/2026-06/2026-06-01_expense_lunch_1.png"
+    assert r1 == "Family/receipts/2026-06/2026-06-01_expense_lunch.png"
+    assert r2 == "Family/receipts/2026-06/2026-06-01_expense_lunch_1.png"
 
 
 def test_store_receipt_invalid_date_falls_back_to_today(monkeypatch, tmp_path):
@@ -653,4 +681,4 @@ def test_store_receipt_invalid_date_falls_back_to_today(monkeypatch, tmp_path):
     rel = expense_cli._store_receipt(str(src), "", "expense_x")
 
     today = _date.today()
-    assert rel == f"receipts/{today.strftime('%Y-%m')}/{today.isoformat()}_expense_x.jpg"
+    assert rel == f"Family/receipts/{today.strftime('%Y-%m')}/{today.isoformat()}_expense_x.jpg"

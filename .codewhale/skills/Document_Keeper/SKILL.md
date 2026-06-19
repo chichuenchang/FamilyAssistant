@@ -17,7 +17,7 @@
 
 数据模块名带 `doc_` 前缀（不叫 models/db）：Expense_Tracker 已在共享进程占用这两个模块名。
 
-文件存档在项目根 `documents/<类型>/`（config.json `documents_dir`），数据库共用 `data/ledger.db`。
+文件存档在 `data/Family/documents/<类型>/`，数据库共用家庭账本 `data/Family/ledger.db`（路径经 `Agent_Runtime/paths`）。行内 `file_path` 记 data 相对路径（`Family/documents/...`）。文档为家庭共享（含成员个人证件，统一归家庭目录）。
 
 ## 数据模型
 

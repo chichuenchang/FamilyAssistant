@@ -290,6 +290,32 @@ class TestCli:
         assert "爸爸的备忘" not in r.stdout
 
 
+class TestPerMemberStore:
+    """无 NOTE_DB_PATH 覆盖时，备忘按成员落到 data/<成员目录>/notes/notes.db。
+
+    依赖真实 data/members.json（Jim Zheng→dir Jim, Wenliang Li→dir Wenliang）。
+    """
+
+    def test_note_add_goes_to_member_store(self, tmp_path):
+        env = {"DATA_ROOT": str(tmp_path / "data")}
+        r = _run_cli("note-add", "--member", "Jim Zheng",
+                     "--content", "wifi pw abcd", env=env)
+        assert r.returncode == 0, r.stderr
+        assert (tmp_path / "data" / "Jim" / "notes" / "notes.db").exists()
+        r = _run_cli("note-list", "--member", "Jim Zheng", env=env)
+        assert "wifi pw abcd" in r.stdout
+
+    def test_members_have_separate_stores(self, tmp_path):
+        env = {"DATA_ROOT": str(tmp_path / "data")}
+        _run_cli("note-add", "--member", "Jim Zheng",
+                 "--content", "jim secret", env=env)
+        r = _run_cli("note-list", "--member", "Wenliang Li", env=env)
+        assert "jim secret" not in r.stdout
+        assert not (tmp_path / "data" / "Jim" / "notes" / "notes.db").samefile(
+            tmp_path / "data" / "Wenliang" / "notes" / "notes.db") \
+            if (tmp_path / "data" / "Wenliang" / "notes" / "notes.db").exists() else True
+
+
 class TestAgentRegistration:
     """Agent 端注册检查：5 个备忘工具在 schema/map/成员隔离集中都已挂上。"""
 
@@ -317,45 +343,53 @@ class TestAgentRegistration:
 
 
 class TestRelocateNoteImage:
-    """save_note 的图片搬移：收件箱 receipts/ → documents/notes/YYYY-MM/。"""
+    """save_note 图片搬移：成员 inbox（data_root 内）→ 该成员 notes/YYYY-MM/，返回 data 相对路径。"""
 
-    def _patch_dirs(self, monkeypatch, tmp_path):
+    def _setup(self, monkeypatch, tmp_path):
+        import json as _json
         import agent_core
-        receipts = tmp_path / "receipts"; receipts.mkdir()
-        documents = tmp_path / "documents"; documents.mkdir()
-        monkeypatch.setattr(agent_core, "RECEIPTS_DIR", receipts)
-        monkeypatch.setattr(agent_core, "DOCUMENTS_DIR", documents)
-        return receipts, documents
+        import members
+        mp = tmp_path / "members.json"
+        mp.write_text(_json.dumps({"Jim Zheng": {"dir": "Jim"}}), encoding="utf-8")
+        monkeypatch.setattr(members, "MEMBERS_PATH", mp)
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        return agent_core
 
     def test_moves_inbox_image(self, monkeypatch, tmp_path):
-        import agent_core
-        receipts, documents = self._patch_dirs(monkeypatch, tmp_path)
-        img = receipts / "a.jpg"; img.write_bytes(b"x")
-        out = agent_core._relocate_note_image(str(img))
+        ac = self._setup(monkeypatch, tmp_path)
+        import paths
+        img = paths.member_inbox_dir("Jim Zheng") / "a.jpg"
+        img.write_bytes(b"x")
+        out = ac._relocate_note_image(str(img), "Jim Zheng")
         assert not img.exists()
-        out_p = _Path(out)
-        assert out_p.exists() and out_p.parent.parent == documents / "notes"
+        assert out.startswith("Jim/notes/") and out.endswith("a.jpg")
+        assert paths.resolve_rel(out).read_bytes() == b"x"
 
     def test_leaves_outside_paths_alone(self, monkeypatch, tmp_path):
-        import agent_core
-        self._patch_dirs(monkeypatch, tmp_path)
-        other = tmp_path / "elsewhere.jpg"; other.write_bytes(b"x")
-        assert agent_core._relocate_note_image(str(other)) == str(other)
+        ac = self._setup(monkeypatch, tmp_path)
+        other = tmp_path / "elsewhere.jpg"; other.write_bytes(b"x")   # 不在 data_root 下
+        assert ac._relocate_note_image(str(other), "Jim Zheng") == str(other)
         assert other.exists()
 
     def test_missing_file_returns_original(self, monkeypatch, tmp_path):
-        import agent_core
-        receipts, _ = self._patch_dirs(monkeypatch, tmp_path)
-        ghost = str(receipts / "nope.jpg")
-        assert agent_core._relocate_note_image(ghost) == ghost
+        ac = self._setup(monkeypatch, tmp_path)
+        import paths
+        ghost = str(paths.member_inbox_dir("Jim Zheng") / "nope.jpg")
+        assert ac._relocate_note_image(ghost, "Jim Zheng") == ghost
+
+    def test_no_member_returns_original(self, monkeypatch, tmp_path):
+        ac = self._setup(monkeypatch, tmp_path)
+        import paths
+        img = paths.member_inbox_dir("Jim Zheng") / "a.jpg"; img.write_bytes(b"x")
+        assert ac._relocate_note_image(str(img), "") == str(img)
+        assert img.exists()
 
     def test_name_collision_gets_suffix(self, monkeypatch, tmp_path):
-        import agent_core
-        from datetime import date
-        receipts, documents = self._patch_dirs(monkeypatch, tmp_path)
-        month = date.today().strftime("%Y-%m")
-        taken = documents / "notes" / month; taken.mkdir(parents=True)
+        ac = self._setup(monkeypatch, tmp_path)
+        import paths
+        taken = paths.member_notes_image_dir("Jim Zheng")
         (taken / "a.jpg").write_bytes(b"old")
-        img = receipts / "a.jpg"; img.write_bytes(b"new")
-        out = agent_core._relocate_note_image(str(img))
-        assert _Path(out).name == "a_1.jpg" and _Path(out).read_bytes() == b"new"
+        img = paths.member_inbox_dir("Jim Zheng") / "a.jpg"; img.write_bytes(b"new")
+        out = ac._relocate_note_image(str(img), "Jim Zheng")
+        assert _Path(out).name == "a_1.jpg"
+        assert paths.resolve_rel(out).read_bytes() == b"new"
