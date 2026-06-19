@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # 成员注册表（Agent_Runtime skill；跨 skill 经 sys.path，与 Expense_Tracker 同模式）
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 import members as members_registry
+import paths as _paths
 
 import doc_db
 from doc_models import DOC_TYPES, DOC_STATUSES, DOCUMENTS_DIR, REMINDER_LEAD_DAYS
@@ -74,7 +75,7 @@ def _store_file(src: str, doc_type: str, title: str) -> str:
         raise ValueError(f"文件不存在: {src}")
     docs_root = DOCUMENTS_DIR.resolve()
     if abs_p.is_relative_to(docs_root):
-        return abs_p.relative_to(ROOT.resolve()).as_posix()
+        return _paths.to_rel(abs_p)
     safe_title = re.sub(r'[\\/:*?"<>|\s]+', "_", title).strip("_")[:40] or "untitled"
     dest_dir = docs_root / doc_type
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -85,7 +86,7 @@ def _store_file(src: str, doc_type: str, title: str) -> str:
         dest = dest_dir / f"{stem}_{n}{abs_p.suffix.lower()}"
         n += 1
     shutil.copy2(abs_p, dest)
-    return dest.relative_to(ROOT.resolve()).as_posix()
+    return _paths.to_rel(dest)
 
 
 def _fmt_due(d: dict) -> str:

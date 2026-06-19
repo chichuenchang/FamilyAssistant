@@ -585,6 +585,53 @@ class TestCli:
         assert "未配置" in r.stdout
 
 
+def _cli_member(args, data_root, tmp):
+    """无 CAL_DB_PATH 覆盖：按成员路由到 data/<dir>/{schedule,tasks}/*.db。"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GCAL_")}
+    env["DATA_ROOT"] = str(data_root)
+    env["CALENDAR_STATE_DIR"] = str(tmp)
+    env["CALENDAR_CONFIG"] = str(tmp / "no-such-config.json")
+    env["BACKUP_STATE_DIR"] = str(tmp)
+    env["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.run([_sys.executable, str(_CLI)] + args,
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", env=env, cwd=str(_ROOT))
+
+
+class TestCliPerMember:
+    """无覆盖时事件入 schedule.db、待办入 tasks.db，按成员私有。依赖真实 members.json。"""
+
+    def test_event_and_task_go_to_separate_stores(self, tmp_path):
+        data_root = tmp_path / "data"
+        r = _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "event",
+                         "--title", "游泳课", "--date", D1, "--start", "14:00"],
+                        data_root, tmp_path)
+        assert r.returncode == 0, r.stderr
+        r = _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "task",
+                         "--title", "买蛋糕"], data_root, tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert (data_root / "Jim" / "schedule" / "schedule.db").exists()
+        assert (data_root / "Jim" / "tasks" / "tasks.db").exists()
+        # event lives in schedule.db only
+        ev = cal_db.list_upcoming(days=10, today=date.today(),
+                                  db_path=str(data_root / "Jim" / "schedule" / "schedule.db"))
+        assert [r["title"] for r in ev] == ["游泳课"]
+        tk = cal_db.list_upcoming(days=10, today=date.today(), include_closed=True,
+                                  db_path=str(data_root / "Jim" / "tasks" / "tasks.db"))
+        assert [r["title"] for r in tk] == ["买蛋糕"]
+
+    def test_list_merges_member_stores(self, tmp_path):
+        data_root = tmp_path / "data"
+        _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "event",
+                     "--title", "游泳课", "--date", D1, "--start", "14:00"],
+                    data_root, tmp_path)
+        _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "task",
+                     "--title", "买蛋糕"], data_root, tmp_path)
+        out = _cli_member(["cal-list", "--member", "Jim Zheng"], data_root, tmp_path)
+        assert out.returncode == 0, out.stderr
+        assert "游泳课" in out.stdout and "买蛋糕" in out.stdout
+
+
 # ── Agent 接线（agent_core） ────────────────────────────────────
 
 _TOOLS = ("add_event", "add_task", "list_schedule", "complete_task",

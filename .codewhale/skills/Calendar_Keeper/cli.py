@@ -32,14 +32,37 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把本 skill 目录加入 sys.path（同目录 cal_db / calendar_sync）
+# 把本 skill 目录加入 sys.path（同目录 cal_db / calendar_sync）+ Agent_Runtime（paths）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 
 import cal_db
 import calendar_sync
+import paths as _paths
 
-# 测试钩子：覆盖数据库路径，避免测试碰真实账本
+# 测试钩子：覆盖数据库路径，避免测试碰真实账本（设置后忽略成员/类型分库）
 _DB_OVERRIDE = os.environ.get("CAL_DB_PATH") or None
+
+
+def _store_for(member: str, kind: str) -> str:
+    """事件→data/<成员>/schedule/schedule.db，待办→.../tasks/tasks.db。覆盖时返回覆盖库。"""
+    if _DB_OVERRIDE:
+        return _DB_OVERRIDE
+    return str(_paths.member_store(member, "schedule" if kind == "event" else "tasks"))
+
+
+def _member_stores(member: str, kind: str | None = None) -> list[str]:
+    """成员相关库列表：覆盖时单库；否则按 kind 选 schedule/tasks，缺省两者。"""
+    if _DB_OVERRIDE:
+        return [_DB_OVERRIDE]
+    if not member:
+        raise ValueError("按成员私有日历，需要 --member")
+    if kind == "event":
+        return [str(_paths.member_store(member, "schedule"))]
+    if kind == "task":
+        return [str(_paths.member_store(member, "tasks"))]
+    return [str(_paths.member_store(member, "schedule")),
+            str(_paths.member_store(member, "tasks"))]
 
 
 def _mark_backup_dirty() -> None:
@@ -52,16 +75,16 @@ def _mark_backup_dirty() -> None:
         pass
 
 
-def _push_quietly() -> None:
+def _push_quietly(db_path: str) -> None:
     """写入后即时尽力推送（provider 未配置/失败都静默，留待下轮 tick）。"""
     try:
-        calendar_sync.push_pending(db_path=_DB_OVERRIDE)
+        calendar_sync.push_pending(db_path=db_path)
     except Exception:
         pass
 
 
-def _sync_suffix(item_id: int) -> str:
-    item = cal_db.get_item(item_id, db_path=_DB_OVERRIDE)
+def _sync_suffix(item_id: int, db_path: str) -> str:
+    item = cal_db.get_item(item_id, db_path=db_path)
     return "已同步到日历" if item and item["synced"] == 1 else "待同步"
 
 
@@ -120,6 +143,7 @@ def cmd_cal_add(args):
             start_at = f"{args.date}T{args.start}"
             if args.end:
                 end_at = f"{args.date}T{args.end}"
+    db = _store_for(args.member, args.kind)
     item_id = cal_db.add_item(
         kind=args.kind,
         title=args.title,
@@ -129,22 +153,25 @@ def cmd_cal_add(args):
         location=args.location or "",
         notes=args.notes or "",
         member=args.member,
-        db_path=_DB_OVERRIDE,
+        db_path=db,
     )
     _mark_backup_dirty()
-    _push_quietly()
+    _push_quietly(db)
     tag = "活动" if args.kind == "event" else "待办"
-    print(f"已添加{tag} #{item_id}（{_sync_suffix(item_id)}）")
+    print(f"已添加{tag} #{item_id}（{_sync_suffix(item_id, db)}）")
 
 
 def cmd_cal_list(args):
-    rows = cal_db.list_upcoming(
-        days=args.days,
-        kind=args.kind,
-        member=args.member,
-        include_closed=args.all,
-        db_path=_DB_OVERRIDE,
-    )
+    rows = []
+    for db in _member_stores(args.member, args.kind):
+        rows.extend(cal_db.list_upcoming(
+            days=args.days,
+            kind=args.kind,
+            member=args.member if _DB_OVERRIDE else None,  # 分库后库即成员，无需再过滤
+            include_closed=args.all,
+            db_path=db,
+        ))
+    rows.sort(key=lambda r: (r["start_at"] == "", r["start_at"], r["id"]))
     if not rows:
         print("（无日程）")
         return
@@ -153,28 +180,34 @@ def cmd_cal_list(args):
 
 
 def cmd_cal_done(args):
-    item = cal_db.get_item(args.id, db_path=_DB_OVERRIDE)
+    db = _DB_OVERRIDE or str(_paths.member_store(args.member, "tasks"))
+    item = cal_db.get_item(args.id, db_path=db)
     if item is None:
         print("[错误] 无此日程", file=sys.stderr)
         sys.exit(1)
     if item["kind"] != "task":
         print(f"[错误] #{args.id} 是活动，取消请用 cal-delete", file=sys.stderr)
         sys.exit(1)
-    cal_db.set_status(args.id, "done", db_path=_DB_OVERRIDE)
+    cal_db.set_status(args.id, "done", db_path=db)
     _mark_backup_dirty()
-    _push_quietly()
-    print(f"已完成待办 #{args.id}（{_sync_suffix(args.id)}）")
+    _push_quietly(db)
+    print(f"已完成待办 #{args.id}（{_sync_suffix(args.id, db)}）")
 
 
 def cmd_cal_delete(args):
-    item = cal_db.get_item(args.id, db_path=_DB_OVERRIDE)
+    db = item = None
+    for cand in _member_stores(args.member):    # 活动/待办分库，逐库找 id
+        found = cal_db.get_item(args.id, db_path=cand)
+        if found is not None:
+            db, item = cand, found
+            break
     if item is None:
         print("[错误] 无此日程", file=sys.stderr)
         sys.exit(1)
-    cal_db.set_status(args.id, "cancelled", db_path=_DB_OVERRIDE)
+    cal_db.set_status(args.id, "cancelled", db_path=db)
     _mark_backup_dirty()
-    _push_quietly()
-    print(f"已取消日程 #{args.id}「{item['title']}」（{_sync_suffix(args.id)}）")
+    _push_quietly(db)
+    print(f"已取消日程 #{args.id}「{item['title']}」（{_sync_suffix(args.id, db)}）")
 
 
 def cmd_cal_sync(args):
@@ -224,9 +257,11 @@ def main() -> int:
     p.add_argument("--all", action="store_true", help="包含已完成/已取消")
 
     p = sub.add_parser("cal-done", help="完成一条待办")
+    p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
     p.add_argument("--id", type=int, required=True, help="日程 ID")
 
     p = sub.add_parser("cal-delete", help="取消一条日程（同步删除远端）")
+    p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
     p.add_argument("--id", type=int, required=True, help="日程 ID")
 
     sub.add_parser("cal-sync", help="立即强制刷新远程日历")

@@ -290,6 +290,32 @@ class TestCli:
         assert "爸爸的备忘" not in r.stdout
 
 
+class TestPerMemberStore:
+    """无 NOTE_DB_PATH 覆盖时，备忘按成员落到 data/<成员目录>/notes/notes.db。
+
+    依赖真实 data/members.json（Jim Zheng→dir Jim, Wenliang Li→dir Wenliang）。
+    """
+
+    def test_note_add_goes_to_member_store(self, tmp_path):
+        env = {"DATA_ROOT": str(tmp_path / "data")}
+        r = _run_cli("note-add", "--member", "Jim Zheng",
+                     "--content", "wifi pw abcd", env=env)
+        assert r.returncode == 0, r.stderr
+        assert (tmp_path / "data" / "Jim" / "notes" / "notes.db").exists()
+        r = _run_cli("note-list", "--member", "Jim Zheng", env=env)
+        assert "wifi pw abcd" in r.stdout
+
+    def test_members_have_separate_stores(self, tmp_path):
+        env = {"DATA_ROOT": str(tmp_path / "data")}
+        _run_cli("note-add", "--member", "Jim Zheng",
+                 "--content", "jim secret", env=env)
+        r = _run_cli("note-list", "--member", "Wenliang Li", env=env)
+        assert "jim secret" not in r.stdout
+        assert not (tmp_path / "data" / "Jim" / "notes" / "notes.db").samefile(
+            tmp_path / "data" / "Wenliang" / "notes" / "notes.db") \
+            if (tmp_path / "data" / "Wenliang" / "notes" / "notes.db").exists() else True
+
+
 class TestAgentRegistration:
     """Agent 端注册检查：5 个备忘工具在 schema/map/成员隔离集中都已挂上。"""
 

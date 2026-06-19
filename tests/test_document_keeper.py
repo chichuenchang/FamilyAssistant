@@ -18,6 +18,34 @@ def test_doc_models_fallback_on_missing_config(tmp_path):
     assert doc_models._load_config_from(tmp_path / "nope.json") == {}
 
 
+def test_default_db_is_family_ledger():
+    """Documents share the Family ledger; files live under data/Family/documents."""
+    assert doc_models.DB_PATH.as_posix().endswith("data/Family/ledger.db")
+    assert doc_models.DOCUMENTS_DIR.as_posix().endswith("data/Family/documents")
+
+
+import importlib.util as _ilu_doc  # noqa: E402
+from pathlib import Path as _Path_doc  # noqa: E402
+
+_DOC_CLI_PATH = (_Path_doc(__file__).resolve().parent.parent
+                 / ".codewhale" / "skills" / "Document_Keeper" / "cli.py")
+_dspec = _ilu_doc.spec_from_file_location("doc_cli", _DOC_CLI_PATH)
+doc_cli = _ilu_doc.module_from_spec(_dspec)
+_dspec.loader.exec_module(doc_cli)
+
+
+def test_store_file_returns_family_rel(tmp_path, monkeypatch):
+    """A stored document path is recorded relative to data_root (Family/documents/...)."""
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setattr(doc_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(doc_cli, "DOCUMENTS_DIR", tmp_path / "data" / "Family" / "documents")
+    src = tmp_path / "lease.pdf"
+    src.write_bytes(b"pdf")
+    rel = doc_cli._store_file(str(src), "lease", "2026 Lease")
+    assert rel.startswith("Family/documents/lease/")
+    assert rel.endswith(".pdf")
+
+
 import doc_db
 
 

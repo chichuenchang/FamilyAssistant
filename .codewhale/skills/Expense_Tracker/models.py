@@ -42,12 +42,14 @@ CATEGORIES = _cfg.get("categories") or _FALLBACK_CATEGORIES
 SUPPORTED_CURRENCIES = tuple(_cfg.get("supported_currencies") or _FALLBACK_CURRENCIES)
 BASE_CURRENCY = _cfg.get("base_currency") or _FALLBACK_BASE
 
-# 数据库路径：config.json db_path（相对项目根）；缺失回退 data/ledger.db
+# 数据落盘位置经 Agent_Runtime/paths（单一事实来源）：家庭账本 + 家庭票据目录。
 _ROOT = _CONFIG_PATH.parent
-DB_PATH = _ROOT / (_cfg.get("db_path") or "data/ledger.db")
+import sys as _sys
+_sys.path.insert(0, str(_ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
+import paths as _paths
 
-# 票据目录：config.json receipts_dir（相对项目根）；缺失回退 receipts
-RECEIPTS_DIR = _ROOT / (_cfg.get("receipts_dir") or "receipts")
+DB_PATH = _paths.family_ledger()                 # data/Family/ledger.db
+RECEIPTS_DIR = _paths.family_dir() / "receipts"  # data/Family/receipts
 
 # ---------- SQL DDL ----------
 

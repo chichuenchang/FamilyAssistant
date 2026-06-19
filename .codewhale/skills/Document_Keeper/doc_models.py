@@ -39,9 +39,14 @@ _FALLBACK_DOC_TYPES = ["other"]
 DOC_TYPES = list(_cfg.get("doc_types") or _FALLBACK_DOC_TYPES)
 REMINDER_LEAD_DAYS = int(_cfg.get("reminder_lead_days") or 30)
 
+# 数据落盘位置经 Agent_Runtime/paths（单一事实来源）：家庭账本 + 家庭文档目录。
 _ROOT = _CONFIG_PATH.parent
-DOCUMENTS_DIR = _ROOT / (_cfg.get("documents_dir") or "documents")
-DB_PATH = _ROOT / (_cfg.get("db_path") or "data/ledger.db")
+import sys as _sys
+_sys.path.insert(0, str(_ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
+import paths as _paths
+
+DB_PATH = _paths.family_ledger()                   # data/Family/ledger.db
+DOCUMENTS_DIR = _paths.family_dir() / "documents"  # data/Family/documents
 
 # ---------- SQL DDL ----------
 
