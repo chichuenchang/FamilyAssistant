@@ -242,6 +242,41 @@ class GoogleDriveProvider:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(body)
 
+    def reorganize(self) -> dict:
+        """把现有平铺文件按 rel 重新归入文件夹树（元数据移动，零字节重传）。幂等。
+
+        遍历全部带 rel 的文件（drive.file 作用域即本应用文件）；当前父 ≠ 目标叶目录
+        则用 files.update 改 parents（addParents/removeParents），已就位的跳过。
+        """
+        moved: list[str] = []
+        skipped = 0
+        page_token = None
+        while True:
+            params = {"q": f"mimeType != '{_FOLDER_MIME}' and trashed = false",
+                      "fields": "nextPageToken, files(id, parents, appProperties)",
+                      "pageSize": 1000}
+            if page_token:
+                params["pageToken"] = page_token
+            r = self._api_json("GET", f"{API}/files?" + urllib.parse.urlencode(params))
+            for f in r.get("files", []):
+                rel = (f.get("appProperties") or {}).get("rel")
+                if not rel:
+                    continue
+                target = self._ensure_folder_path(rel)
+                current = (f.get("parents") or [None])[0]
+                if current == target:
+                    skipped += 1
+                    continue
+                url = f"{API}/files/{f['id']}?" + urllib.parse.urlencode(
+                    {"addParents": target, "removeParents": current or "",
+                     "fields": "id"})
+                self._api_json("PATCH", url)
+                moved.append(rel)
+            page_token = r.get("nextPageToken")
+            if not page_token:
+                break
+        return {"moved": moved, "skipped": skipped}
+
 
 # ── 一次性授权：python backup_provider.py --auth ────────────────
 # 本地回环 OAuth：起临时 http 服务接 code，浏览器里用户批准，换 refresh token。

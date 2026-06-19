@@ -190,6 +190,32 @@ class TestGdriveProvider:
         assert out == {"data/Jim/notes/n.db": {"size": 7}}
         assert "parents" not in calls[-1]["url"]
 
+    def test_reorganize_moves_flat_to_folders(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [
+            _files_resp({"id": "X", "parents": ["FOLDER1"],
+                         "appProperties": {"rel": "data/Jim/x.jpg"}}),  # list page
+            _files_resp(), (200, b'{"id": "Fd"}'),   # folder: data
+            _files_resp(), (200, b'{"id": "FJ"}'),   # folder: Jim
+            (200, b'{"id": "X"}'),                    # PATCH move
+        ]
+        r = prov.reorganize()
+        assert r["moved"] == ["data/Jim/x.jpg"]
+        move = calls[-1]
+        assert move["method"] == "PATCH"
+        assert "addParents=FJ" in move["url"]
+        assert "removeParents=FOLDER1" in move["url"]
+
+    def test_reorganize_skips_already_nested(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        prov._path_cache = {"data": "Fd", "data/Jim": "FJ"}   # leaf resolves with no HTTP
+        fake.responses = [
+            _files_resp({"id": "X", "parents": ["FJ"],
+                         "appProperties": {"rel": "data/Jim/x.jpg"}}),
+        ]
+        r = prov.reorganize()
+        assert r["moved"] == [] and r["skipped"] == 1
+
 
 import backup_sync
 
