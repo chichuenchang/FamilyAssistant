@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
 import logging
 
-from agent_core import Agent, receipt_month_dir, setup_logging
+from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
 from members import resolve
 
 log = logging.getLogger("familyassist.wechat")
@@ -122,7 +122,7 @@ def run_bot(relogin: bool = False) -> None:
         try:
             now = datetime.now()
             ts = now.strftime("%Y%m%d_%H%M%S")
-            img_path = receipt_month_dir(now) / f"{ts}_wechat.jpg"
+            img_path = member_inbox_dir(member, now) / f"{ts}_wechat.jpg"
             msg.save(str(img_path))
             _backup_mark_dirty()
             log.debug("图片 from %s(%s) 保存 → %s", msg.from_user, member, img_path)

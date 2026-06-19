@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
 import logging
 
-from agent_core import Agent, receipt_month_dir, setup_logging
+from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
 from members import resolve
 
 log = logging.getLogger("familyassist.telegram")
@@ -84,8 +84,8 @@ def _api(method: str, data: dict | None = None) -> dict | None:
         return None
 
 
-def download_photo(file_id: str) -> Path | None:
-    """getFile 拿到路径后下载图片到票据收件箱，返回保存路径。"""
+def download_photo(file_id: str, member: str = "") -> Path | None:
+    """getFile 拿到路径后下载图片到发送成员的 inbox 暂存，返回保存路径。"""
     import urllib.request
     r = _api("getFile", {"file_id": file_id})
     if not r or not r.get("ok"):
@@ -96,7 +96,8 @@ def download_photo(file_id: str) -> Path | None:
     url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
     now = datetime.now()
     ts = now.strftime("%Y%m%d_%H%M%S")
-    dest = receipt_month_dir(now) / f"{ts}_telegram.jpg"
+    staging = member_inbox_dir(member, now) if member else receipt_month_dir(now)
+    dest = staging / f"{ts}_telegram.jpg"
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
         _backup_mark_dirty()
@@ -192,7 +193,7 @@ def run() -> None:
             if photos:
                 print(f"[tg] 图片消息 from {user_name}")
                 file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
-                dest = download_photo(file_id) if file_id else None
+                dest = download_photo(file_id, member) if file_id else None
                 log.debug("图片 from %s(%s) → %s", user_name, member, dest)
                 if dest:
                     reply = agent.handle_image(str(dest), user=str(chat_id), member=member)

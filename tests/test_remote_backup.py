@@ -207,12 +207,18 @@ class TestStateAndWalk:
         (root / "data" / ".telegram_offset").write_text("1")
         (root / "data" / ".doc_reminder_state").write_text("{}")
         (root / "data" / ".backup_state.json").write_text("{}")
+        (root / "data" / "Jim" / "schedule").mkdir(parents=True)
+        (root / "data" / "Jim" / "schedule" / ".sync_state.json").write_text("{}")
+        (root / "data" / "Jim" / "schedule" / "schedule.db").write_bytes(b"")
         files = backup_sync._iter_local_files()
         assert "data/ledger.db" in files
         assert not any("creds" in f for f in files)
         assert "data/.telegram_offset" not in files
         assert "data/.doc_reminder_state" not in files
         assert "data/.backup_state.json" not in files
+        # 每成员每域的同步状态文件可再生，不进备份；分库 .db 照常入备份
+        assert "data/Jim/schedule/.sync_state.json" not in files
+        assert "data/Jim/schedule/schedule.db" in files
 
 
 class TestSync:

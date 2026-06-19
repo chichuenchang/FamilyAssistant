@@ -53,6 +53,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 members
 # 注：CLI 经 subprocess 调用（见 _run_cli），无需加入 sys.path
 
 import members as _members_registry
+import paths as _paths
 
 _log = logging.getLogger("familyassist.agent")
 
@@ -69,18 +70,22 @@ def _load_config_dict() -> dict:
 
 _CONFIG = _load_config_dict()
 
-# 票据目录（config.json receipts_dir，缺失回退 receipts）
-RECEIPTS_DIR = ROOT / (_CONFIG.get("receipts_dir") or "receipts")
-
-# 文档目录（config.json documents_dir，缺失回退 documents）
-DOCUMENTS_DIR = ROOT / (_CONFIG.get("documents_dir") or "documents")
+# 票据/文档目录经 paths（单一事实来源）：家庭共享。
+RECEIPTS_DIR = _paths.family_dir() / "receipts"
+DOCUMENTS_DIR = _paths.family_dir() / "documents"
 
 
 def receipt_month_dir(dt: date | None = None) -> Path:
-    """票据按月分子目录：receipts/YYYY-MM/，不存在则创建。"""
-    d = RECEIPTS_DIR / (dt or date.today()).strftime("%Y-%m")
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """票据按月分子目录：Family/receipts/YYYY-MM/，不存在则创建。"""
+    return _paths.family_receipts_dir(dt)
+
+
+def member_inbox_dir(member: str, dt: date | None = None) -> Path:
+    """来图暂存目录（按发送成员）：data/<成员>/inbox/YYYY-MM/，不存在则创建。
+
+    传输层把来图先存发送者的 inbox（成员私有）；分类后：备忘图→该成员 notes，
+    票据→Family/receipts，文档→Family/documents。避免私有图先落到家庭共享目录。"""
+    return _paths.member_inbox_dir(member, dt)
 
 
 # ── 调试日志（各 Bot 共用；--debug 开，默认关） ─────────────────
@@ -195,8 +200,8 @@ def _build_system_prompt() -> str:
 - 用户说"续约了""换新证了"→ update_document 改到期日；旧文档另存时把旧的 status 改 superseded
 - 用户说"知道了""别再提醒"→ ack_document
 
-## 家庭日程与待办（与远程日历静默同步）
-- 未来{_CAL_LOOKAHEAD}天的家庭日程/待办会自动注入上下文（家庭共享，全员可见）
+## 日程与待办（与远程日历静默同步，按成员私有）
+- 未来{_CAL_LOOKAHEAD}天**你（当前成员）的**日程/待办会自动注入上下文（每人只见自己的，活动与待办分库）
 - **不要主动播报日程**：仅当用户问到（"接下来有什么安排""待办清单"）或与当前话题直接相关时才提及
 - **加日程前先查重**：调 add_event/add_task 前，先比对已注入的未来日程（窗口外可先 list_schedule）。
   判定重复看"同一件事"——同一天 + 同一活动，标题措辞不同也算（如"游泳烧烤"vs"Hotdog Roast & Swim"）。
@@ -304,20 +309,21 @@ def _tool_ack_document(args): return _run_cli("doc-ack", args)
 def _tool_backup_now(args): return _run_cli("backup-now", args)
 def _tool_backup_status(args): return _run_cli("backup-status", args)
 def _tool_backup_verify(args): return _run_cli("backup-verify", args)
-def _relocate_note_image(src: str) -> str:
-    """备忘图片若还在票据收件箱 receipts/，搬到 documents/notes/YYYY-MM/。
+def _relocate_note_image(src: str, member: str) -> str:
+    """备忘图片从来图暂存（成员 inbox）搬到该成员 notes/YYYY-MM/，返回 data 相对路径。
 
-    传输层把所有来图先存 receipts/（收件箱），分类后备忘图不该留在那。
+    传输层把来图先存 data/<成员>/inbox/（收件箱），分类为备忘后搬进成员 notes 目录。
     代码确定性执行（不交给 LLM 决定）。失败保留原路径，绝不丢图。
-    返回最终路径（已搬则新路径，否则原样）。"""
+    仅处理 data_root 内的文件 + 已知成员；否则原样返回。"""
     try:
+        if not member:
+            return src
         p = Path(src)
         resolved = (p if p.is_absolute() else ROOT / p).resolve()
-        if not (resolved.exists()
-                and resolved.is_relative_to(RECEIPTS_DIR.resolve())):
+        droot = _paths.data_root().resolve()
+        if not (resolved.exists() and resolved.is_relative_to(droot)):
             return src
-        dest_dir = DOCUMENTS_DIR / "notes" / date.today().strftime("%Y-%m")
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir = _paths.member_notes_image_dir(member)
         dest = dest_dir / resolved.name
         i = 1
         while dest.exists():
@@ -325,7 +331,7 @@ def _relocate_note_image(src: str) -> str:
             i += 1
         resolved.rename(dest)
         _log.debug("备忘图片已移动 %s → %s", resolved, dest)
-        return str(dest)
+        return _paths.to_rel(dest)
     except Exception:
         _log.exception("备忘图片移动失败（保留原路径）")
         return src
@@ -334,7 +340,8 @@ def _relocate_note_image(src: str) -> str:
 def _tool_save_note(args):
     src = args.get("source-image", "")
     if src:
-        args = {**args, "source-image": _relocate_note_image(src)}
+        member = args.get("member", "") or args.get("--member", "")
+        args = {**args, "source-image": _relocate_note_image(src, member)}
     return _run_cli("note-add", args)
 def _tool_list_notes(args): return _run_cli("note-list", args)
 def _tool_search_notes(args): return _run_cli("note-search", args)
@@ -363,14 +370,15 @@ def _tool_calendar_status(args): return _run_cli("cal-status", args)
 
 def _tool_ocr_image(args):
     path = args.get("path", "")
-    # 安全：path 来自 LLM（间接来自用户消息），只允许票据目录内的文件，
-    # 防止把任意本地文件 base64 后发给腾讯云/DeepSeek（数据外泄）。
+    # 安全：path 来自 LLM（间接来自用户消息），只允许数据根 data/ 内的文件
+    # （票据/文档/成员 inbox/备忘图片皆在其下），防止把任意本地文件 base64 后
+    # 发给腾讯云/DeepSeek（数据外泄）。
     try:
         p = Path(path)
         resolved = (p if p.is_absolute() else ROOT / p).resolve()
-        allowed = (RECEIPTS_DIR.resolve(), DOCUMENTS_DIR.resolve())
-        if not any(resolved.is_relative_to(d) for d in allowed):
-            return f"[错误] 只允许识别票据/文档目录内的图片: {RECEIPTS_DIR} 或 {DOCUMENTS_DIR}"
+        allowed_root = _paths.data_root().resolve()
+        if not resolved.is_relative_to(allowed_root):
+            return f"[错误] 只允许识别数据目录内的图片: {allowed_root}"
     except (OSError, ValueError):
         return "[错误] 无效的图片路径"
     try:
@@ -702,16 +710,27 @@ def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
         return ""
 
 
-def _schedule_context(db_path: str | None = None, clip: int = 60,
-                      max_lines: int = 15) -> str:
-    """未来 N 天家庭日程 + 开放待办，拼成 system prompt 附加块（家庭共享，不分成员）。
+def _schedule_context(member: str | None = None, db_path: str | None = None,
+                      clip: int = 60, max_lines: int = 15) -> str:
+    """成员未来 N 天日程 + 待办，拼成 system prompt 附加块（按成员私有，分活动/待办两库）。
 
+    db_path 给定 → 直读该单库（测试/兼容）；否则按 member 读其 schedule + tasks 两库。
     进程内直调 cal_db（每条消息都要取，subprocess 太重）。
     任何失败返回空串 —— 日程注入绝不能拖垮 handle()。
     """
     try:
         import cal_db
-        rows = cal_db.list_upcoming(days=_CAL_LOOKAHEAD, db_path=db_path)
+        if db_path:
+            rows = cal_db.list_upcoming(days=_CAL_LOOKAHEAD, db_path=db_path)
+        elif member:
+            rows = []
+            for domain in ("schedule", "tasks"):
+                rows.extend(cal_db.list_upcoming(
+                    days=_CAL_LOOKAHEAD,
+                    db_path=str(_paths.member_store(member, domain))))
+            rows.sort(key=lambda r: (r["start_at"] == "", r["start_at"], r["id"]))
+        else:
+            return ""
         if not rows:
             return ""
         lines = []
@@ -725,7 +744,7 @@ def _schedule_context(db_path: str | None = None, clip: int = 60,
             else:
                 due = f"（截止 {r['start_at'][5:10]}）" if r["start_at"] else ""
                 lines.append(f"- ☐ {title}{due}")
-        return (f"\n\n## 未来{_CAL_LOOKAHEAD}天家庭日程与待办（已静默同步自远程日历；"
+        return (f"\n\n## 你未来{_CAL_LOOKAHEAD}天的日程与待办（按成员私有，已静默同步自你的远程日历；"
                 f"不要主动播报，仅在用户问到或相关时使用）\n" + "\n".join(lines))
     except Exception:
         _log.exception("日程上下文注入失败（已跳过）")
@@ -763,7 +782,7 @@ class Agent:
                        f"查询类工具可用 member 参数按成员过滤。")
         msgs = [{"role": "system",
                  "content": self.system_prompt + member_note
-                 + _notes_context(member) + _schedule_context()}]
+                 + _notes_context(member) + _schedule_context(member)}]
         user_history = self.history[user]
         msgs.extend(user_history[-self.history_size * 2:])
         msgs.append({"role": "user", "content": text})
