@@ -39,12 +39,14 @@
 | `backup-status [--member NAME]` | 全局 + 每成员状态：启用/配置/待同步/文件数/错误 | ✅ |
 | `backup-verify [--member NAME]` | 每成员清单 vs 云端一致性 | ✅ |
 | `backup-restore --member NAME [--force] [--provider P] [--prefix P] [--remote-root R] [--dir D]` | 新设备：从云端恢复某成员数据（仅本机） | ❌ 仅本机 |
+| `backup-reorg --member NAME` | 一次性：把云端平铺文件按 rel 归入镜像文件夹树（元数据移动，零重传），幂等 | ❌ 仅本机 |
 
 ```bash
 python .codewhale/skills/Remote_Backup/cli.py backup-status
 python .codewhale/skills/Remote_Backup/cli.py backup-status --member "Jim Zheng"
 python .codewhale/skills/Remote_Backup/cli.py backup-now
 python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "Jim Zheng" --prefix GDRIVE --remote-root FamilyAssistant
+python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Jim Zheng"
 ```
 
 ## 用户开启备份（当前 provider = Google Drive）
@@ -94,7 +96,7 @@ python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "Jim Zheng
 6. `backup-now` 首次全量上传，`backup-verify` 确认一致。
 
 权限范围 `drive.file`：本应用只能看到自己上传的文件，看不到 Drive 其他内容。
-云端布局：全部文件平铺在 `remote_root` 文件夹，相对路径存于 appProperties.rel。
+云端布局：远端以嵌套文件夹镜像本地目录树，文件按相对路径存放于 `remote_root` 下的逐级子文件夹中（不再平铺）。`appProperties.rel` 仍保存在每个文件上作为引擎的最终依据——查找/列出/删除/恢复均以此字段定位，即使文件被手动移入其他文件夹也不影响，镜像健壮。权限范围 `drive.file` 不变。
 
 **换云盘**：按 `backup_provider.py` 的 `GoogleDriveProvider` 类接口契约
 （`is_configured` / `upload` / `delete` / `list_remote` / `download`）实现新类并注册到
@@ -141,6 +143,13 @@ python .codewhale/skills/Agent_Runtime/migrate_backup.py
 
 迁移后 `backup-verify --member "Jim Zheng"` 确认一致、`backup-now --member "Jim Zheng"`
 报告全部跳过（0 上传），即表示迁移成功且零重传。
+
+> **文件夹镜像升级**：从旧版（平铺布局）升级到文件夹镜像版本后，已有云端数据需运行一次性重组，
+> 将平铺文件按 rel 归入嵌套文件夹树（元数据移动，零字节重传）。每个已有远端数据的成员运行一次：
+> ```bash
+> python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Jim Zheng"
+> ```
+> 命令幂等，第二次运行零移动。若成员尚无远端文件，跳过即可。
 
 ## 边界
 
