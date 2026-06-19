@@ -159,3 +159,44 @@ def test_sync_pref_absent_is_none(cfg_dirsync):
     assert mm.sync_pref("Wenliang Li", "schedule", cfg_dirsync) is None
     assert mm.sync_pref("Euphie", "tasks", cfg_dirsync) is None
     assert mm.sync_pref("New Person", "schedule", cfg_dirsync) is None
+
+
+def test_backup_pref_absent_is_none(tmp_path):
+    import members
+    mp = tmp_path / "members.json"
+    mp.write_text('{"Jim Zheng": {"dir": "Jim"}}', encoding="utf-8")
+    assert members.backup_pref("Jim Zheng", members_path=mp) is None
+
+
+def test_backup_pref_unknown_member_is_none(tmp_path):
+    import members
+    mp = tmp_path / "members.json"
+    mp.write_text('{}', encoding="utf-8")
+    assert members.backup_pref("Nobody", members_path=mp) is None
+
+
+def test_backup_pref_normalizes_and_defaults(tmp_path):
+    import members
+    mp = tmp_path / "members.json"
+    mp.write_text(json.dumps({"Jim Zheng": {"dir": "Jim", "backup": {
+        "provider": "google_drive", "enabled": True,
+        "scopes": ["Jim", "Family"]}}}), encoding="utf-8")
+    p = members.backup_pref("Jim Zheng", members_path=mp)
+    assert p["provider"] == "google_drive"
+    assert p["cred_prefix"] == "GDRIVE"          # default
+    assert p["remote_root"] == "Jim"             # default = dir name
+    assert p["enabled"] is True
+    assert p["scopes"] == ["Jim", "Family"]
+
+
+def test_backup_pref_explicit_prefix_and_root(tmp_path):
+    import members
+    mp = tmp_path / "members.json"
+    mp.write_text(json.dumps({"Wenliang Li": {"dir": "Wenliang", "backup": {
+        "provider": "google_drive", "cred_prefix": "WLI_GDRIVE",
+        "remote_root": "WenliangBackup", "enabled": False, "scopes": []}}}),
+        encoding="utf-8")
+    p = members.backup_pref("Wenliang Li", members_path=mp)
+    assert p["cred_prefix"] == "WLI_GDRIVE"
+    assert p["remote_root"] == "WenliangBackup"
+    assert p["enabled"] is False
