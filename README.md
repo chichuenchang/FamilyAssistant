@@ -146,9 +146,11 @@ setx GDRIVE_CLIENT_SECRET "xxx"
 #    丢了也没关系——数据还在云端，重新授权一次即可（开新终端让 setx 生效后）：
 python .codewhale/skills/Remote_Backup/backup_provider.py --auth   # 浏览器批准 → 按提示 setx GDRIVE_REFRESH_TOKEN
 
-# 3. 引导恢复：先恢复 Jim（members.json 存在 Jim 的备份里，故首次用显式参数、无需注册表）
-python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "Jim Zheng" --prefix GDRIVE --remote-root FamilyAssistant
-#    → 拉回 config.json + data/members.json + Jim 的全部数据
+# 3. 引导恢复：先恢复"持有注册表的主成员"——即备份 scope 含 members.json/config.json 的那个成员
+#    （members.json 在该成员的备份里，故首次用显式参数、无需本地注册表）。三处占位按实际替换：
+#      <主成员> = 成员名   <前缀> = 该成员 cred_prefix（默认 GDRIVE）   <根目录> = 该成员 remote_root
+python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "<主成员>" --prefix <前缀> --remote-root <根目录>
+#    → 拉回 config.json + data/members.json + 该成员的全部数据
 #    其他成员若各有备份：再 backup-restore --member "成员名"（此时注册表已恢复，正常模式）
 
 # 4. 重设其余凭据（都不在备份里）
@@ -163,7 +165,7 @@ setx GCAL_CALENDAR_ID "xxx"
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run     # 或 telegram_bot.py
 
 # 6. 确认备份续上（应报告全部一致、零重传）
-python .codewhale/skills/Remote_Backup/cli.py backup-verify --member "Jim Zheng"
+python .codewhale/skills/Remote_Backup/cli.py backup-verify --member "<主成员>"
 ```
 
 **唯一必须自己保管好的：Google 账号 + 那个 OAuth 客户端的 `CLIENT_ID` / `CLIENT_SECRET`。**
