@@ -898,6 +898,8 @@ class TestTick:
         monkeypatch.setattr(backup_sync, "sync", boom)
         later = datetime.now() + timedelta(seconds=120)
         assert backup_sync.backup_tick(now=later) is False
+        mst = backup_sync._load_json(root / "data" / "Jim" / ".backup_state.json")
+        assert "explode" in (mst.get("last_error") or "")
 
 
 class TestRestoreVerifyStatus:
