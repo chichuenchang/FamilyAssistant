@@ -118,6 +118,61 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 归档的文档到期前 Bot 会每天主动提醒（如 "租约 20 天后到期 — 提前60天通知房东"）。
 （可选）配置云盘备份后，所有数据自动镜像到你自己的网盘；换电脑 `backup-restore` 一键恢复。
 
+## 换新机 / 灾难恢复
+
+代码在 git，**家庭数据在你自己的云盘备份里**，凭据走环境变量（按设计不进备份、不进 git）。
+换机就三步：克隆代码 → 恢复数据 → 重设凭据。
+
+**恢复地图**
+
+| 东西 | 在哪 | 怎么回来 |
+|------|------|---------|
+| 代码 | git 仓库 | `git clone` |
+| 家庭数据（账本/票据/文档/备忘/日程/成员注册表） | 你的 Google Drive 备份 | `backup-restore` |
+| `config.json` | 随 git 克隆（也在备份里） | 自带 |
+| 凭据（GDRIVE_* / GCAL_* / 微信 / Telegram / OCR / DeepSeek） | **只在环境变量，不在备份** | 手动重设 / 重新授权 |
+
+**步骤**
+
+```bash
+# 1. 装 Python 3.10+ 与依赖，克隆代码
+pip install "weixin-ilink[qr]"
+git clone <你的仓库地址> && cd FamilyAssistant
+
+# 2. 设 Google Drive 凭据（恢复用）。CLIENT_ID/SECRET 来自 Google Cloud Console 的 OAuth 客户端
+setx GDRIVE_CLIENT_ID "xxx"
+setx GDRIVE_CLIENT_SECRET "xxx"
+#    refresh token 若已保存：setx GDRIVE_REFRESH_TOKEN "xxx"
+#    丢了也没关系——数据还在云端，重新授权一次即可（开新终端让 setx 生效后）：
+python .codewhale/skills/Remote_Backup/backup_provider.py --auth   # 浏览器批准 → 按提示 setx GDRIVE_REFRESH_TOKEN
+
+# 3. 引导恢复：先恢复 Jim（members.json 存在 Jim 的备份里，故首次用显式参数、无需注册表）
+python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "Jim Zheng" --prefix GDRIVE --remote-root FamilyAssistant
+#    → 拉回 config.json + data/members.json + Jim 的全部数据
+#    其他成员若各有备份：再 backup-restore --member "成员名"（此时注册表已恢复，正常模式）
+
+# 4. 重设其余凭据（都不在备份里）
+setx DEEPSEEK_API_KEY "sk-xxx"        # 必须
+setx GCAL_CLIENT_ID "xxx"             # 日历同步（可复用 Drive 的同一 OAuth 客户端）
+setx GCAL_CLIENT_SECRET "xxx"
+setx GCAL_CALENDAR_ID "xxx"
+#    GCAL refresh token 同样可 calendar_provider.py --auth 重授
+#    可选：setx TENCENT_SECRET_ID / TENCENT_SECRET_KEY（OCR）、setx TELEGRAM_BOT_TOKEN（Telegram）
+
+# 5. 启动 Bot；微信通道重新扫码登录（wechat_creds.json 自动重建，不从备份恢复）
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run     # 或 telegram_bot.py
+
+# 6. 确认备份续上（应报告全部一致、零重传）
+python .codewhale/skills/Remote_Backup/cli.py backup-verify --member "Jim Zheng"
+```
+
+**唯一必须自己保管好的：Google 账号 + 那个 OAuth 客户端的 `CLIENT_ID` / `CLIENT_SECRET`。**
+数据躺在该 Google 账号的云盘里；只要有 CLIENT_ID/SECRET，随时能 `--auth` 换一个新的 refresh token 再恢复。
+把这两个值（连同各 refresh token）存进**密码管理器**——它们按设计不进备份、不进 git、不进日志，丢了没有第二份。
+凭据不入备份是有意为之（见「安全设计」）：备份云盘一旦被盗，泄露的也只是数据、不含登录密钥。
+
+> 提示：Google OAuth 同意屏幕发布状态设为 **In production**，否则 refresh token 约 7 天过期（过期了 `--auth` 重授即可）。
+
 ## 目录结构
 
 ```
