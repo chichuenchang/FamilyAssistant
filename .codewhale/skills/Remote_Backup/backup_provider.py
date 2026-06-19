@@ -210,30 +210,6 @@ class GoogleDriveProvider:
         target.write_bytes(body)
 
 
-# ── 向后兼容垫片：默认实例（GDRIVE / FamilyAssistant）。Task 4 删除最后一个调用方后移除。
-_default = GoogleDriveProvider("GDRIVE", "FamilyAssistant")
-
-
-def is_configured() -> bool:
-    return _default.is_configured()
-
-
-def upload(local_path, remote_rel: str) -> None:
-    _default.upload(local_path, remote_rel)
-
-
-def delete(remote_rel: str) -> None:
-    _default.delete(remote_rel)
-
-
-def list_remote() -> dict:
-    return _default.list_remote()
-
-
-def download(remote_rel: str, local_path) -> None:
-    _default.download(remote_rel, local_path)
-
-
 # ── 一次性授权：python backup_provider.py --auth ────────────────
 # 本地回环 OAuth：起临时 http 服务接 code，浏览器里用户批准，换 refresh token。
 
@@ -320,5 +296,5 @@ if __name__ == "__main__":
         _run_auth(prefix)
     else:
         print(__doc__)
-        print(f"configured (GDRIVE): {is_configured()}")
+        print(f"configured (GDRIVE): {GoogleDriveProvider().is_configured()}")
         print("一次性授权：python backup_provider.py --auth [--prefix PREFIX]")

@@ -30,34 +30,31 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 sys.path.insert(0, str(HERE))
-import backup_provider as provider
+import backup_provider
 
-_FALLBACK_CFG = {
-    "enabled": False,
-    "debounce_seconds": 60,
-    "include": ["data", "config.json"],
-    "remote_root": "FamilyAssistant",
-}
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
+import members as _members
+
+_FALLBACK_CFG = {"enabled": False, "debounce_seconds": 60}
+
+
+def _cfg_path() -> Path:
+    return Path(os.environ.get("BACKUP_CONFIG") or (ROOT / "config.json"))
 
 
 def _load_cfg() -> dict:
-    # BACKUP_CONFIG 环境变量可指向替代 config.json（测试隔离用，不依赖真实配置）
-    cfg_path = Path(os.environ.get("BACKUP_CONFIG") or (ROOT / "config.json"))
     try:
-        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+        raw = json.loads(_cfg_path().read_text(encoding="utf-8"))
         cfg = raw.get("backup")
         if isinstance(cfg, dict):
-            return {**_FALLBACK_CFG, **cfg}
+            return {**_FALLBACK_CFG,
+                    **{k: cfg[k] for k in ("enabled", "debounce_seconds") if k in cfg}}
     except Exception:
         pass
     return dict(_FALLBACK_CFG)
 
 
 CFG = _load_cfg()
-
-
-def _cfg_path() -> Path:
-    return Path(os.environ.get("BACKUP_CONFIG") or (ROOT / "config.json"))
 
 
 def _data_dirname() -> str:
@@ -72,7 +69,6 @@ def _data_dirname() -> str:
 _DATA_DIRNAME = _data_dirname()
 
 _STATE_DIR = Path(os.environ.get("BACKUP_STATE_DIR") or (ROOT / "data"))
-MANIFEST_FILE = _STATE_DIR / ".backup_manifest.json"
 STATE_FILE = _STATE_DIR / ".backup_state.json"
 
 # 永不进备份的路径（即使用户把 data 整个加进 include）
@@ -140,6 +136,53 @@ def _member_files(scopes: list[str]) -> dict[str, Path]:
     return out
 
 
+_REGISTRY = {"google_drive": backup_provider.GoogleDriveProvider}
+
+
+def _make_provider(pref: dict):
+    cls = _REGISTRY.get(pref["provider"])
+    if cls is None:
+        raise RuntimeError(f"未知备份 provider: {pref['provider']}")
+    return cls(pref["cred_prefix"], pref["remote_root"])
+
+
+def _members_path():
+    """测试钩子：BACKUP_MEMBERS 指向替代 members.json，否则用 members 默认。"""
+    p = os.environ.get("BACKUP_MEMBERS")
+    return Path(p) if p else None
+
+
+def _backup_members() -> list[tuple[str, dict]]:
+    """有 backup 块的成员 [(name, pref)]；pref 富化 name + dir（成员目录名）。"""
+    mp = _members_path()
+    out: list[tuple[str, dict]] = []
+    for name in _members.member_names(mp):
+        pref = _members.backup_pref(name, mp)
+        if pref:
+            out.append((name, {**pref, "name": name,
+                               "dir": _members.member_dir_name(name, mp)}))
+    return out
+
+
+def _resolve(member: str) -> dict | None:
+    for name, pref in _backup_members():
+        if name == member:
+            return pref
+    return None
+
+
+def _member_state_dir(pref: dict) -> Path:
+    return ROOT / _DATA_DIRNAME / pref["dir"]
+
+
+def _member_manifest_file(pref: dict) -> Path:
+    return _member_state_dir(pref) / ".backup_manifest.json"
+
+
+def _member_state_file(pref: dict) -> Path:
+    return _member_state_dir(pref) / ".backup_state.json"
+
+
 def mark_dirty() -> None:
     """用户数据写入后调用。绝不抛异常——备份问题不能影响写入本身。"""
     try:
@@ -151,25 +194,6 @@ def mark_dirty() -> None:
         _save_json(STATE_FILE, st)
     except Exception:
         pass
-
-
-def _iter_local_files() -> dict[str, Path]:
-    """include 集合展开为 {rel(posix): 绝对路径}，应用硬排除。"""
-    out: dict[str, Path] = {}
-    for entry in CFG["include"]:
-        p = ROOT / entry
-        if p.is_file():
-            rel = p.relative_to(ROOT).as_posix()
-            if not _excluded(rel):
-                out[rel] = p
-        elif p.is_dir():
-            for f in sorted(p.rglob("*")):
-                if not f.is_file():
-                    continue
-                rel = f.relative_to(ROOT).as_posix()
-                if not _excluded(rel):
-                    out[rel] = f
-    return out
 
 
 def _sha256(path: Path) -> str:
@@ -201,22 +225,19 @@ def _snapshot_sqlite(path: Path) -> Path:
     return Path(tmp)
 
 
-def _provider_ready() -> bool:
-    try:
-        return bool(provider.is_configured())
-    except Exception:
-        return False
+def sync(member: str) -> dict:
+    """镜像一成员 scope 集合：上传 新/变更，删除 本地已无的远端项。
 
-
-def sync() -> dict:
-    """镜像一轮：上传 新/变更，删除 本地已不存在的远端项。
-
-    清单逐项落盘——中途崩溃只补剩余部分。
-    返回 {"uploaded": [...], "deleted": [...], "skipped": int, "errors": [...]}。
+    清单逐项落盘——中途崩溃只补剩余。返回结果含该成员维度与 clean_write。
     """
+    pref = _resolve(member)
+    if pref is None:
+        raise ValueError(f"成员 {member} 无 backup 配置")
+    prov = _make_provider(pref)
+    manifest_file = _member_manifest_file(pref)
     started_last_write = _load_json(STATE_FILE).get("last_write")
-    manifest = _load_json(MANIFEST_FILE)
-    local = _iter_local_files()
+    manifest = _load_json(manifest_file)
+    local = _member_files(pref["scopes"])
     uploaded: list[str] = []
     deleted: list[str] = []
     errors: list[str] = []
@@ -234,13 +255,11 @@ def sync() -> dict:
             if manifest.get(rel, {}).get("sha256") == digest:
                 skipped += 1
             else:
-                provider.upload(src, rel)
+                prov.upload(src, rel)
                 manifest[rel] = {"sha256": digest, "size": src.stat().st_size,
                                  "uploaded_at": _now_iso()}
-                _save_json(MANIFEST_FILE, manifest)
+                _save_json(manifest_file, manifest)
                 uploaded.append(rel)
-        except NotImplementedError:
-            raise
         except Exception as e:
             errors.append(f"{rel}: {e}")
         finally:
@@ -252,33 +271,28 @@ def sync() -> dict:
 
     for rel in [r for r in list(manifest) if r not in local]:
         try:
-            provider.delete(rel)
+            prov.delete(rel)
             del manifest[rel]
-            _save_json(MANIFEST_FILE, manifest)
+            _save_json(manifest_file, manifest)
             deleted.append(rel)
-        except NotImplementedError:
-            raise
         except Exception as e:
             errors.append(f"{rel}: {e}")
 
-    # 已知良性竞态：此处读-改-写之间若有并发 mark_dirty（其他进程），其脏标记
-    # 可能被覆盖——后果只是该次变更延迟到下一次写入才备份，不丢数据，不加锁。
-    st = _load_json(STATE_FILE)
-    st["last_sync"] = _now_iso()
-    if errors:
-        st["last_error"] = "; ".join(errors[:5])
-    else:
-        st["last_error"] = None
-        # 同步期间没有新写入才算干净（有新写入则保持脏，下一轮再跑）
-        if st.get("last_write") == started_last_write:
-            st["dirty_since"] = None
-    _save_json(STATE_FILE, st)
-    return {"uploaded": uploaded, "deleted": deleted,
-            "skipped": skipped, "errors": errors}
+    mst = _load_json(_member_state_file(pref))
+    mst["last_sync"] = _now_iso()
+    mst["last_error"] = "; ".join(errors[:5]) if errors else None
+    _save_json(_member_state_file(pref), mst)
+    return {"member": member, "uploaded": uploaded, "deleted": deleted,
+            "skipped": skipped, "errors": errors,
+            "clean_write": _load_json(STATE_FILE).get("last_write") == started_last_write}
 
 
 def backup_tick(now: datetime | None = None) -> bool:
-    """传输层轮询调用。条件满足则同步一轮，返回是否跑了 sync。永不抛异常。"""
+    """传输层轮询调用。脏 + 防抖到点则遍历成员各同步一轮。永不抛异常。
+
+    全局时钟（dirty_since/last_write）共享；仅当所有尝试过的成员都成功且期间无新写入
+    才清脏，否则保持脏，下轮重试（sha 闸门 → 不重复上传）。返回是否至少跑了一个成员。
+    """
     try:
         if not CFG["enabled"]:
             return False
@@ -291,10 +305,33 @@ def backup_tick(now: datetime | None = None) -> bool:
             elapsed = (now - datetime.fromisoformat(last_write)).total_seconds()
             if elapsed < CFG["debounce_seconds"]:
                 return False
-        if not _provider_ready():
-            return False
-        sync()
-        return True
+        ran = False
+        all_clean = True
+        for name, pref in _backup_members():
+            if not pref["enabled"]:
+                continue
+            try:
+                prov = _make_provider(pref)
+                if not prov.is_configured():
+                    continue                       # 未配置：不算失败，不阻塞清脏
+                res = sync(name)
+                ran = True
+                if res["errors"] or not res["clean_write"]:
+                    all_clean = False
+            except Exception as e:
+                all_clean = False
+                try:
+                    mst = _load_json(_member_state_file(pref))
+                    mst["last_error"] = str(e)
+                    _save_json(_member_state_file(pref), mst)
+                except Exception:
+                    pass
+        if ran and all_clean:
+            st = _load_json(STATE_FILE)
+            if st.get("last_write") == last_write:
+                st["dirty_since"] = None
+                _save_json(STATE_FILE, st)
+        return ran
     except Exception as e:
         try:
             st = _load_json(STATE_FILE)
@@ -305,47 +342,55 @@ def backup_tick(now: datetime | None = None) -> bool:
         return False
 
 
-def restore(force: bool = False) -> dict:
-    """新设备引导：从云端拉回全部文件并重建清单。
+def restore(member: str, force: bool = False, override: dict | None = None) -> dict:
+    """从某成员的云端拉回其文件并重建该成员清单。
 
-    本地已有用户数据时拒绝（除非 force）——多半是跑错机器了。
+    override（dict: provider/cred_prefix/remote_root/scopes/dir）用于新设备引导：
+    members.json 尚未恢复、成员无 backup 块时，由 CLI 旗标提供 provider 配置。
     """
-    if not _provider_ready():
-        raise ValueError("backup_provider 未实现/未配置，无法恢复。见 SKILL.md 设置指南。")
+    pref = _resolve(member) or override
+    if pref is None:
+        raise ValueError(f"成员 {member} 无 backup 配置，且未提供 override（--prefix/--remote-root）。")
+    if "dir" not in pref:
+        pref = {**pref, "dir": _members.member_dir_name(member, _members_path())}
+    prov = _make_provider(pref)
+    if not prov.is_configured():
+        raise ValueError("provider 未配置（检查环境变量），无法恢复。")
     if not force:
-        existing = [rel for rel in _iter_local_files()
+        existing = [rel for rel in _member_files(pref.get("scopes") or [])
                     if rel != "config.json"]
         if existing:
             raise ValueError(
-                f"本地已有 {len(existing)} 个用户数据文件（如 {existing[0]}）。"
-                f"确认要覆盖请加 --force。")
-    remote = provider.list_remote()
+                f"本地已有 {len(existing)} 个文件（如 {existing[0]}）。确认覆盖请加 --force。")
+    remote = prov.list_remote()
     manifest: dict = {}
     downloaded: list[str] = []
     for rel in sorted(remote):
         if _excluded(rel):
             continue
         target = ROOT / rel
-        provider.download(rel, target)
+        prov.download(rel, target)
         manifest[rel] = {"sha256": _sha256(target), "size": target.stat().st_size,
                          "uploaded_at": _now_iso()}
         downloaded.append(rel)
-    _save_json(MANIFEST_FILE, manifest)
-    st = _load_json(STATE_FILE)
-    st["last_sync"] = _now_iso()
-    st["dirty_since"] = None
-    st["last_error"] = None
-    _save_json(STATE_FILE, st)
-    return {"downloaded": downloaded}
+    _save_json(_member_manifest_file(pref), manifest)
+    mst = _load_json(_member_state_file(pref))
+    mst["last_sync"] = _now_iso()
+    mst["last_error"] = None
+    _save_json(_member_state_file(pref), mst)
+    return {"member": member, "downloaded": downloaded}
 
 
-def verify() -> dict:
-    """清单 vs 云端列表：{"ok": [...], "missing_remote": [...], "extra_remote": [...],
-    "size_mismatch": [...]}。"""
-    if not _provider_ready():
-        raise ValueError("backup_provider 未实现/未配置，无法校验。")
-    manifest = _load_json(MANIFEST_FILE)
-    remote = provider.list_remote()
+def verify(member: str) -> dict:
+    """某成员清单 vs 其云端列表。"""
+    pref = _resolve(member)
+    if pref is None:
+        raise ValueError(f"成员 {member} 无 backup 配置")
+    prov = _make_provider(pref)
+    if not prov.is_configured():
+        raise ValueError("provider 未配置，无法校验。")
+    manifest = _load_json(_member_manifest_file(pref))
+    remote = prov.list_remote()
     ok, missing, mismatch = [], [], []
     for rel, meta in manifest.items():
         if rel not in remote:
@@ -355,18 +400,33 @@ def verify() -> dict:
         else:
             ok.append(rel)
     extra = [r for r in remote if r not in manifest]
-    return {"ok": ok, "missing_remote": missing,
+    return {"member": member, "ok": ok, "missing_remote": missing,
             "extra_remote": extra, "size_mismatch": mismatch}
 
 
-def status() -> dict:
-    st = _load_json(STATE_FILE)
-    return {
-        "enabled": bool(CFG["enabled"]),
-        "configured": _provider_ready(),
-        "dirty_since": st.get("dirty_since"),
-        "last_write": st.get("last_write"),
-        "last_sync": st.get("last_sync"),
-        "last_error": st.get("last_error"),
-        "files_tracked": len(_load_json(MANIFEST_FILE)),
-    }
+def status(member: str | None = None) -> dict:
+    """全局时钟 + 每成员一行（启用/配置/provider/last_sync/last_error/已跟踪文件数）。"""
+    clock = _load_json(STATE_FILE)
+    rows = []
+    for name, pref in _backup_members():
+        if member and name != member:
+            continue
+        try:
+            configured = _make_provider(pref).is_configured()
+        except Exception:
+            configured = False
+        mst = _load_json(_member_state_file(pref))
+        rows.append({
+            "member": name,
+            "enabled": pref["enabled"],
+            "configured": configured,
+            "provider": pref["provider"],
+            "remote_root": pref["remote_root"],
+            "last_sync": mst.get("last_sync"),
+            "last_error": mst.get("last_error"),
+            "files_tracked": len(_load_json(_member_manifest_file(pref))),
+        })
+    return {"enabled": bool(CFG["enabled"]),
+            "dirty_since": clock.get("dirty_since"),
+            "last_write": clock.get("last_write"),
+            "members": rows}
