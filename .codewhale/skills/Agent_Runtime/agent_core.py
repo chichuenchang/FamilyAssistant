@@ -214,6 +214,9 @@ def _build_system_prompt() -> str:
   无重复 → 正常添加。报告里点明每条的处理（已加/已跳过重复/已替换），让用户能纠正或补特殊要求。
 - 用户说"安排/约了/X号要做Y/加个日程/活动"→ add_event（活动必须有日期；有具体时间则给 start/end）
 - 用户说"要做X/记个待办/任务"→ add_task（有截止日给 due）
+- **归属默认发送者**：活动/待办默认进**你（当前成员）**的日历/待办，即使内容关于别的家庭成员
+  （如你发 Euphie 的活动，默认进你的日历）；从图片建的，原始图也存你名下。仅当用户**明确**说
+  "加到 X 的日历/记到 X 的待办"时，才用 for-member 路由到该成员。备忘不跨成员（按成员私有）。
 - 用户问"接下来有什么安排/这周有什么事/我的待办"→ 按上下文回答或调 list_schedule
 - 用户说"做完了/办完了"→ complete_task；"取消/不去了"→ remove_schedule_item
 - 用户说"刷新日历/同步日历"→ sync_calendar；问同步状态 → calendar_status
@@ -354,11 +357,26 @@ def _tool_delete_note(args): return _run_cli("note-delete", args)
 def _tool_pin_note(args): return _run_cli("note-pin", args)
 
 
+def _target_member(args: dict, sender: str) -> str:
+    """日程/待办的目标成员：显式 for-member（须已登记）覆盖，否则归发送者。
+
+    默认归发送者（即使内容关于别人），仅当用户明确指定别的成员时路由过去；
+    未登记的 for-member 退回发送者（不凭空建目录）。备忘不走此路（按成员私有）。
+    """
+    target = (args.pop("for-member", "") or "").strip() or sender
+    if target != sender and target not in _members_registry.member_names():
+        return sender
+    return target
+
+
 def _tool_add_event(args):
     args = dict(args)
+    sender = args.get("member", "")
+    target = _target_member(args, sender)
     src = args.get("source-image", "")
-    if src:
-        args["source-image"] = _relocate_image(src, args.get("member", ""), "schedule")
+    if src:                                   # 原始图始终归发送者名下
+        args["source-image"] = _relocate_image(src, sender, "schedule")
+    args["member"] = target                   # 活动入目标成员日历
     return _run_cli("cal-add", {**args, "kind": "event"})
 
 
@@ -368,9 +386,12 @@ def _tool_add_task(args):
     due = args.pop("due", "")
     if due:
         args["date"] = due
+    sender = args.get("member", "")
+    target = _target_member(args, sender)
     src = args.get("source-image", "")
     if src:
-        args["source-image"] = _relocate_image(src, args.get("member", ""), "tasks")
+        args["source-image"] = _relocate_image(src, sender, "tasks")
+    args["member"] = target
     return _run_cli("cal-add", {**args, "kind": "task"})
 
 
@@ -672,6 +693,8 @@ TOOL_SCHEMAS = [
         "notes": _s("备注"),
         "source-image": _s("从图片（邀请函/海报/截图）建活动时，传那张已保存图片的路径，"
                            "留存原始材料；纯文字建活动不填"),
+        "for-member": _s("默认归你（当前成员）自己的日历，即使活动关于别人也是。仅当用户"
+                         "明确说\"加到 X 的日历\"时，传该家庭成员名；否则不填"),
     }, ["title", "date"]),
     _fn("add_task", "添加待办/任务（自动同步到远程待办清单）", {
         "title": _s("待办内容，如 买生日蛋糕"),
@@ -679,6 +702,8 @@ TOOL_SCHEMAS = [
         "notes": _s("备注"),
         "source-image": _s("从图片（账单/发票/截图）建待办时，传那张已保存图片的路径，"
                            "留存原始材料；纯文字建待办不填"),
+        "for-member": _s("默认归你自己的待办清单。仅当用户明确说\"记到 X 的待办\"时，"
+                         "传该家庭成员名；否则不填"),
     }, ["title"]),
     _fn("list_schedule", "查询未来日程与开放待办（用户问\"接下来有什么安排\"\"待办清单\"）", {
         "days": _int(f"窗口天数（默认 {_CAL_LOOKAHEAD}）"),
@@ -867,7 +892,9 @@ class Agent:
                     f"ocr-text 传 OCR 全文。\n"
                     f"4) 邀请函/活动海报/预约/带日期时间的安排 → add_event（有日期；有具体时间给 start/end，"
                     f"location 给地点）；账单/发票/催款等需要跟进办理的 → add_task（截止日给 due）。"
-                    f"两者都把上面的保存路径传给 source-image，留存原始材料图（日后可定期清理）。\n"
+                    f"两者都把上面的保存路径传给 source-image，留存原始材料图（日后可定期清理）。"
+                    f"默认进你（发送者）的日历/待办，即使活动关于别的成员；仅用户明确说加到某成员时"
+                    f"才传 for-member。\n"
                     f"5) 其他有信息价值的图片（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
                     f"content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
                     f"source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。\n"

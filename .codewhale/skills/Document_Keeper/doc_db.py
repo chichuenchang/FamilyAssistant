@@ -15,9 +15,28 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 doc_models
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))  # paths
 from doc_models import (
     SCHEMA, DOC_TYPES, DOC_STATUSES, REMINDER_LEAD_DAYS, DB_PATH,
 )
+import paths as _paths
+
+_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _abs_file(file_path: str) -> Path:
+    """文档文件绝对路径：新约定按 data_root 相对（Family/documents/..）解析，
+    回退项目根相对（旧库里的路径），最后回退 data_root 形式。"""
+    p = Path(file_path)
+    if p.is_absolute():
+        return p
+    cand = _paths.resolve_rel(file_path)       # data_root/<file_path>
+    if cand.exists():
+        return cand
+    legacy = _ROOT / file_path                  # 旧：项目根相对
+    if legacy.exists():
+        return legacy
+    return cand
 
 # 可经 update_document 修改的列（id / created_at / data / acknowledged 除外；
 # acknowledged 由 ack_document 与到期日变更逻辑管理）
@@ -137,9 +156,7 @@ def add_document(
     payload = dict(data or {})
     file_sha = ""
     if file_path:
-        root = Path(__file__).resolve().parents[3]
-        p = Path(file_path)
-        abs_p = p if p.is_absolute() else root / p
+        abs_p = _abs_file(file_path)
         if abs_p.exists():
             file_sha = file_sha256(str(abs_p))
             payload["file_sha256"] = file_sha
@@ -270,11 +287,8 @@ def remove_document(
     conn.commit()
     conn.close()
     if delete_file and doc["file_path"]:
-        root = Path(__file__).resolve().parents[3]
-        p = Path(doc["file_path"])
-        abs_p = p if p.is_absolute() else root / p
         try:
-            abs_p.unlink(missing_ok=True)
+            _abs_file(doc["file_path"]).unlink(missing_ok=True)
         except OSError:
             pass
     return True

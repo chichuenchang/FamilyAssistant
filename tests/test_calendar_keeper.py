@@ -726,6 +726,72 @@ class TestSourceImageRelocate:
         assert paths.resolve_rel(si).exists()
 
 
+class TestForMemberRouting:
+    """默认归发送者；显式 for-member 把活动/待办路由到目标成员日历，图片仍存发送者名下。
+
+    依赖真实 members.json（Jim Zheng→dir Jim, Euphie→dir Euphie）。
+    """
+
+    def _rows(self, member, domain):
+        import paths
+        db = str(paths.member_store(member, domain))
+        if not Path(db).exists():
+            return []
+        return cal_db.list_upcoming(days=3650, today=date.today(),
+                                    include_closed=True, db_path=db)
+
+    def test_event_defaults_to_sender(self, tmp_path, monkeypatch):
+        import agent_core
+        import paths as _p
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        monkeypatch.delenv("CAL_DB_PATH", raising=False)
+        img = _p.member_inbox_dir("Jim Zheng") / "a.jpg"; img.write_bytes(b"x")
+        out = agent_core._tool_add_event(
+            {"member": "Jim Zheng", "title": "关于Euphie的活动", "date": D1,
+             "source-image": str(img)})
+        assert "已添加" in out
+        jim = self._rows("Jim Zheng", "schedule")
+        assert len(jim) == 1 and jim[0]["member"] == "Jim Zheng"
+        assert jim[0]["source_image"].startswith("Jim/schedule/")
+        assert self._rows("Euphie", "schedule") == []        # 未碰 Euphie 日历
+
+    def test_event_for_member_routes_to_target_image_stays_sender(self, tmp_path, monkeypatch):
+        import agent_core
+        import paths as _p
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        monkeypatch.delenv("CAL_DB_PATH", raising=False)
+        img = _p.member_inbox_dir("Jim Zheng") / "b.jpg"; img.write_bytes(b"x")
+        out = agent_core._tool_add_event(
+            {"member": "Jim Zheng", "for-member": "Euphie", "title": "Euphie recital",
+             "date": D1, "source-image": str(img)})
+        assert "已添加" in out
+        eu = self._rows("Euphie", "schedule")
+        assert len(eu) == 1 and eu[0]["member"] == "Euphie"   # 路由到 Euphie 日历
+        assert eu[0]["source_image"].startswith("Jim/schedule/")  # 图片归发送者 Jim
+        assert _p.resolve_rel(eu[0]["source_image"]).exists()
+        assert self._rows("Jim Zheng", "schedule") == []      # Jim 日历无该活动
+
+    def test_task_for_member_routes_to_target(self, tmp_path, monkeypatch):
+        import agent_core
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        monkeypatch.delenv("CAL_DB_PATH", raising=False)
+        out = agent_core._tool_add_task(
+            {"member": "Jim Zheng", "for-member": "Euphie", "title": "Euphie homework"})
+        assert "已添加" in out
+        assert len(self._rows("Euphie", "tasks")) == 1
+        assert self._rows("Jim Zheng", "tasks") == []
+
+    def test_for_member_unregistered_falls_back_to_sender(self, tmp_path, monkeypatch):
+        import agent_core
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        monkeypatch.delenv("CAL_DB_PATH", raising=False)
+        out = agent_core._tool_add_event(
+            {"member": "Jim Zheng", "for-member": "Stranger", "title": "X", "date": D1})
+        assert "已添加" in out
+        jim = self._rows("Jim Zheng", "schedule")
+        assert len(jim) == 1 and jim[0]["member"] == "Jim Zheng"  # 退回发送者
+
+
 def _cli_member(args, data_root, tmp):
     """无 CAL_DB_PATH 覆盖：按成员路由到 data/<dir>/{schedule,tasks}/*.db。"""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GCAL_")}

@@ -34,6 +34,21 @@ doc_cli = _ilu_doc.module_from_spec(_dspec)
 _dspec.loader.exec_module(doc_cli)
 
 
+def test_remove_deletes_data_root_relative_file(doc_db_path, tmp_path, monkeypatch):
+    """delete_file 按 data_root 相对解析并删除文件（防回归：旧代码按项目根解析会漏删）。"""
+    import paths
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+    rel = "Family/documents/other/x.jpg"
+    f = paths.resolve_rel(rel)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_bytes(b"img")
+    did, _dup = doc_db.add_document(doc_type="other", title="t", file_path=rel,
+                                    db_path=doc_db_path)
+    assert f.exists()
+    assert doc_db.remove_document(did, delete_file=True, db_path=doc_db_path) is True
+    assert not f.exists()
+
+
 def test_store_file_returns_family_rel(tmp_path, monkeypatch):
     """A stored document path is recorded relative to data_root (Family/documents/...)."""
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
