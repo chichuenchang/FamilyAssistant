@@ -113,6 +113,24 @@ def cmd_restore(args):
     print(f"[{args.member}] 恢复完成：{len(r['downloaded'])} 个文件。")
 
 
+def cmd_reorg(args):
+    if not args.member:
+        raise ValueError("backup-reorg 需要 --member NAME。")
+    pref = backup_sync._resolve(args.member)
+    if pref is None:
+        raise ValueError(f"成员 {args.member} 无 backup 配置。")
+    prov = backup_sync._make_provider(pref)
+    if not prov.is_configured():
+        raise ValueError("provider 未配置，无法重组。")
+    if not hasattr(prov, "reorganize"):
+        print(f"provider {pref['provider']} 不支持重组（无需操作）。")
+        return
+    r = prov.reorganize()
+    for rel in r["moved"]:
+        print(f"⇄ {rel}")
+    print(f"[{args.member}] 重组完成：移动 {len(r['moved'])}，已就位 {r['skipped']}。")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Family Assistant — Remote Backup CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -131,9 +149,14 @@ def main():
     p.add_argument("--remote-root", dest="remote_root", help="引导恢复：云端根目录名")
     p.add_argument("--dir", help="引导恢复：成员磁盘目录名（缺省取成员名）")
 
+    pr = sub.add_parser("backup-reorg",
+                        help="一次性：把云端平铺文件归入镜像文件夹树（仅本机）")
+    pr.add_argument("--member", help="目标成员")
+
     args = parser.parse_args()
     dispatch = {"backup-now": cmd_now, "backup-status": cmd_status,
-                "backup-verify": cmd_verify, "backup-restore": cmd_restore}
+                "backup-verify": cmd_verify, "backup-restore": cmd_restore,
+                "backup-reorg": cmd_reorg}
     try:
         dispatch[args.command](args)
     except ValueError as e:

@@ -662,3 +662,33 @@ class TestScopeResolver:
 
     def test_member_files_missing_token_is_silent(self, sr):
         assert backup_sync._member_files(["Ghost"]) == {}
+
+
+def test_cmd_reorg_invokes_provider(monkeypatch, capsys):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_rb_cli", _CLI)
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    class P:
+        def is_configured(self):
+            return True
+        def reorganize(self):
+            return {"moved": ["data/Jim/x.jpg"], "skipped": 2}
+    monkeypatch.setattr(cli.backup_sync, "_resolve",
+                        lambda m: {"provider": "google_drive", "name": m})
+    monkeypatch.setattr(cli.backup_sync, "_make_provider", lambda p: P())
+
+    class Args:
+        member = "Jim Zheng"
+    cli.cmd_reorg(Args())
+    out = capsys.readouterr().out
+    assert "data/Jim/x.jpg" in out
+    assert "移动 1" in out and "已就位 2" in out
+
+
+class TestReorgCli:
+    def test_reorg_requires_member(self, tmp_path):
+        r = _run_cli("backup-reorg", env_extra=_enabled_member_env(tmp_path))
+        assert r.returncode == 1
+        assert "member" in r.stderr.lower() or "成员" in r.stderr

@@ -426,7 +426,12 @@ Add to `tests/test_remote_backup.py`. The first is in-process (imports `cli`, mo
 
 ```python
 def test_cmd_reorg_invokes_provider(monkeypatch, capsys):
-    import cli
+    # 多个 skill 都有 cli.py，`import cli` 会撞名 → 按路径加载 Remote_Backup 的那个
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_rb_cli", _CLI)
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
     class P:
         def is_configured(self):
             return True
