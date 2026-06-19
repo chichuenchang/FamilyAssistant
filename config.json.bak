@@ -53,7 +53,12 @@
   },
   "backup": {
     "enabled": true,
-    "debounce_seconds": 60
+    "debounce_seconds": 60,
+    "include": [
+      "data",
+      "config.json"
+    ],
+    "remote_root": "FamilyAssistant"
   },
   "wechat": {
     "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。",
