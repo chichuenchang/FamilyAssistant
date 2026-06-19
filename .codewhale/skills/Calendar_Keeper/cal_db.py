@@ -1,10 +1,11 @@
 """
 Family Assistant — Calendar Keeper 数据库操作层
 
-家庭日程（events/activities）与待办（tasks）的 SQLite CRUD。
-表建在共享账本库 data/ledger.db（DB_PATH 来自 config.json db_path）。
+日程（events/activities）与待办（tasks）的 SQLite CRUD。
+按成员 + 类型分库：活动 data/<成员>/schedule/schedule.db，待办 .../tasks/tasks.db
+（路径经 Agent_Runtime/paths.member_store；CLI 据 --member + --kind 解析，db_path 参数注入）。
 
-与备忘不同：日程是家庭共享的（member 只记录创建者归属，不做可见性隔离）。
+日程按成员私有（每成员独立 schedule/tasks 库，只见自己的）；member 记录归属。
 远程日历是日程数据的事实源，本表是缓存 + 离线缓冲：
     synced=0  本地有改动待推送（新建/完成/取消）
     synced=1  与远端一致；拉取时远端字段直接覆盖（remote wins）
@@ -31,7 +32,8 @@ def _load_config() -> dict:
 
 _cfg = _load_config()
 _ROOT = _CONFIG_PATH.parent
-DB_PATH = _ROOT / (_cfg.get("db_path") or "data/ledger.db")
+# 旧单库默认：仅未传 db_path 时的兜底；运行时一律按成员分库经 paths 注入 db_path。
+DB_PATH = _ROOT / "data" / "ledger.db"
 
 KINDS = ("event", "task")
 STATUSES = ("active", "done", "cancelled")

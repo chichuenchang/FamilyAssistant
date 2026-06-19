@@ -35,7 +35,7 @@ import backup_provider as provider
 _FALLBACK_CFG = {
     "enabled": False,
     "debounce_seconds": 60,
-    "include": ["data/ledger.db", "receipts", "documents", "config.json"],
+    "include": ["data", "config.json"],
     "remote_root": "FamilyAssistant",
 }
 

@@ -10,7 +10,7 @@
 .codewhale/skills/Document_Keeper/
 ├── SKILL.md       ← 本文件
 ├── doc_models.py  ← 数据模型 / SCHEMA / 文档类型（读 config.json）
-├── doc_db.py      ← SQLite CRUD & 到期查询（documents 表，建在共享 data/ledger.db）
+├── doc_db.py      ← SQLite CRUD & 到期查询（documents 表，建在 data/Family/ledger.db）
 ├── cli.py         ← 命令行入口（user / agent / 任意调用方）
 └── reminder.py    ← 每日到期提醒（传输层轮询时调用，按频道按日去重）
 ```

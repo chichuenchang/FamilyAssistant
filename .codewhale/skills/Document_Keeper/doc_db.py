@@ -2,7 +2,7 @@
 Family Assistant — Document Keeper 数据库操作层
 
 documents 表的 SQLite CRUD 和到期查询。Agent / CLI / reminder 统一走这个模块。
-表建在共享账本库 data/ledger.db（DB_PATH 来自 config.json db_path，经 doc_models）。
+表建在家庭账本 data/Family/ledger.db（DB_PATH 经 doc_models → paths.family_ledger()）。
 """
 
 import hashlib

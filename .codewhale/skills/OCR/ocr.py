@@ -10,11 +10,11 @@ OCR 模块 — 腾讯云 OCR 文字识别封装。
 
 用法:
     from ocr import ocr_image   # 调用方需把本 skill 目录加入 sys.path
-    text = ocr_image("receipts/2026-06/photo.jpg")
+    text = ocr_image("data/Family/receipts/2026-06/photo.jpg")
     print(text)  # → "午餐 45元 2026-06-01"
 
     from ocr import ocr_extract
-    info = ocr_extract("receipts/2026-06/photo.jpg")
+    info = ocr_extract("data/Family/receipts/2026-06/photo.jpg")
     # → {"currency": "CAD", "transactions": [{"amount": 45.0,
     #     "date": "2026-06-01", "category": "餐饮", "desc": "麦当劳"}, ...]}
     print(info)

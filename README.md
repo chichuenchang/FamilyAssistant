@@ -15,10 +15,10 @@
 
 ### 🧾 票据 OCR
 - 发票/小票照片 → 腾讯云 OCR 文字识别（1000 次/月免费）→ DeepSeek 结构化提取（金额/日期/分类/描述）→ 自动记账
-- 原始票据按月存档 `receipts/YYYY-MM/`，与账目记录关联
+- 原始票据按月存档 `data/Family/receipts/YYYY-MM/`，与账目记录关联（行内 `receipt_path` 记 data 相对路径）
 
 ### 📁 家庭文档管理（Document Keeper）
-- 重要文档归档：租约、保险单、证件、健康卡等，原件存 `documents/<类型>/`
+- 重要文档归档：租约、保险单、证件、健康卡等，原件存 `data/Family/documents/<类型>/`
 - OCR 全文索引，关键词检索（"我们有哪些保险"）
 - **到期跟踪 + 每日主动提醒**：到期前 Bot 每天推送（如 "租约 20 天后到期 — 提前60天通知房东"），`doc-ack` 确认后不再重复
 - 重复检测（证件编号 / 文件哈希）
@@ -56,9 +56,9 @@
 
 ### 🔒 安全设计
 - Agent 只能调 `config.json` 白名单内的 CLI 命令；成员/文档删除等敏感命令仅限本机
-- OCR 路径限制在票据目录内，防文件外泄；所有凭据走环境变量或本地加密存储，永不入库
-- **隐私分层**：git 跟踪的文件（代码 + `config.json`）不含任何个人数据；隐私数据（成员注册表/账本/票据/文档）
-  全部在 git 忽略路径（`data/` `receipts/` `documents/`），只存本机 + 你自己的云盘镜像
+- OCR 路径限制在数据目录 `data/` 内，防文件外泄；所有凭据走环境变量或本地加密存储，永不入库
+- **隐私分层**：git 跟踪的文件（代码 + `config.json`）不含任何个人数据；隐私数据（成员注册表/账本/票据/文档/备忘/日程）
+  全部在 git 忽略路径 `data/`（家庭共享 `data/Family/` + 成员私有 `data/<成员>/`），只存本机 + 你自己的云盘镜像
 
 ## 快速开始
 
@@ -160,9 +160,10 @@ FamilyAssistant/
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）
-├── data/                 ← SQLite + 凭据 + 成员注册表 members.json（均 git 不跟踪）
-├── receipts/             ← 票据存档（按月子目录）
-├── documents/            ← 家庭文档存档（按类型子目录）
+├── data/                 ← 全部用户数据（git 不跟踪）
+│   ├── Family/           ← 家庭共享：ledger.db、receipts/、documents/
+│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/
+│   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档
 └── requirements-dev.txt  ← 开发依赖（pytest）
