@@ -483,3 +483,50 @@ class TestAgentIntegration:
             assert name in agent_core._TOOL_MAP
         schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
         assert "backup_status" in schema_names
+
+
+class TestScopeResolver:
+    @pytest.fixture
+    def sr(self, tmp_path, monkeypatch):
+        root = tmp_path / "root"
+        (root / "data").mkdir(parents=True)
+        monkeypatch.setattr(backup_sync, "ROOT", root)
+        monkeypatch.setattr(backup_sync, "_DATA_DIRNAME", "data")
+        return root
+
+    def test_scope_to_prefix(self, sr):
+        assert backup_sync._scope_to_prefix("config.json") == "config.json"
+        assert backup_sync._scope_to_prefix("Jim") == "data/Jim"
+        assert backup_sync._scope_to_prefix("Family/documents") == "data/Family/documents"
+
+    def test_member_files_prefix_boundary(self, sr):
+        root = sr
+        (root / "data" / "Jim" / "notes").mkdir(parents=True)
+        (root / "data" / "Jim" / "notes" / "n.db").write_bytes(b"x")
+        (root / "data" / "Jimbo").mkdir()
+        (root / "data" / "Jimbo" / "y.txt").write_text("y")
+        files = backup_sync._member_files(["Jim"])
+        assert "data/Jim/notes/n.db" in files
+        assert not any("Jimbo" in f for f in files)   # 前缀不跨目录边界
+
+    def test_member_files_config_and_members_aliases(self, sr):
+        root = sr
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        (root / "data" / "members.json").write_text("{}", encoding="utf-8")
+        files = backup_sync._member_files(["members.json", "config.json"])
+        assert "config.json" in files
+        assert "data/members.json" in files
+
+    def test_member_files_applies_hard_excludes(self, sr):
+        root = sr
+        (root / "data" / "Jim").mkdir(parents=True)
+        (root / "data" / "Jim" / "notes.db").write_bytes(b"")
+        (root / "data" / "Jim" / ".backup_manifest.json").write_text("{}")
+        (root / "data" / "Jim" / "wechat_creds.json").write_text("secret")
+        files = backup_sync._member_files(["Jim"])
+        assert "data/Jim/notes.db" in files
+        assert not any("creds" in f for f in files)
+        assert "data/Jim/.backup_manifest.json" not in files
+
+    def test_member_files_missing_token_is_silent(self, sr):
+        assert backup_sync._member_files(["Ghost"]) == {}

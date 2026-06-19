@@ -55,6 +55,22 @@ def _load_cfg() -> dict:
 
 CFG = _load_cfg()
 
+
+def _cfg_path() -> Path:
+    return Path(os.environ.get("BACKUP_CONFIG") or (ROOT / "config.json"))
+
+
+def _data_dirname() -> str:
+    """data_root 目录名（config.data_root，缺省 data）。备份 rel 的 <data>/ 段。"""
+    try:
+        raw = json.loads(_cfg_path().read_text(encoding="utf-8"))
+        return raw.get("data_root") or "data"
+    except Exception:
+        return "data"
+
+
+_DATA_DIRNAME = _data_dirname()
+
 _STATE_DIR = Path(os.environ.get("BACKUP_STATE_DIR") or (ROOT / "data"))
 MANIFEST_FILE = _STATE_DIR / ".backup_manifest.json"
 STATE_FILE = _STATE_DIR / ".backup_state.json"
@@ -89,6 +105,39 @@ def _excluded(rel: str) -> bool:
     if "creds" in name:
         return True
     return False
+
+
+def _scope_to_prefix(token: str) -> str:
+    """scope token → ROOT 相对前缀（posix）。
+
+    config.json 是 data_root 外唯一备份文件，识别为别名；其余一律 data_root 相对。
+    """
+    if token == "config.json":
+        return "config.json"
+    return f"{_DATA_DIRNAME}/{token}"
+
+
+def _member_files(scopes: list[str]) -> dict[str, Path]:
+    """成员 scope 集合 → {rel(posix): 绝对路径}，应用硬排除。
+
+    token 指向文件则收该文件；指向目录则递归；不存在则静默跳过（migrate 前的空目录）。
+    前缀按目录边界匹配（rglob 天然如此），不会把 data/Jimbo 当成 data/Jim。
+    """
+    out: dict[str, Path] = {}
+    for token in scopes:
+        p = ROOT / _scope_to_prefix(token)
+        if p.is_file():
+            rel = p.relative_to(ROOT).as_posix()
+            if not _excluded(rel):
+                out[rel] = p
+        elif p.is_dir():
+            for f in sorted(p.rglob("*")):
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(ROOT).as_posix()
+                if not _excluded(rel):
+                    out[rel] = f
+    return out
 
 
 def mark_dirty() -> None:
