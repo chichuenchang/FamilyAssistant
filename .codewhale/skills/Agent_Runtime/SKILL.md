@@ -99,7 +99,7 @@ if __name__ == "__main__":
 ## 安全
 
 - **命令白名单**：来自 `config.json` 的 `wechat.allowed_commands`（`agent_core.ALLOWED_COMMANDS` 读取，config 缺失才回退内置集）。Agent 只能调白名单内的 CLI 子命令，其余一律拒绝。增删命令改 `config.json` 即可。
-- **票据目录**：`agent_core.RECEIPTS_DIR` 来自 `config.json` `receipts_dir`，不在代码里硬编码。
+- **磁盘布局**：所有数据落盘位置经 `Agent_Runtime/paths.py`（单一事实来源）。`config.json` `data_root`(默认 data)+`family_dir_name`(默认 Family) 定根。家庭共享在 `data/Family/`（ledger.db、receipts/、documents/）；成员私有在 `data/<成员>/`（notes/、schedule/、tasks/、inbox/）。来图先存发送者 `data/<成员>/inbox/`，分类后搬到对应位置。`agent_core.RECEIPTS_DIR`/`DOCUMENTS_DIR` 由 `paths` 计算，不硬编码。
 - **成员注册表**：`data/members.json`（git 不跟踪 — 姓名/频道 id 属隐私）只在本机用 `cli.py member-add/list/remove` 管理（不在命令白名单内，Agent 调不到）。未注册频道 id 一律静默丢弃；写入类账目的归属由 `agent_core` 注入解析出的成员名，LLM 给的 member 一律剥离（防冒名）。
 - **凭据本地化**：所有频道凭据（微信扫码态、Telegram token）只存本地，不外传。
 - Telegram token 走环境变量，不写进仓库。
