@@ -126,30 +126,13 @@ token/key，凭据只能 `os.environ` 读取。
 `enabled`（默认 false）/ `debounce_seconds`（60）。改后重启进程生效。
 `include` / `remote_root` 已移至 `members.json` 各成员 `backup` 块的 `scopes` / `remote_root`。
 
-## 迁移（从旧单备份模型）
+## 升级备注（folder-mirror）
 
-若从旧版（config.json `backup.include` + `remote_root` 全局）升级，运行一次性迁移脚本
-（需先停用机器人）：
-
-```bash
-python .codewhale/skills/Agent_Runtime/migrate_backup.py
-```
-
-脚本幂等、可回滚（自动创建 `.bak` 快照）。所做变更：
-- 给 Jim 添加 `backup` 块（`scopes` 复刻旧 `include` 覆盖范围，零重传）；
-- config.json `backup` 段瘦身为 `{enabled, debounce_seconds}`；
-- 全局清单 `data/.backup_manifest.json` → `data/Jim/.backup_manifest.json`；
-- 全局时钟 `data/.backup_state.json` 原地保留（仍是共享防抖时钟）。
-
-迁移后 `backup-verify --member "Jim Zheng"` 确认一致、`backup-now --member "Jim Zheng"`
-报告全部跳过（0 上传），即表示迁移成功且零重传。
-
-> **文件夹镜像升级**：从旧版（平铺布局）升级到文件夹镜像版本后，已有云端数据需运行一次性重组，
-> 将平铺文件按 rel 归入嵌套文件夹树（元数据移动，零字节重传）。每个已有远端数据的成员运行一次：
-> ```bash
-> python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Jim Zheng"
-> ```
-> 命令幂等，第二次运行零移动。若成员尚无远端文件，跳过即可。
+云端布局升级到文件夹镜像后，已有远端数据按情况一次性处理：
+- **rel 与当前本地一致、但平铺**：`backup-reorg --member NAME` 把平铺文件按 rel 归入嵌套
+  文件夹（元数据移动，零字节重传；幂等，第二次零移动；无远端文件则跳过）。
+- **rel 来自更早的旧存储布局（与当前不符）**：`backup-now --member NAME` 重新镜像（上传当前
+  布局 + 删除旧路径文件），再 `backup-verify --member NAME` 确认一致。
 
 ## 边界
 
