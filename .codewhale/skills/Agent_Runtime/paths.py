@@ -111,11 +111,16 @@ def member_inbox_dir(member: str, dt: date | None = None) -> Path:
     return d
 
 
-def member_notes_image_dir(member: str, dt: date | None = None) -> Path:
-    """备忘图片 data/<成员>/notes/YYYY-MM/，不存在则创建。"""
-    d = member_store_dir(member, "notes") / (dt or date.today()).strftime("%Y-%m")
+def member_domain_image_dir(member: str, domain: str, dt: date | None = None) -> Path:
+    """某域来图按月目录 data/<成员>/<域>/YYYY-MM/（notes/schedule/tasks 通用），不存在则创建。"""
+    d = member_store_dir(member, domain) / (dt or date.today()).strftime("%Y-%m")
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def member_notes_image_dir(member: str, dt: date | None = None) -> Path:
+    """备忘图片 data/<成员>/notes/YYYY-MM/，不存在则创建。"""
+    return member_domain_image_dir(member, "notes", dt)
 
 
 # ── 文件链接：data_root 相对 posix ──────────────────────────

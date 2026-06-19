@@ -142,6 +142,53 @@ class TestCalDb:
         assert item["title"] == "本地待办"      # pending row untouched
         assert item["status"] == "done"
 
+    def test_add_with_source_image(self, cal_db_path):
+        iid = _add_event(cal_db_path, source_image="Jim/schedule/2026-06/x.jpg")
+        assert cal_db.get_item(iid, db_path=cal_db_path)["source_image"] == \
+            "Jim/schedule/2026-06/x.jpg"
+
+    def test_source_image_defaults_empty(self, cal_db_path):
+        iid = _add_event(cal_db_path)
+        assert cal_db.get_item(iid, db_path=cal_db_path)["source_image"] == ""
+
+    def test_clear_source_image_keeps_row_and_sync(self, cal_db_path):
+        iid = _add_event(cal_db_path, source_image="Jim/schedule/2026-06/x.jpg")
+        cal_db.mark_synced(iid, uid="ev-1", db_path=cal_db_path)
+        assert cal_db.clear_source_image(iid, db_path=cal_db_path) is True
+        item = cal_db.get_item(iid, db_path=cal_db_path)
+        assert item["source_image"] == ""        # 图片链接清空
+        assert item["status"] == "active"         # 行还在
+        assert item["synced"] == 1                # 图片非远端字段，不触发重推
+
+    def test_items_with_image(self, cal_db_path):
+        a = _add_event(cal_db_path, source_image="a.jpg")
+        _add_event(cal_db_path, title="无图")            # 无 source_image
+        b = _add_task(cal_db_path, source_image="b.jpg")
+        ids = {r["id"] for r in cal_db.items_with_image(db_path=cal_db_path)}
+        assert ids == {a, b}
+
+    def test_schema_migrates_source_image_column(self, tmp_path):
+        # 老库无 source_image 列 → _connect 自动补列
+        old = str(tmp_path / "old.db")
+        import sqlite3
+        c = sqlite3.connect(old)
+        c.executescript(
+            "CREATE TABLE schedule_items (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "kind TEXT NOT NULL, uid TEXT DEFAULT '', title TEXT NOT NULL, "
+            "start_at TEXT DEFAULT '', end_at TEXT DEFAULT '', all_day INTEGER DEFAULT 0, "
+            "location TEXT DEFAULT '', notes TEXT DEFAULT '', member TEXT DEFAULT '', "
+            "status TEXT DEFAULT 'active', origin TEXT DEFAULT 'local', "
+            "synced INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);")
+        c.execute("INSERT INTO schedule_items (kind,title,created_at,updated_at) "
+                  "VALUES ('event','旧行','t','t')")
+        c.commit()
+        c.close()
+        conn = cal_db._connect(db_path=old)        # 应补列且不报错
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(schedule_items)")]
+        conn.close()
+        assert "source_image" in cols
+        assert cal_db.get_item(1, db_path=old)["source_image"] == ""
+
     def test_synced_active(self, cal_db_path):
         a = _add_event(cal_db_path)
         cal_db.mark_synced(a, uid="e-1", db_path=cal_db_path)
@@ -646,6 +693,37 @@ class TestCli:
         r = _cli(["cal-sync"], cal_db_path, tmp_path)
         assert r.returncode == 0
         assert "未配置" in r.stdout
+
+    def test_cal_add_stores_source_image(self, cal_db_path, tmp_path):
+        r = _cli(["cal-add", "--member", "MemberA", "--kind", "event", "--title", "X",
+                  "--date", D1, "--source-image", "MemberA/schedule/2026-06/x.jpg"],
+                 cal_db_path, tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert cal_db.get_item(1, db_path=cal_db_path)["source_image"] == \
+            "MemberA/schedule/2026-06/x.jpg"
+
+
+class TestSourceImageRelocate:
+    """add_event/add_task 把暂存来图搬进该成员对应域目录，并记 source_image。"""
+
+    def test_add_event_relocates_and_stores_image(self, tmp_path, monkeypatch):
+        import agent_core
+        import paths
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        monkeypatch.delenv("CAL_DB_PATH", raising=False)
+        img = paths.member_inbox_dir("MemberA") / "invite.jpg"
+        img.write_bytes(b"x")
+        out = agent_core._tool_add_event(
+            {"member": "MemberA", "title": "Party", "date": D1, "source-image": str(img)})
+        assert "已添加" in out
+        assert not img.exists()                       # 搬出 inbox
+        sdb = str(paths.member_store("MemberA", "schedule"))
+        rows = cal_db.list_upcoming(days=3650, today=date.today(),
+                                    include_closed=True, db_path=sdb)
+        assert len(rows) == 1
+        si = rows[0]["source_image"]
+        assert si.startswith("membera/schedule/") and si.endswith("invite.jpg")
+        assert paths.resolve_rel(si).exists()
 
 
 def _cli_member(args, data_root, tmp):

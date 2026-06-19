@@ -47,7 +47,9 @@
     "_comment": "日历引擎旋钮。enabled=总开关；按成员/域的同步偏好在 data/members.json 的 sync 块。凭据走 GCAL_* 环境变量，日历 id 走 GCAL_CALENDAR_ID，均不入 git。",
     "enabled": true,
     "lookahead_days": 10,
-    "refresh_minutes": 15
+    "refresh_minutes": 15,
+    "image_retention_years": 2,
+    "image_prune_interval_days": 30
   },
   "backup": {
     "enabled": true,

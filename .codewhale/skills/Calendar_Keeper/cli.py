@@ -161,6 +161,7 @@ def cmd_cal_add(args):
         location=args.location or "",
         notes=args.notes or "",
         member=args.member,
+        source_image=args.source_image or "",
         db_path=db,
     )
     _mark_backup_dirty()
@@ -273,6 +274,7 @@ def main() -> int:
     p.add_argument("--all-day", action="store_true", help="全天活动")
     p.add_argument("--location", help="地点")
     p.add_argument("--notes", help="备注")
+    p.add_argument("--source-image", help="原始来图（data 相对路径），定期清理")
 
     p = sub.add_parser("cal-list", help="未来 N 天日程 + 开放待办")
     p.add_argument("--days", type=int,

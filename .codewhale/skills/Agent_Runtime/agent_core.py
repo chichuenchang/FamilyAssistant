@@ -309,10 +309,10 @@ def _tool_ack_document(args): return _run_cli("doc-ack", args)
 def _tool_backup_now(args): return _run_cli("backup-now", args)
 def _tool_backup_status(args): return _run_cli("backup-status", args)
 def _tool_backup_verify(args): return _run_cli("backup-verify", args)
-def _relocate_note_image(src: str, member: str) -> str:
-    """备忘图片从来图暂存（成员 inbox）搬到该成员 notes/YYYY-MM/，返回 data 相对路径。
+def _relocate_image(src: str, member: str, domain: str) -> str:
+    """来图从暂存（成员 inbox，data_root 内）搬到该成员某域 YYYY-MM/，返回 data 相对路径。
 
-    传输层把来图先存 data/<成员>/inbox/（收件箱），分类为备忘后搬进成员 notes 目录。
+    domain ∈ notes/schedule/tasks。传输层把来图先存 data/<成员>/inbox/，分类后搬到对应域。
     代码确定性执行（不交给 LLM 决定）。失败保留原路径，绝不丢图。
     仅处理 data_root 内的文件 + 已知成员；否则原样返回。"""
     try:
@@ -323,18 +323,23 @@ def _relocate_note_image(src: str, member: str) -> str:
         droot = _paths.data_root().resolve()
         if not (resolved.exists() and resolved.is_relative_to(droot)):
             return src
-        dest_dir = _paths.member_notes_image_dir(member)
+        dest_dir = _paths.member_domain_image_dir(member, domain)
         dest = dest_dir / resolved.name
         i = 1
         while dest.exists():
             dest = dest_dir / f"{resolved.stem}_{i}{resolved.suffix}"
             i += 1
         resolved.rename(dest)
-        _log.debug("备忘图片已移动 %s → %s", resolved, dest)
+        _log.debug("来图已移动 %s → %s", resolved, dest)
         return _paths.to_rel(dest)
     except Exception:
-        _log.exception("备忘图片移动失败（保留原路径）")
+        _log.exception("来图移动失败（保留原路径）")
         return src
+
+
+def _relocate_note_image(src: str, member: str) -> str:
+    """备忘图片搬到成员 notes/（_relocate_image 的 notes 域包装）。"""
+    return _relocate_image(src, member, "notes")
 
 
 def _tool_save_note(args):
@@ -350,6 +355,10 @@ def _tool_pin_note(args): return _run_cli("note-pin", args)
 
 
 def _tool_add_event(args):
+    args = dict(args)
+    src = args.get("source-image", "")
+    if src:
+        args["source-image"] = _relocate_image(src, args.get("member", ""), "schedule")
     return _run_cli("cal-add", {**args, "kind": "event"})
 
 
@@ -359,6 +368,9 @@ def _tool_add_task(args):
     due = args.pop("due", "")
     if due:
         args["date"] = due
+    src = args.get("source-image", "")
+    if src:
+        args["source-image"] = _relocate_image(src, args.get("member", ""), "tasks")
     return _run_cli("cal-add", {**args, "kind": "task"})
 
 
@@ -658,11 +670,15 @@ TOOL_SCHEMAS = [
         "all-day": {"type": "boolean", "description": "全天活动"},
         "location": _s("地点"),
         "notes": _s("备注"),
+        "source-image": _s("从图片（邀请函/海报/截图）建活动时，传那张已保存图片的路径，"
+                           "留存原始材料；纯文字建活动不填"),
     }, ["title", "date"]),
     _fn("add_task", "添加待办/任务（自动同步到远程待办清单）", {
         "title": _s("待办内容，如 买生日蛋糕"),
         "due": _s("截止日期 YYYY-MM-DD（没有就不填）"),
         "notes": _s("备注"),
+        "source-image": _s("从图片（账单/发票/截图）建待办时，传那张已保存图片的路径，"
+                           "留存原始材料；纯文字建待办不填"),
     }, ["title"]),
     _fn("list_schedule", "查询未来日程与开放待办（用户问\"接下来有什么安排\"\"待办清单\"）", {
         "days": _int(f"窗口天数（默认 {_CAL_LOOKAHEAD}）"),
@@ -838,7 +854,7 @@ class Agent:
             if ocr_text:
                 prompt = (
                     f"用户发了一张图片，已保存为 {image_path}，OCR结果:\n{ocr_text}\n"
-                    f"判断图片内容，按四种情况处理：\n"
+                    f"判断图片内容，按五种情况处理：\n"
                     f"1) 单张消费票据：提取金额/日期/类别，调 add_transaction 记一笔。\n"
                     f"2) 银行/信用卡/支付App流水或账单（多行消费）：逐笔记账，每条明细调一次 add_transaction"
                     f"（可在一条回复里并发多次调用）。**重点：记的是每一笔交易明细，绝不要把账单总额、"
@@ -849,11 +865,14 @@ class Agent:
                     f"无法确定金额/日期的行先列出来问用户，不要瞎记。\n"
                     f"3) 重要文档（合同/保单/证件）：用 add_document 归档，file 传上面的保存路径，"
                     f"ocr-text 传 OCR 全文。\n"
-                    f"4) 其他有信息价值的图片（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
+                    f"4) 邀请函/活动海报/预约/带日期时间的安排 → add_event（有日期；有具体时间给 start/end，"
+                    f"location 给地点）；账单/发票/催款等需要跟进办理的 → add_task（截止日给 due）。"
+                    f"两者都把上面的保存路径传给 source-image，留存原始材料图（日后可定期清理）。\n"
+                    f"5) 其他有信息价值的图片（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
                     f"content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
                     f"source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。\n"
                     f"注意：开出去的发票/报价单/还没付的账单 = 没有实际现金流，绝不要直接记成收入或支出；"
-                    f"先问用户是记备忘（等实际收付款再记账）还是其他处理。\n"
+                    f"可建 add_task 跟进收款（带 source-image），别记成 income/expense。\n"
                     f"信息不完整就先问用户。记完简要汇报记了什么。"
                 )
                 return self.handle(prompt, user=user, member=member)

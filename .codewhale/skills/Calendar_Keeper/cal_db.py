@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS schedule_items (
     all_day    INTEGER DEFAULT 0,
     location   TEXT    DEFAULT '',
     notes      TEXT    DEFAULT '',
+    source_image TEXT  DEFAULT '',
     member     TEXT    DEFAULT '',
     status     TEXT    DEFAULT 'active',
     origin     TEXT    DEFAULT 'local',
@@ -72,6 +73,11 @@ def _connect(db_path: Optional[str] = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
+    # 老库补列（source_image 后加，CREATE IF NOT EXISTS 不会改既有表）
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(schedule_items)")]
+    if "source_image" not in cols:
+        conn.execute("ALTER TABLE schedule_items ADD COLUMN source_image TEXT DEFAULT ''")
+        conn.commit()
     return conn
 
 
@@ -88,12 +94,14 @@ def add_item(
     location: str = "",
     notes: str = "",
     member: str = "",
+    source_image: str = "",
     db_path: Optional[str] = None,
 ) -> int:
     """本地新建一条日程/待办（origin=local, synced=0），返回 id。
 
     start_at/end_at 为 ISO 字符串（'YYYY-MM-DD' 或 'YYYY-MM-DDTHH:MM'）；
     待办的 start_at = 截止日期，可为空（无期限待办）。
+    source_image = 原始来图（data 相对路径），由上层搬移后记录，可定期清理。
     """
     if kind not in KINDS:
         raise ValueError(f"kind 必须是 {KINDS}")
@@ -103,10 +111,10 @@ def add_item(
     conn = _connect(db_path)
     cur = conn.execute(
         "INSERT INTO schedule_items (kind, title, start_at, end_at, all_day, "
-        "location, notes, member, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "location, notes, source_image, member, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (kind, title.strip(), start_at, end_at, 1 if all_day else 0,
-         location, notes, member, now, now),
+         location, notes, source_image, member, now, now),
     )
     conn.commit()
     row_id = cur.lastrowid
@@ -177,6 +185,30 @@ def set_status(
     ok = cur.rowcount > 0
     conn.close()
     return ok
+
+
+def clear_source_image(item_id: int, db_path: Optional[str] = None) -> bool:
+    """清空一条日程/待办的 source_image（保留行）。
+
+    图片不是远端字段（Google 无此概念）→ 不动 synced，绝不触发重推。
+    """
+    conn = _connect(db_path)
+    cur = conn.execute(
+        "UPDATE schedule_items SET source_image = '', updated_at = ? WHERE id = ?",
+        (_now(), item_id))
+    conn.commit()
+    ok = cur.rowcount > 0
+    conn.close()
+    return ok
+
+
+def items_with_image(db_path: Optional[str] = None) -> list[dict]:
+    """所有带 source_image 的行（图片清理用）。"""
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT * FROM schedule_items WHERE source_image != '' ORDER BY id").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def pending(db_path: Optional[str] = None) -> list[dict]:

@@ -14,8 +14,14 @@
 ├── calendar_sync.py     ← 同步引擎：按(成员,域)先推后拉、对账、状态；calendar_tick 遍历成员
 ├── calendar_provider.py ← Google Calendar + Tasks 实现（契约见文件头注释，可换）
 ├── providers.py         ← provider 注册表：(domain, name) → 实现（google_calendar/google_tasks）
+├── image_gc.py          ← 陈旧来图清理：删 N 年前活动/待办的 source_image（节流，传输层调）
 └── cli.py               ← cal-add / cal-list / cal-done / cal-delete / cal-sync / cal-status
 ```
+
+活动/待办可带 `source_image`（原始来图，data 相对路径）：从图片建活动/待办时，传输层把来图
+搬进 `data/<成员>/{schedule,tasks}/YYYY-MM/` 并记录。`image_gc.image_gc_tick()` 在成员消息到达时
+节流（`calendar.image_prune_interval_days`，默认 30 天）扫一次，清掉 `calendar.image_retention_years`
+（默认 2 年）前的来图文件并清空链接（保留行；图片非远端字段，不触发同步）。
 
 存储分库：活动 `data/<成员>/schedule/schedule.db`，待办 `data/<成员>/tasks/tasks.db`
 （路径经 `Agent_Runtime/paths.member_store`）。同步状态 `.sync_state.json` 与库同目录，不入备份。

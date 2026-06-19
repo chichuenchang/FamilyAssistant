@@ -62,7 +62,8 @@ STATE_FILE = _STATE_DIR / ".backup_state.json"
 # 永不进备份的路径（即使用户把 data 整个加进 include）
 _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
                        ".backup_manifest.json", ".backup_state.json",
-                       ".calendar_state.json", ".sync_state.json"}
+                       ".calendar_state.json", ".sync_state.json",
+                       ".image_gc_state.json"}
 
 
 def _now_iso() -> str:
