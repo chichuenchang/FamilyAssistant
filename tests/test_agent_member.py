@@ -81,3 +81,15 @@ def test_handle_file_fallback_when_ocr_unavailable(monkeypatch):
                         lambda *a, **k: called.__setitem__("handle", True) or "x")
     out = agent.handle_file("x.pdf", member="Alex Lee")
     assert "PDF" in out and called["handle"] is False
+
+
+def test_handle_file_no_text_message_when_ocr_empty(monkeypatch):
+    import ocr
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda path: "")   # OCR 跑了但没识别到文字
+    agent = agent_core.Agent()
+    called = {"handle": False}
+    monkeypatch.setattr(agent, "handle",
+                        lambda *a, **k: called.__setitem__("handle", True) or "x")
+    out = agent.handle_file("x.pdf", member="Alex Lee")
+    assert "没识别到文字" in out and called["handle"] is False

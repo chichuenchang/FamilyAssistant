@@ -61,3 +61,11 @@ def test_ocr_image_image_path_has_no_ispdf(monkeypatch, tmp_path):
 
 def test_ocr_image_missing_file_returns_none():
     assert ocr.ocr_image("nope.pdf") is None
+
+
+def test_ocr_extract_uses_ocr_image_for_pdf(monkeypatch, tmp_path):
+    f = tmp_path / "stmt.pdf"
+    f.write_bytes(b"%PDF")
+    monkeypatch.setattr(ocr, "ocr_image", lambda path: "txn line 1")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "")   # 无 LLM → raw_text 透传，确认走 ocr_image
+    assert ocr.ocr_extract(str(f)) == {"raw_text": "txn line 1"}

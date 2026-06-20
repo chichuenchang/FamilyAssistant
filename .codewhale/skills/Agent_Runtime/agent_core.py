@@ -911,25 +911,28 @@ class Agent:
         if not member:
             return ""
         from ocr import ocr_image, is_available
-        if is_available():
-            ocr_text = ocr_image(file_path)
-            if ocr_text:
-                prompt = (
-                    f"用户发了一份 PDF 文件，已保存为 {file_path}，OCR结果:\n{ocr_text}\n"
-                    f"判断内容并处理（PDF 多为长期文档）：\n"
-                    f"1) 重要文档（合同/保单/证件/健康卡/政府或移民表格）→ add_document 归档："
-                    f"file 传上面的保存路径，ocr-text 传 OCR 全文，type 选最合适的；"
-                    f"有到期日带 expiry，到期要办的事带 action-note。\n"
-                    f"2) 银行/信用卡/支付账单（多页流水）→ 逐笔 add_transaction，每条明细一次"
-                    f"（**绝不要把账单总额、应还款额、最低还款额、已还款额当成一笔记账**）；"
-                    f"desc 带商家+时间以区分同日同额；真实独立消费被重复检查误拦时加 force=true。\n"
-                    f"3) 发票/报价/未付账单等要跟进的 → add_task（source-image 传保存路径，有截止日给 due）；"
-                    f"带日期时间的安排 → add_event。开出去/未付的发票绝不记成收入或支出。\n"
-                    f"默认归属发送者；信息不全先问用户。记完简要汇报归档/记了什么。"
-                )
-                return self.handle(prompt, user=user, member=member)
-        return ("📄 收到 PDF（已保存）。配置腾讯云 OCR 后可自动识别归档，"
-                "或用文字告诉我这是什么。")
+        if not is_available():
+            return ("📄 收到 PDF（已保存）。配置腾讯云 OCR 后可自动识别归档，"
+                    "或用文字告诉我这是什么。")
+        ocr_text = ocr_image(file_path)
+        if ocr_text:
+            prompt = (
+                f"用户发了一份 PDF 文件，已保存为 {file_path}，OCR结果:\n{ocr_text}\n"
+                f"判断内容并处理（PDF 多为长期文档）：\n"
+                f"1) 重要文档（合同/保单/证件/健康卡/政府或移民表格）→ add_document 归档："
+                f"file 传上面的保存路径，ocr-text 传 OCR 全文，type 选最合适的；"
+                f"有到期日带 expiry，到期要办的事带 action-note。\n"
+                f"2) 银行/信用卡/支付账单（多页流水）→ 逐笔 add_transaction，每条明细一次"
+                f"（**绝不要把账单总额、应还款额、最低还款额、已还款额当成一笔记账**）；"
+                f"desc 带商家+时间以区分同日同额；真实独立消费被重复检查误拦时加 force=true。\n"
+                f"3) 发票/报价/未付账单等要跟进的 → add_task（source-image 传保存路径，有截止日给 due）；"
+                f"带日期时间的安排 → add_event（也把保存路径传 source-image）。"
+                f"开出去/未付的发票绝不记成收入或支出。\n"
+                f"默认归属发送者；信息不全先问用户。记完简要汇报归档/记了什么。"
+            )
+            return self.handle(prompt, user=user, member=member)
+        return ("📄 收到 PDF（已保存），但 OCR 没识别到文字（可能是扫描件/加密 PDF 或识别失败）。"
+                "用文字告诉我这是什么，我来归档。")
 
     def _call_llm(self, messages) -> dict | None:
         """调 DeepSeek chat completions（native function calling）。

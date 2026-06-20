@@ -120,7 +120,7 @@ def download_document(file_id: str, file_name: str, member: str = "") -> Path | 
     url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
     now = datetime.now()
     ts = now.strftime("%Y%m%d_%H%M%S")
-    suffix = Path(file_name or "").suffix.lower() or ".pdf"
+    suffix = ".pdf"   # 仅 PDF 走此函数（调用方已判定）；强制 .pdf，确保 ocr_image 走 PDF 分支
     staging = member_inbox_dir(member, now) if member else receipt_month_dir(now)
     dest = staging / f"{ts}_telegram{suffix}"
     try:
