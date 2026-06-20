@@ -1,6 +1,6 @@
 # OCR
 
-> 光学字符识别 skill。对图片进行文字识别，提取结构化信息。
+> 光学字符识别 skill。对图片和 PDF 进行文字识别，提取结构化信息。PDF 通过腾讯云 `IsPdf` 逐页 OCR（上限 `MAX_PDF_PAGES=20` 页），无需第三方 PDF 库。
 
 实现 `ocr.py` 就在本 skill 目录 `.codewhale/skills/OCR/`。两种调用方式，自包含、零外部依赖。
 
@@ -9,8 +9,9 @@
 从项目根目录直接跑，无需改 `sys.path`：
 
 ```bash
-# 纯文字识别
+# 纯文字识别（图片或 PDF）
 python .codewhale/skills/OCR/ocr.py path/to/image.jpg
+python .codewhale/skills/OCR/ocr.py path/to/doc.pdf
 
 # 票据结构化提取（需 DEEPSEEK_API_KEY），输出 JSON
 python .codewhale/skills/OCR/ocr.py path/to/receipt.jpg --extract
@@ -33,8 +34,8 @@ from ocr import ocr_image, ocr_extract, is_available
 if not is_available():
     ...  # 提示用户配置腾讯云密钥
 
-text = ocr_image("path/to/image.jpg")
-info = ocr_extract("path/to/receipt.jpg")
+text = ocr_image("path/to/image.jpg")   # 图片或 PDF
+info = ocr_extract("path/to/receipt.jpg")  # 票据/账单（图片或 PDF）
 # → {"currency": "CAD", "transactions": [
 #      {"amount": 45.0, "date": "2026-06-01", "category": "餐饮", "desc": "午餐"},
 #      ...  # 账单逐笔；只含明细，不含账单总额/应还款
@@ -46,8 +47,8 @@ info = ocr_extract("path/to/receipt.jpg")
 | 函数 | 返回 | 说明 |
 |------|------|------|
 | `is_available()` | `bool` | 是否配置了腾讯云密钥 |
-| `ocr_image(path)` | `str` / `None` | 通用文字识别；`None` = 不可用或文件不存在 |
-| `ocr_extract(path)` | `dict` / `None` | OCR + LLM 逐笔交易提取，返回 `{"currency", "transactions":[...]}`（账单只取明细行，不取总额）；无 `DEEPSEEK_API_KEY` 时返回 `{"raw_text": ...}` |
+| `ocr_image(path)` | `str` / `None` | 通用文字识别（图片或 PDF）；PDF 用腾讯 `IsPdf` 逐页 OCR，上限 `MAX_PDF_PAGES=20` 页；`None` = 不可用或文件不存在 |
+| `ocr_extract(path)` | `dict` / `None` | OCR + LLM 逐笔交易提取，返回 `{"currency", "transactions":[...]}`（账单只取明细行，不取总额）；无 `DEEPSEEK_API_KEY` 时返回 `{"raw_text": ...}`。也接受 PDF |
 
 ## 配置
 
@@ -64,4 +65,4 @@ info = ocr_extract("path/to/receipt.jpg")
 
 ## 费用
 
-腾讯云通用印刷体识别：1000 次/月免费。超出后 0.15 元/次。
+腾讯云通用印刷体识别：1000 次/月免费。超出后 0.15 元/次。PDF 逐页各计一次调用。
