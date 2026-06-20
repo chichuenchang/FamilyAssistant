@@ -127,45 +127,45 @@ def cfg_dirsync(tmp_path):
     """临时 members.json，含 dir 目录名与 sync 同步偏好。"""
     p = tmp_path / "members.json"
     p.write_text(json.dumps({
-        "Jim Zheng": {"dir": "Jim", "wechat": ["wx_j"],
+        "Alex Lee": {"dir": "Alex", "wechat": ["wx_j"],
                       "sync": {"schedule": {"provider": "google_calendar", "enabled": True},
                                "tasks": {"provider": "google_tasks", "enabled": True}}},
-        "Wenliang Li": {"dir": "Wenliang"},
-        "Euphie": {},
+        "Sam Lee": {"dir": "Sam"},
+        "Robin": {},
     }, ensure_ascii=False), encoding="utf-8")
     return p
 
 
 def test_member_dir_name_explicit(cfg_dirsync):
-    assert mm.member_dir_name("Jim Zheng", cfg_dirsync) == "Jim"
-    assert mm.member_dir_name("Wenliang Li", cfg_dirsync) == "Wenliang"
+    assert mm.member_dir_name("Alex Lee", cfg_dirsync) == "Alex"
+    assert mm.member_dir_name("Sam Lee", cfg_dirsync) == "Sam"
 
 
 def test_member_dir_name_slug_fallback(cfg_dirsync):
     # 无 dir 字段 → 取首词小写 slug
-    assert mm.member_dir_name("Euphie", cfg_dirsync) == "euphie"
+    assert mm.member_dir_name("Robin", cfg_dirsync) == "robin"
     # 完全未登记的成员
     assert mm.member_dir_name("New Person", cfg_dirsync) == "new"
 
 
 def test_sync_pref(cfg_dirsync):
-    assert mm.sync_pref("Jim Zheng", "schedule", cfg_dirsync) == {
+    assert mm.sync_pref("Alex Lee", "schedule", cfg_dirsync) == {
         "provider": "google_calendar", "enabled": True}
-    assert mm.sync_pref("Jim Zheng", "tasks", cfg_dirsync) == {
+    assert mm.sync_pref("Alex Lee", "tasks", cfg_dirsync) == {
         "provider": "google_tasks", "enabled": True}
 
 
 def test_sync_pref_absent_is_none(cfg_dirsync):
-    assert mm.sync_pref("Wenliang Li", "schedule", cfg_dirsync) is None
-    assert mm.sync_pref("Euphie", "tasks", cfg_dirsync) is None
+    assert mm.sync_pref("Sam Lee", "schedule", cfg_dirsync) is None
+    assert mm.sync_pref("Robin", "tasks", cfg_dirsync) is None
     assert mm.sync_pref("New Person", "schedule", cfg_dirsync) is None
 
 
 def test_backup_pref_absent_is_none(tmp_path):
     import members
     mp = tmp_path / "members.json"
-    mp.write_text('{"Jim Zheng": {"dir": "Jim"}}', encoding="utf-8")
-    assert members.backup_pref("Jim Zheng", members_path=mp) is None
+    mp.write_text('{"Alex Lee": {"dir": "Alex"}}', encoding="utf-8")
+    assert members.backup_pref("Alex Lee", members_path=mp) is None
 
 
 def test_backup_pref_unknown_member_is_none(tmp_path):
@@ -178,25 +178,25 @@ def test_backup_pref_unknown_member_is_none(tmp_path):
 def test_backup_pref_normalizes_and_defaults(tmp_path):
     import members
     mp = tmp_path / "members.json"
-    mp.write_text(json.dumps({"Jim Zheng": {"dir": "Jim", "backup": {
+    mp.write_text(json.dumps({"Alex Lee": {"dir": "Alex", "backup": {
         "provider": "google_drive", "enabled": True,
-        "scopes": ["Jim", "Family"]}}}), encoding="utf-8")
-    p = members.backup_pref("Jim Zheng", members_path=mp)
+        "scopes": ["Alex", "Family"]}}}), encoding="utf-8")
+    p = members.backup_pref("Alex Lee", members_path=mp)
     assert p["provider"] == "google_drive"
     assert p["cred_prefix"] == "GDRIVE"          # default
-    assert p["remote_root"] == "Jim"             # default = dir name
+    assert p["remote_root"] == "Alex"             # default = dir name
     assert p["enabled"] is True
-    assert p["scopes"] == ["Jim", "Family"]
+    assert p["scopes"] == ["Alex", "Family"]
 
 
 def test_backup_pref_explicit_prefix_and_root(tmp_path):
     import members
     mp = tmp_path / "members.json"
-    mp.write_text(json.dumps({"Wenliang Li": {"dir": "Wenliang", "backup": {
+    mp.write_text(json.dumps({"Sam Lee": {"dir": "Sam", "backup": {
         "provider": "google_drive", "cred_prefix": "WLI_GDRIVE",
-        "remote_root": "WenliangBackup", "enabled": False, "scopes": []}}}),
+        "remote_root": "SamBackup", "enabled": False, "scopes": []}}}),
         encoding="utf-8")
-    p = members.backup_pref("Wenliang Li", members_path=mp)
+    p = members.backup_pref("Sam Lee", members_path=mp)
     assert p["cred_prefix"] == "WLI_GDRIVE"
-    assert p["remote_root"] == "WenliangBackup"
+    assert p["remote_root"] == "SamBackup"
     assert p["enabled"] is False

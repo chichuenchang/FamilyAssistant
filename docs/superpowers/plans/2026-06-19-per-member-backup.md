@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let each family member back up to their own remote provider/account, selecting what they back up via a `backup` block in `members.json`, while Jim's existing Google Drive backup carries over with zero re-upload.
+**Goal:** Let each family member back up to their own remote provider/account, selecting what they back up via a `backup` block in `members.json`, while Alex's existing Google Drive backup carries over with zero re-upload.
 
 **Architecture:** Generalize the single monolithic backup engine into a per-member mirror over one shared debounce clock. `members.json` gains a per-member `backup` block (`provider` + `cred_prefix` + `remote_root` + rel-path `scopes`). `backup_provider.py` becomes a `GoogleDriveProvider(cred_prefix, remote_root)` class selected through a registry. `backup_sync.backup_tick()` loops members; each runs an isolated mirror with its own manifest + `last_sync`/`last_error`. `mark_dirty()` and the global `data/.backup_state.json` clock are unchanged.
 
@@ -12,7 +12,7 @@
 
 - **Stdlib only** — no third-party packages. Network via `urllib.request`; the single HTTP seam is module-level `backup_provider._http`.
 - **Credentials only via environment** — never write a literal token/key/secret in code. Provider reads `{cred_prefix}_CLIENT_ID`, `{cred_prefix}_CLIENT_SECRET`, `{cred_prefix}_REFRESH_TOKEN`. Default `cred_prefix` is `GDRIVE`.
-- **Rel scheme is ROOT-relative posix** — every manifest/remote key is the file path relative to the project ROOT, e.g. `data/Jim/notes/n.db`, `data/members.json`, `config.json`. Do not change this scheme.
+- **Rel scheme is ROOT-relative posix** — every manifest/remote key is the file path relative to the project ROOT, e.g. `data/Alex/notes/n.db`, `data/members.json`, `config.json`. Do not change this scheme.
 - **Hard excludes always apply** — `_HARD_EXCLUDE_NAMES` (`.backup_manifest.json`, `.backup_state.json`, `.sync_state.json`, `.telegram_offset`, `.doc_reminder_state`, `.calendar_state.json`, `.image_gc_state.json`) plus any name containing `creds`. Never uploaded even when their directory is in scope.
 - **Atomic + crash-safe writes** — JSON state via the existing `_save_json`; `members.json` via the existing `members._save_members` (tempfile + `os.replace`). Manifest saved after each file so a mid-run crash only re-does the remainder.
 - **Never-raise boundaries** — `mark_dirty()` and `backup_tick()` must never raise; per-member failures are isolated to that member's `last_error`.
@@ -67,8 +67,8 @@ import json
 def test_backup_pref_absent_is_none(tmp_path):
     import members
     mp = tmp_path / "members.json"
-    mp.write_text('{"Jim Zheng": {"dir": "Jim"}}', encoding="utf-8")
-    assert members.backup_pref("Jim Zheng", members_path=mp) is None
+    mp.write_text('{"Alex Lee": {"dir": "Alex"}}', encoding="utf-8")
+    assert members.backup_pref("Alex Lee", members_path=mp) is None
 
 
 def test_backup_pref_unknown_member_is_none(tmp_path):
@@ -81,27 +81,27 @@ def test_backup_pref_unknown_member_is_none(tmp_path):
 def test_backup_pref_normalizes_and_defaults(tmp_path):
     import members
     mp = tmp_path / "members.json"
-    mp.write_text(json.dumps({"Jim Zheng": {"dir": "Jim", "backup": {
+    mp.write_text(json.dumps({"Alex Lee": {"dir": "Alex", "backup": {
         "provider": "google_drive", "enabled": True,
-        "scopes": ["Jim", "Family"]}}}), encoding="utf-8")
-    p = members.backup_pref("Jim Zheng", members_path=mp)
+        "scopes": ["Alex", "Family"]}}}), encoding="utf-8")
+    p = members.backup_pref("Alex Lee", members_path=mp)
     assert p["provider"] == "google_drive"
     assert p["cred_prefix"] == "GDRIVE"          # default
-    assert p["remote_root"] == "Jim"             # default = dir name
+    assert p["remote_root"] == "Alex"             # default = dir name
     assert p["enabled"] is True
-    assert p["scopes"] == ["Jim", "Family"]
+    assert p["scopes"] == ["Alex", "Family"]
 
 
 def test_backup_pref_explicit_prefix_and_root(tmp_path):
     import members
     mp = tmp_path / "members.json"
-    mp.write_text(json.dumps({"Wenliang Li": {"dir": "Wenliang", "backup": {
+    mp.write_text(json.dumps({"Sam Lee": {"dir": "Sam", "backup": {
         "provider": "google_drive", "cred_prefix": "WLI_GDRIVE",
-        "remote_root": "WenliangBackup", "enabled": False, "scopes": []}}}),
+        "remote_root": "SamBackup", "enabled": False, "scopes": []}}}),
         encoding="utf-8")
-    p = members.backup_pref("Wenliang Li", members_path=mp)
+    p = members.backup_pref("Sam Lee", members_path=mp)
     assert p["cred_prefix"] == "WLI_GDRIVE"
-    assert p["remote_root"] == "WenliangBackup"
+    assert p["remote_root"] == "SamBackup"
     assert p["enabled"] is False
 ```
 
@@ -182,17 +182,17 @@ class TestScopeResolver:
 
     def test_scope_to_prefix(self, sr):
         assert backup_sync._scope_to_prefix("config.json") == "config.json"
-        assert backup_sync._scope_to_prefix("Jim") == "data/Jim"
+        assert backup_sync._scope_to_prefix("Alex") == "data/Alex"
         assert backup_sync._scope_to_prefix("Family/documents") == "data/Family/documents"
 
     def test_member_files_prefix_boundary(self, sr):
         root = sr
-        (root / "data" / "Jim" / "notes").mkdir(parents=True)
-        (root / "data" / "Jim" / "notes" / "n.db").write_bytes(b"x")
+        (root / "data" / "Alex" / "notes").mkdir(parents=True)
+        (root / "data" / "Alex" / "notes" / "n.db").write_bytes(b"x")
         (root / "data" / "Jimbo").mkdir()
         (root / "data" / "Jimbo" / "y.txt").write_text("y")
-        files = backup_sync._member_files(["Jim"])
-        assert "data/Jim/notes/n.db" in files
+        files = backup_sync._member_files(["Alex"])
+        assert "data/Alex/notes/n.db" in files
         assert not any("Jimbo" in f for f in files)   # 前缀不跨目录边界
 
     def test_member_files_config_and_members_aliases(self, sr):
@@ -205,14 +205,14 @@ class TestScopeResolver:
 
     def test_member_files_applies_hard_excludes(self, sr):
         root = sr
-        (root / "data" / "Jim").mkdir(parents=True)
-        (root / "data" / "Jim" / "notes.db").write_bytes(b"")
-        (root / "data" / "Jim" / ".backup_manifest.json").write_text("{}")
-        (root / "data" / "Jim" / "wechat_creds.json").write_text("secret")
-        files = backup_sync._member_files(["Jim"])
-        assert "data/Jim/notes.db" in files
+        (root / "data" / "Alex").mkdir(parents=True)
+        (root / "data" / "Alex" / "notes.db").write_bytes(b"")
+        (root / "data" / "Alex" / ".backup_manifest.json").write_text("{}")
+        (root / "data" / "Alex" / "wechat_creds.json").write_text("secret")
+        files = backup_sync._member_files(["Alex"])
+        assert "data/Alex/notes.db" in files
         assert not any("creds" in f for f in files)
-        assert "data/Jim/.backup_manifest.json" not in files
+        assert "data/Alex/.backup_manifest.json" not in files
 
     def test_member_files_missing_token_is_silent(self, sr):
         assert backup_sync._member_files(["Ghost"]) == {}
@@ -258,7 +258,7 @@ def _member_files(scopes: list[str]) -> dict[str, Path]:
     """成员 scope 集合 → {rel(posix): 绝对路径}，应用硬排除。
 
     token 指向文件则收该文件；指向目录则递归；不存在则静默跳过（migrate 前的空目录）。
-    前缀按目录边界匹配（rglob 天然如此），不会把 data/Jimbo 当成 data/Jim。
+    前缀按目录边界匹配（rglob 天然如此），不会把 data/Jimbo 当成 data/Alex。
     """
     out: dict[str, Path] = {}
     for token in scopes:
@@ -350,7 +350,7 @@ class TestGdriveProvider:
         for var in ("WLI_GDRIVE_CLIENT_ID", "WLI_GDRIVE_CLIENT_SECRET",
                     "WLI_GDRIVE_REFRESH_TOKEN"):
             monkeypatch.delenv(var, raising=False)
-        prov = backup_provider.GoogleDriveProvider("WLI_GDRIVE", "WenliangBackup")
+        prov = backup_provider.GoogleDriveProvider("WLI_GDRIVE", "SamBackup")
         assert prov.is_configured() is False
         monkeypatch.setenv("WLI_GDRIVE_CLIENT_ID", "x")
         monkeypatch.setenv("WLI_GDRIVE_CLIENT_SECRET", "y")
@@ -709,9 +709,9 @@ In `tests/test_remote_backup.py`: replace the `bk` fixture, `TestStateAndWalk`, 
 ```python
 @pytest.fixture
 def bk(tmp_path, monkeypatch):
-    """Per-member engine: fake ROOT, global clock in tmp, one configured member (Jim)."""
+    """Per-member engine: fake ROOT, global clock in tmp, one configured member (Alex)."""
     root = tmp_path / "root"
-    (root / "data" / "Jim").mkdir(parents=True)
+    (root / "data" / "Alex").mkdir(parents=True)
     (root / "data" / "Family").mkdir(parents=True)
     (root / "config.json").write_text("{}", encoding="utf-8")
 
@@ -740,10 +740,10 @@ def bk(tmp_path, monkeypatch):
             Path(local_path).write_bytes(self.files[remote_rel])
 
     fake = FakeProvider()
-    pref = {"name": "Jim", "dir": "Jim", "provider": "google_drive",
+    pref = {"name": "Alex", "dir": "Alex", "provider": "google_drive",
             "cred_prefix": "GDRIVE", "remote_root": "FamilyAssistant",
-            "enabled": True, "scopes": ["Jim", "Family", "config.json"]}
-    monkeypatch.setattr(backup_sync, "_backup_members", lambda: [("Jim", pref)])
+            "enabled": True, "scopes": ["Alex", "Family", "config.json"]}
+    monkeypatch.setattr(backup_sync, "_backup_members", lambda: [("Alex", pref)])
     monkeypatch.setattr(backup_sync, "_make_provider", lambda p: fake)
     return root, fake, pref
 
@@ -767,34 +767,34 @@ class TestStateClock:
 
 
 class TestSync:
-    def _jim_manifest(self, root):
-        return backup_sync._load_json(root / "data" / "Jim" / ".backup_manifest.json")
+    def _alex_manifest(self, root):
+        return backup_sync._load_json(root / "data" / "Alex" / ".backup_manifest.json")
 
     def test_uploads_new_and_skips_unchanged(self, bk):
         root, fake, _ = bk
         d = root / "data" / "Family" / "documents"
         d.mkdir(parents=True)
         (d / "a.pdf").write_bytes(b"img-a")
-        r1 = backup_sync.sync("Jim")
+        r1 = backup_sync.sync("Alex")
         assert "data/Family/documents/a.pdf" in r1["uploaded"]
         assert fake.files["data/Family/documents/a.pdf"] == b"img-a"
-        r2 = backup_sync.sync("Jim")
+        r2 = backup_sync.sync("Alex")
         assert r2["uploaded"] == [] and r2["skipped"] >= 1
 
     def test_manifest_lands_under_member(self, bk):
         root, fake, _ = bk
-        (root / "data" / "Jim" / "note.txt").write_bytes(b"x")
-        backup_sync.sync("Jim")
-        assert (root / "data" / "Jim" / ".backup_manifest.json").exists()
-        assert "data/Jim/note.txt" in self._jim_manifest(root)
+        (root / "data" / "Alex" / "note.txt").write_bytes(b"x")
+        backup_sync.sync("Alex")
+        assert (root / "data" / "Alex" / ".backup_manifest.json").exists()
+        assert "data/Alex/note.txt" in self._alex_manifest(root)
 
     def test_reuploads_changed(self, bk):
         root, fake, _ = bk
         f = root / "data" / "Family" / "x.bin"
         f.write_bytes(b"v1")
-        backup_sync.sync("Jim")
+        backup_sync.sync("Alex")
         f.write_bytes(b"v2")
-        r = backup_sync.sync("Jim")
+        r = backup_sync.sync("Alex")
         assert "data/Family/x.bin" in r["uploaded"]
         assert fake.files["data/Family/x.bin"] == b"v2"
 
@@ -802,10 +802,10 @@ class TestSync:
         root, fake, _ = bk
         f = root / "data" / "Family" / "old.pdf"
         f.write_bytes(b"x")
-        backup_sync.sync("Jim")
+        backup_sync.sync("Alex")
         assert "data/Family/old.pdf" in fake.files
         f.unlink()
-        r = backup_sync.sync("Jim")
+        r = backup_sync.sync("Alex")
         assert "data/Family/old.pdf" in r["deleted"]
         assert "data/Family/old.pdf" not in fake.files
 
@@ -820,7 +820,7 @@ class TestSync:
         conn.execute("INSERT INTO t VALUES (1)")
         conn.commit()
         try:
-            r = backup_sync.sync("Jim")
+            r = backup_sync.sync("Alex")
             assert "data/Family/ledger.db" in r["uploaded"]
             fd, tmp = tempfile.mkstemp(suffix=".db")
             os.close(fd)
@@ -836,9 +836,9 @@ class TestSync:
         root, fake, _ = bk
         (root / "data" / "Family" / "a.jpg").write_bytes(b"x")
         fake.fail_uploads = True
-        r = backup_sync.sync("Jim")
+        r = backup_sync.sync("Alex")
         assert r["errors"]
-        mst = backup_sync._load_json(root / "data" / "Jim" / ".backup_state.json")
+        mst = backup_sync._load_json(root / "data" / "Alex" / ".backup_state.json")
         assert mst["last_error"] and mst["last_sync"]
 
     def test_sync_unknown_member_raises(self, bk):
@@ -898,7 +898,7 @@ class TestTick:
         monkeypatch.setattr(backup_sync, "sync", boom)
         later = datetime.now() + timedelta(seconds=120)
         assert backup_sync.backup_tick(now=later) is False
-        mst = backup_sync._load_json(root / "data" / "Jim" / ".backup_state.json")
+        mst = backup_sync._load_json(root / "data" / "Alex" / ".backup_state.json")
         assert "explode" in (mst.get("last_error") or "")
 
 
@@ -910,10 +910,10 @@ class TestRestoreVerifyStatus:
             "data/Family/receipts/2026-06/a.jpg": b"img",
             "config.json": b"{}",
         }
-        r = backup_sync.restore("Jim")
+        r = backup_sync.restore("Alex")
         assert sorted(r["downloaded"]) == sorted(fake.files)
         assert (root / "data" / "Family" / "receipts" / "2026-06" / "a.jpg").read_bytes() == b"img"
-        manifest = backup_sync._load_json(root / "data" / "Jim" / ".backup_manifest.json")
+        manifest = backup_sync._load_json(root / "data" / "Alex" / ".backup_manifest.json")
         assert set(manifest) == set(fake.files)
 
     def test_restore_refuses_non_empty(self, bk):
@@ -921,37 +921,37 @@ class TestRestoreVerifyStatus:
         (root / "data" / "Family" / "existing.jpg").write_bytes(b"x")
         fake.files = {"data/Family/other.jpg": b"y"}
         with pytest.raises(ValueError):
-            backup_sync.restore("Jim")
-        backup_sync.restore("Jim", force=True)
+            backup_sync.restore("Alex")
+        backup_sync.restore("Alex", force=True)
         assert (root / "data" / "Family" / "other.jpg").exists()
 
     def test_restore_unconfigured_raises(self, bk):
         root, fake, _ = bk
         fake._configured = False
         with pytest.raises(ValueError):
-            backup_sync.restore("Jim")
+            backup_sync.restore("Alex")
 
     def test_restore_bootstrap_via_override(self, bk, monkeypatch):
         root, fake, _ = bk
         monkeypatch.setattr(backup_sync, "_backup_members", lambda: [])
         fake.files = {"data/members.json": b"{}", "config.json": b"{}"}
         override = {"provider": "google_drive", "cred_prefix": "GDRIVE",
-                    "remote_root": "FamilyAssistant", "scopes": [], "dir": "Jim"}
-        r = backup_sync.restore("Jim Zheng", override=override)
+                    "remote_root": "FamilyAssistant", "scopes": [], "dir": "Alex"}
+        r = backup_sync.restore("Alex Lee", override=override)
         assert "data/members.json" in r["downloaded"]
         assert (root / "data" / "members.json").exists()
 
     def test_verify_reports(self, bk):
         root, fake, _ = bk
         (root / "data" / "Family" / "a.jpg").write_bytes(b"aaaa")
-        backup_sync.sync("Jim")
+        backup_sync.sync("Alex")
         fake.files["data/Family/ghost.jpg"] = b"zz"
         fake.files["data/Family/a.jpg"] = b"a"
-        v = backup_sync.verify("Jim")
+        v = backup_sync.verify("Alex")
         assert "data/Family/ghost.jpg" in v["extra_remote"]
         assert "data/Family/a.jpg" in v["size_mismatch"]
         del fake.files["data/Family/a.jpg"]
-        v = backup_sync.verify("Jim")
+        v = backup_sync.verify("Alex")
         assert "data/Family/a.jpg" in v["missing_remote"]
 
     def test_status_global_and_members(self, bk):
@@ -959,14 +959,14 @@ class TestRestoreVerifyStatus:
         assert s["enabled"] is True
         assert len(s["members"]) == 1
         row = s["members"][0]
-        assert row["member"] == "Jim" and row["configured"] is True
+        assert row["member"] == "Alex" and row["configured"] is True
         assert row["files_tracked"] == 0
         backup_sync.mark_dirty()
         s = backup_sync.status()
         assert s["dirty_since"] is not None
 
     def test_status_single_member_filter(self, bk):
-        assert [m["member"] for m in backup_sync.status(member="Jim")["members"]] == ["Jim"]
+        assert [m["member"] for m in backup_sync.status(member="Alex")["members"]] == ["Alex"]
         assert backup_sync.status(member="Nobody")["members"] == []
 ```
 
@@ -979,10 +979,10 @@ def _enabled_member_env(tmp_path):
     cfg.write_text(json.dumps({"backup": {"enabled": True, "debounce_seconds": 60},
                                "data_root": "data"}), encoding="utf-8")
     mp = tmp_path / "members.json"
-    mp.write_text(json.dumps({"Jim Zheng": {"dir": "Jim", "backup": {
+    mp.write_text(json.dumps({"Alex Lee": {"dir": "Alex", "backup": {
         "provider": "google_drive", "cred_prefix": "GDRIVE",
         "remote_root": "FamilyAssistant", "enabled": True,
-        "scopes": ["Jim", "Family"]}}}), encoding="utf-8")
+        "scopes": ["Alex", "Family"]}}}), encoding="utf-8")
     return {"BACKUP_STATE_DIR": str(tmp_path), "BACKUP_CONFIG": str(cfg),
             "BACKUP_MEMBERS": str(mp), "DATA_ROOT": str(tmp_path / "data")}
 
@@ -1004,7 +1004,7 @@ class TestCli:
             env[var] = ""
         r = _run_cli("backup-status", env_extra=env)
         assert r.returncode == 0
-        assert "Jim" in r.stdout
+        assert "Alex" in r.stdout
 
     def test_now_skips_unconfigured_member(self, tmp_path):
         env = _enabled_member_env(tmp_path)
@@ -1495,8 +1495,8 @@ git commit -m "feat(backup): per-member engine + CLI (sync/tick/restore/verify/s
 - Create: `tests/test_migrate_backup.py`
 
 **Interfaces:**
-- Produces: `migrate(root: Path) -> dict` — adds Jim's `backup` block, shrinks `config.json`,
-  moves the global manifest → `data/Jim/.backup_manifest.json`, leaves the global clock in place;
+- Produces: `migrate(root: Path) -> dict` — adds Alex's `backup` block, shrinks `config.json`,
+  moves the global manifest → `data/Alex/.backup_manifest.json`, leaves the global clock in place;
   idempotent; aborts if another member's dir holds files. Returns
   `{added_block, config_shrunk, manifest_moved, empty_ok}`.
 
@@ -1515,19 +1515,19 @@ import migrate_backup
 
 
 def _old_tree(root: Path):
-    (root / "data" / "Jim").mkdir(parents=True)
+    (root / "data" / "Alex").mkdir(parents=True)
     (root / "data" / "Family").mkdir(parents=True)
-    (root / "data" / "Wenliang").mkdir()
-    (root / "data" / "Euphie").mkdir()
+    (root / "data" / "Sam").mkdir()
+    (root / "data" / "Robin").mkdir()
     (root / "config.json").write_text(json.dumps({
         "data_root": "data",
         "backup": {"enabled": True, "debounce_seconds": 60,
                    "include": ["data", "config.json"], "remote_root": "FamilyAssistant"},
     }), encoding="utf-8")
     (root / "data" / "members.json").write_text(json.dumps({
-        "Jim Zheng": {"dir": "Jim", "aliases": ["郑佶淳"]},
-        "Wenliang Li": {"dir": "Wenliang"},
-        "Euphie": {"dir": "Euphie"},
+        "Alex Lee": {"dir": "Alex", "aliases": ["安宁"]},
+        "Sam Lee": {"dir": "Sam"},
+        "Robin": {"dir": "Robin"},
     }), encoding="utf-8")
     (root / "data" / ".backup_manifest.json").write_text(json.dumps({
         "config.json": {"sha256": "abc", "size": 2, "uploaded_at": "t"},
@@ -1544,20 +1544,20 @@ def test_migrate_adds_block_shrinks_config_moves_manifest(tmp_path):
     summary = migrate_backup.migrate(root)
 
     members = json.loads((root / "data" / "members.json").read_text(encoding="utf-8"))
-    jb = members["Jim Zheng"]["backup"]
+    jb = members["Alex Lee"]["backup"]
     assert jb["provider"] == "google_drive"
     assert jb["cred_prefix"] == "GDRIVE"
     assert jb["remote_root"] == "FamilyAssistant"
     assert jb["enabled"] is True
-    assert jb["scopes"] == ["Jim", "Family", "members.json", "config.json"]
-    assert "Wenliang Li" in members and "backup" not in members["Wenliang Li"]
+    assert jb["scopes"] == ["Alex", "Family", "members.json", "config.json"]
+    assert "Sam Lee" in members and "backup" not in members["Sam Lee"]
 
     cfg = json.loads((root / "config.json").read_text(encoding="utf-8"))["backup"]
     assert set(cfg) == {"enabled", "debounce_seconds"}
 
-    jim_manifest = root / "data" / "Jim" / ".backup_manifest.json"
-    assert jim_manifest.exists()
-    moved = json.loads(jim_manifest.read_text(encoding="utf-8"))
+    alex_manifest = root / "data" / "Alex" / ".backup_manifest.json"
+    assert alex_manifest.exists()
+    moved = json.loads(alex_manifest.read_text(encoding="utf-8"))
     assert "data/Family/ledger.db" in moved and "config.json" in moved
     assert not (root / "data" / ".backup_manifest.json").exists()
     assert (root / "data" / ".backup_state.json").exists()   # 全局时钟保留
@@ -1571,13 +1571,13 @@ def test_migrate_is_idempotent(tmp_path):
     second = migrate_backup.migrate(root)
     assert second["added_block"] is False
     members = json.loads((root / "data" / "members.json").read_text(encoding="utf-8"))
-    assert "backup" in members["Jim Zheng"]
+    assert "backup" in members["Alex Lee"]
 
 
 def test_migrate_aborts_on_nonempty_other_member(tmp_path):
     root = tmp_path
     _old_tree(root)
-    (root / "data" / "Wenliang" / "stray.db").write_bytes(b"x")
+    (root / "data" / "Sam" / "stray.db").write_bytes(b"x")
     with pytest.raises(SystemExit):
         migrate_backup.migrate(root)
 ```
@@ -1596,11 +1596,11 @@ Create `.codewhale/skills/Agent_Runtime/migrate_backup.py`:
 一次性迁移：单一全局备份 → 每成员备份（per-member backup）。
 
 幂等、可回滚（先快照 .bak）。前置：机器人已停。
-- 给 Jim 加 backup 块（scopes 复刻今日全量覆盖，零重传）。
+- 给 Alex 加 backup 块（scopes 复刻今日全量覆盖，零重传）。
 - config.json backup 段瘦身为 {enabled, debounce_seconds}。
-- 全局清单 data/.backup_manifest.json → data/Jim/.backup_manifest.json（rel 不变）。
+- 全局清单 data/.backup_manifest.json → data/Alex/.backup_manifest.json（rel 不变）。
 - 全局时钟 data/.backup_state.json 原地保留（仍是共享防抖时钟）。
-- 校验 Wenliang/Euphie 目录无文件（否则它们会被排除在任何备份外 → 中止待人工决定）。
+- 校验 Sam/Robin 目录无文件（否则它们会被排除在任何备份外 → 中止待人工决定）。
 
 用法: python .codewhale/skills/Agent_Runtime/migrate_backup.py [--root PATH]
 """
@@ -1612,8 +1612,8 @@ import shutil
 import sys
 from pathlib import Path
 
-_JIM = "Jim Zheng"
-_JIM_SCOPES = ["Jim", "Family", "members.json", "config.json"]
+_ALEX = "Alex Lee"
+_ALEX_SCOPES = ["Alex", "Family", "members.json", "config.json"]
 
 
 def _read(p: Path) -> dict:
@@ -1636,7 +1636,7 @@ def migrate(root: Path) -> dict:
     config = _read(config_path)
 
     # 安全校验：其他成员目录非空 → 它们的数据将无人备份，停下来让人决定
-    for other in ("Wenliang", "Euphie"):
+    for other in ("Sam", "Robin"):
         if _has_files(root / "data" / other):
             print(f"中止：data/{other} 含文件，但该成员无 backup 配置 → 其数据不会被备份。"
                   f"先为该成员加 backup 块或确认可不备份后再迁移。", file=sys.stderr)
@@ -1652,12 +1652,12 @@ def migrate(root: Path) -> dict:
     summary = {"added_block": False, "config_shrunk": False,
                "manifest_moved": False, "empty_ok": True}
 
-    # 1) Jim backup 块
-    jim = members.get(_JIM)
-    if isinstance(jim, dict) and "backup" not in jim:
-        jim["backup"] = {"provider": "google_drive", "cred_prefix": "GDRIVE",
+    # 1) Alex backup 块
+    alex = members.get(_ALEX)
+    if isinstance(alex, dict) and "backup" not in alex:
+        alex["backup"] = {"provider": "google_drive", "cred_prefix": "GDRIVE",
                          "remote_root": "FamilyAssistant", "enabled": True,
-                         "scopes": list(_JIM_SCOPES)}
+                         "scopes": list(_ALEX_SCOPES)}
         _write(members_path, members)
         summary["added_block"] = True
 
@@ -1669,9 +1669,9 @@ def migrate(root: Path) -> dict:
         _write(config_path, config)
         summary["config_shrunk"] = True
 
-    # 3) 全局清单 → Jim
+    # 3) 全局清单 → Alex
     src = root / "data" / ".backup_manifest.json"
-    dst = root / "data" / "Jim" / ".backup_manifest.json"
+    dst = root / "data" / "Alex" / ".backup_manifest.json"
     if src.exists():
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
@@ -1724,14 +1724,14 @@ Update `.codewhale/skills/Remote_Backup/SKILL.md`:
 - **用户开启备份**: per member — add a `backup` block; set `{cred_prefix}_CLIENT_ID/SECRET/
   REFRESH_TOKEN` (default prefix `GDRIVE`); authorize with
   `python backup_provider.py --auth [--prefix PREFIX]`.
-- **新设备恢复 (bootstrap)**: document the chicken-and-egg — restore Jim first with
-  `backup-restore --member "Jim Zheng" --prefix GDRIVE --remote-root FamilyAssistant`
+- **新设备恢复 (bootstrap)**: document the chicken-and-egg — restore Alex first with
+  `backup-restore --member "Alex Lee" --prefix GDRIVE --remote-root FamilyAssistant`
   (recovers `members.json` + `config.json`), then restore other members normally.
 - **配置**: `config.json backup` = `{enabled, debounce_seconds}` only; `include`/`remote_root`
   moved per-member into `members.json`.
 - **迁移**: `python .codewhale/skills/Agent_Runtime/migrate_backup.py` (bot stopped).
 - **边界**: keep existing (no two-way sync, no pre-upload encryption, no version history); add
-  "per-member, each to their own provider/account; only Jim wired live, others local-only until
+  "per-member, each to their own provider/account; only Alex wired live, others local-only until
   they add a `backup` block + creds".
 
 - [ ] **Step 2: Verify the doc matches reality**
@@ -1765,11 +1765,11 @@ Expected: prints the global clock line + one row per member with a `backup` bloc
 
 ```bash
 python .codewhale/skills/Agent_Runtime/migrate_backup.py
-python .codewhale/skills/Remote_Backup/cli.py backup-now --member "Jim Zheng"
-python .codewhale/skills/Remote_Backup/cli.py backup-verify --member "Jim Zheng"
+python .codewhale/skills/Remote_Backup/cli.py backup-now --member "Alex Lee"
+python .codewhale/skills/Remote_Backup/cli.py backup-verify --member "Alex Lee"
 ```
 Expected: `backup-now` reports everything skipped (0 uploaded), `backup-verify` reports consistent
-— confirming Jim's existing Drive carried over with zero churn.
+— confirming Alex's existing Drive carried over with zero churn.
 
 ---
 
@@ -1779,7 +1779,7 @@ Expected: `backup-now` reports everything skipped (0 uploaded), `backup-verify` 
   enumeration, keeps the dirty-hook contract + tests intact, and the per-member sync still
   isolates failures via per-member manifest + `last_error`.
 - **Prefix-boundary matching**: scopes match on a directory boundary (`rglob` does this
-  naturally) so `data/Jim` never captures `data/Jimbo`.
+  naturally) so `data/Alex` never captures `data/Jimbo`.
 - **No secrets in code**: provider reads only `os.environ`; never log token/secret values.
 - **Task 4 is deliberately one task**: its five engine functions + the CLI share the `bk` fixture
   and the new helper surface; splitting them leaves the suite red at a task boundary. Commit after

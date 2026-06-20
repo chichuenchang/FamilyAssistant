@@ -117,7 +117,7 @@ def _member_files(scopes: list[str]) -> dict[str, Path]:
     """成员 scope 集合 → {rel(posix): 绝对路径}，应用硬排除。
 
     token 指向文件则收该文件；指向目录则递归；不存在则静默跳过（migrate 前的空目录）。
-    前缀按目录边界匹配（rglob 天然如此），不会把 data/Jimbo 当成 data/Jim。
+    前缀按目录边界匹配（rglob 天然如此），不会把 data/Jimbo 当成 data/Alex。
     """
     out: dict[str, Path] = {}
     for token in scopes:

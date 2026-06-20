@@ -1,7 +1,7 @@
 # Remote Drive Folder-Tree Mirror — Design Spec
 
 Date: 2026-06-19
-Status: approved (Jim, standing approval through implementation)
+Status: approved (Alex, standing approval through implementation)
 
 ## Problem
 
@@ -99,7 +99,7 @@ The folder cache generalizes from "the single `remote_root` id" to a path→id m
 1. Steady state: a write → `mark_dirty` → `backup_tick` → `sync(member)` → `upload(file, rel)`
    → `_ensure_folder_path` places the file in `remote_root/<dir parts>/basename` with the
    `rel` tag. Lookups/deletes/restore continue to use the tag.
-2. One-time after deploy: `backup-reorg --member "Jim Zheng"` re-parents the existing flat files
+2. One-time after deploy: `backup-reorg --member "Alex Lee"` re-parents the existing flat files
    into the tree. Subsequent `backup-verify` is consistent; `backup-now` reports all-skips.
 
 ## Error handling

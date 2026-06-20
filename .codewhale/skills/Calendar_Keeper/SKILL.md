@@ -2,7 +2,7 @@
 
 > 日程（活动/安排）与待办（任务），**按成员私有**，与各成员自己的远程日历静默双向同步。
 > 活动与待办分库分 provider：每个成员的 schedule（活动）/ tasks（待办）各有独立存储、同步状态、
-> 同步偏好，可指向不同远程平台。当前只有 Jim 配了 Google（Calendar+Tasks），其余成员本地模式。
+> 同步偏好，可指向不同远程平台。当前只有 Alex 配了 Google（Calendar+Tasks），其余成员本地模式。
 > 远程是事实源（家人直接在手机上改日历）；本地是缓存 + 离线缓冲。未配置 provider 时本地照常工作。
 
 ## 代码位置
@@ -74,7 +74,7 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
 6. `config.json` 设 `calendar.enabled: true`（总开关），重启机器人。
    `cal-sync --member "<名>"` 首次全量刷新，`cal-status --member "<名>"` 确认。
 
-> 多个成员都用 Google：`GCAL_*` 当前是单账号（Jim，复用 Remote_Backup 客户端）。第二个 Google
+> 多个成员都用 Google：`GCAL_*` 当前是单账号（Alex，复用 Remote_Backup 客户端）。第二个 Google
 > 成员需扩展 provider 读命名空间环境变量（按成员区分凭据）—— 结构已就绪，凭据命名空间待实现。
 
 权限范围（最小化）：`calendar.events`（只能读写日历上的活动，不能管理日历本身）

@@ -43,10 +43,10 @@
 
 ```bash
 python .codewhale/skills/Remote_Backup/cli.py backup-status
-python .codewhale/skills/Remote_Backup/cli.py backup-status --member "Jim Zheng"
+python .codewhale/skills/Remote_Backup/cli.py backup-status --member "Alex Lee"
 python .codewhale/skills/Remote_Backup/cli.py backup-now
-python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "Jim Zheng" --prefix GDRIVE --remote-root FamilyAssistant
-python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Jim Zheng"
+python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "Alex Lee" --prefix GDRIVE --remote-root FamilyAssistant
+python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Alex Lee"
 ```
 
 ## 用户开启备份（当前 provider = Google Drive）
@@ -55,14 +55,14 @@ python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Jim Zheng"
 
 1. 在 `members.json` 中为目标成员添加 `backup` 块：
    ```json
-   "Jim Zheng": {
-     "dir": "Jim",
+   "Alex Lee": {
+     "dir": "Alex",
      "backup": {
        "provider": "google_drive",
        "cred_prefix": "GDRIVE",
        "remote_root": "FamilyAssistant",
        "enabled": true,
-       "scopes": ["Jim", "Family", "config.json"]
+       "scopes": ["Alex", "Family", "config.json"]
      }
    }
    ```
@@ -105,15 +105,15 @@ token/key，凭据只能 `os.environ` 读取。
 
 ## 新设备恢复（bootstrap）
 
-新设备上无 `members.json`（注册表存在 Jim 的备份里），存在鸡-蛋问题：
-需先恢复 Jim → 拿到注册表 → 再恢复其他成员。
+新设备上无 `members.json`（注册表存在 Alex 的备份里），存在鸡-蛋问题：
+需先恢复 Alex → 拿到注册表 → 再恢复其他成员。
 
 1. 克隆代码库，设置 `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` / `GDRIVE_REFRESH_TOKEN`。
-2. **先恢复 Jim**（引导模式，无需注册表已有该成员）：
+2. **先恢复 Alex**（引导模式，无需注册表已有该成员）：
    ```bash
-   python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "Jim Zheng" --prefix GDRIVE --remote-root FamilyAssistant
+   python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "Alex Lee" --prefix GDRIVE --remote-root FamilyAssistant
    ```
-   → 拉回 `members.json` + `config.json` + Jim 的 scope 文件。
+   → 拉回 `members.json` + `config.json` + Alex 的 scope 文件。
 3. 恢复其他成员（现在注册表已知，正常模式）：
    ```bash
    python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "成员名"
@@ -139,5 +139,5 @@ token/key，凭据只能 `os.environ` 读取。
 - ❌ 双向同步/冲突解决（单向 本地→云端；恢复是显式手动操作）
 - ❌ 上传前加密（依赖云盘自身的静态加密；未来可加）
 - ❌ 版本历史（用云盘自带的）
-- ✅ 按成员隔离：每个成员用自己的 provider/账号/凭据。Jim 已配置云端备份，
+- ✅ 按成员隔离：每个成员用自己的 provider/账号/凭据。Alex 已配置云端备份，
   其他成员默认仅本地，直到在 `members.json` 添加 `backup` 块 + 凭据。

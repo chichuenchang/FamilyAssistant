@@ -35,15 +35,15 @@ def _make_old_ledger(p: Path):
     conn.executescript(_OLD_SCHEMA)
     conn.execute("INSERT INTO notes (member,content,source_image,pinned,created_at) "
                  "VALUES (?,?,?,?,?)",
-                 ("Jim Zheng", "wifi pw 1234", "", 0, "2026-06-01T10:00:00"))
-    # schedule: remote event, local task (Jim), Euphie event, legacy 爸爸 event — all synced
+                 ("Alex Lee", "wifi pw 1234", "", 0, "2026-06-01T10:00:00"))
+    # schedule: remote event, local task (Alex), Robin event, legacy 爸爸 event — all synced
     sched = [
         ("event", "ev-remote", "RemoteEvent", "2026-06-20T10:00", "", 0, "", "",
          "", "active", "remote", 1),
-        ("task", "t-jim", "JimTask", "2026-06-21", "", 0, "", "",
-         "Jim Zheng", "active", "local", 1),
-        ("event", "ev-euphie", "EuphieMeet", "2026-06-22T09:00", "", 0, "", "",
-         "Euphie", "active", "local", 1),
+        ("task", "t-alex", "AlexTask", "2026-06-21", "", 0, "", "",
+         "Alex Lee", "active", "local", 1),
+        ("event", "ev-robin", "RobinMeet", "2026-06-22T09:00", "", 0, "", "",
+         "Robin", "active", "local", 1),
         ("event", "ev-legacy", "LegacyEvent", "2026-06-23T09:00", "", 0, "", "",
          "爸爸", "active", "local", 1),
     ]
@@ -59,14 +59,14 @@ def _make_old_ledger(p: Path):
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
-    """受控 members.json（Jim/Wenliang/Euphie + Jim 同步）+ DATA_ROOT=tmp。"""
+    """受控 members.json（Alex/Sam/Robin + Alex 同步）+ DATA_ROOT=tmp。"""
     mp = tmp_path / "members.json"
     mp.write_text(json.dumps({
-        "Jim Zheng": {"dir": "Jim",
+        "Alex Lee": {"dir": "Alex",
                       "sync": {"schedule": {"provider": "google_calendar", "enabled": True},
                                "tasks": {"provider": "google_tasks", "enabled": True}}},
-        "Wenliang Li": {"dir": "Wenliang"},
-        "Euphie": {"dir": "Euphie"},
+        "Sam Lee": {"dir": "Sam"},
+        "Robin": {"dir": "Robin"},
     }, ensure_ascii=False), encoding="utf-8")
     monkeypatch.setattr(members, "MEMBERS_PATH", mp)
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
@@ -79,34 +79,34 @@ def setup(tmp_path, monkeypatch):
 
 
 def test_detect_calendar_owner(setup):
-    assert migrate_storage._detect_calendar_owner() == "Jim Zheng"
+    assert migrate_storage._detect_calendar_owner() == "Alex Lee"
 
 
 def test_notes_go_to_member_store(setup):
     tmp, old, state = setup
     migrate_storage.migrate(old, state)
-    notes = note_db.list_notes(member="Jim Zheng",
-                               db_path=str(paths.member_store("Jim Zheng", "notes")))
+    notes = note_db.list_notes(member="Alex Lee",
+                               db_path=str(paths.member_store("Alex Lee", "notes")))
     assert [n["content"] for n in notes] == ["wifi pw 1234"]
 
 
 def test_events_and_tasks_split_to_owner(setup):
     tmp, old, state = setup
     migrate_storage.migrate(old, state)
-    sdb = str(paths.member_store("Jim Zheng", "schedule"))
-    tdb = str(paths.member_store("Jim Zheng", "tasks"))
+    sdb = str(paths.member_store("Alex Lee", "schedule"))
+    tdb = str(paths.member_store("Alex Lee", "tasks"))
     events = cal_db.list_upcoming(days=3650, today=__import__("datetime").date(2026, 6, 1),
                                   include_closed=True, db_path=sdb)
     tasks = cal_db.list_upcoming(days=3650, today=__import__("datetime").date(2026, 6, 1),
                                  include_closed=True, db_path=tdb)
-    assert {e["uid"] for e in events} == {"ev-remote", "ev-euphie", "ev-legacy"}
-    assert {t["uid"] for t in tasks} == {"t-jim"}
+    assert {e["uid"] for e in events} == {"ev-remote", "ev-robin", "ev-legacy"}
+    assert {t["uid"] for t in tasks} == {"t-alex"}
 
 
 def test_uid_and_synced_preserved(setup):
     tmp, old, state = setup
     migrate_storage.migrate(old, state)
-    sdb = str(paths.member_store("Jim Zheng", "schedule"))
+    sdb = str(paths.member_store("Alex Lee", "schedule"))
     rows = cal_db.list_upcoming(days=3650, today=__import__("datetime").date(2026, 6, 1),
                                 include_closed=True, db_path=sdb)
     for r in rows:
@@ -116,12 +116,12 @@ def test_uid_and_synced_preserved(setup):
 def test_legacy_member_relabeled_registered_kept(setup):
     tmp, old, state = setup
     migrate_storage.migrate(old, state)
-    sdb = str(paths.member_store("Jim Zheng", "schedule"))
+    sdb = str(paths.member_store("Alex Lee", "schedule"))
     rows = {r["uid"]: r for r in cal_db.list_upcoming(
         days=3650, today=__import__("datetime").date(2026, 6, 1),
         include_closed=True, db_path=sdb)}
-    assert rows["ev-legacy"]["member"] == "Jim Zheng"   # 爸爸 (unregistered) -> owner
-    assert rows["ev-euphie"]["member"] == "Euphie"      # registered label kept
+    assert rows["ev-legacy"]["member"] == "Alex Lee"   # 爸爸 (unregistered) -> owner
+    assert rows["ev-robin"]["member"] == "Robin"      # registered label kept
 
 
 def test_family_ledger_created_empty(setup):
@@ -140,7 +140,7 @@ def test_sync_state_seeded(setup):
     tmp, old, state = setup
     migrate_storage.migrate(old, state)
     for domain in ("schedule", "tasks"):
-        sp = paths.member_sync_state("Jim Zheng", domain)
+        sp = paths.member_sync_state("Alex Lee", domain)
         st = json.loads(sp.read_text(encoding="utf-8"))
         assert st["last_refresh"] == "2026-06-12T09:00:00"
 
@@ -159,7 +159,7 @@ def test_idempotent_rerun_on_bak(setup):
     bak = tmp / "ledger.db.premigration.bak"
     # 二次对 .bak 跑：不应重复插入
     migrate_storage.migrate(bak, state)
-    sdb = str(paths.member_store("Jim Zheng", "schedule"))
+    sdb = str(paths.member_store("Alex Lee", "schedule"))
     rows = cal_db.list_upcoming(days=3650, today=__import__("datetime").date(2026, 6, 1),
                                 include_closed=True, db_path=sdb)
     assert len(rows) == 3                                # 仍 3 个事件，无重复

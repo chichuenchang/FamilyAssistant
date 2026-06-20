@@ -45,7 +45,7 @@ class TestGdriveProvider:
         for var in ("WLI_GDRIVE_CLIENT_ID", "WLI_GDRIVE_CLIENT_SECRET",
                     "WLI_GDRIVE_REFRESH_TOKEN"):
             monkeypatch.delenv(var, raising=False)
-        prov = backup_provider.GoogleDriveProvider("WLI_GDRIVE", "WenliangBackup")
+        prov = backup_provider.GoogleDriveProvider("WLI_GDRIVE", "SamBackup")
         assert prov.is_configured() is False
         monkeypatch.setenv("WLI_GDRIVE_CLIENT_ID", "x")
         monkeypatch.setenv("WLI_GDRIVE_CLIENT_SECRET", "y")
@@ -147,12 +147,12 @@ class TestGdriveProvider:
         fake.responses = [
             _files_resp(),                  # data: query miss
             (200, b'{"id": "F_data"}'),     # data: create
-            _files_resp(),                  # Jim: query miss
-            (200, b'{"id": "F_Jim"}'),      # Jim: create
+            _files_resp(),                  # Alex: query miss
+            (200, b'{"id": "F_Alex"}'),      # Alex: create
             _files_resp(),                  # notes: query miss
             (200, b'{"id": "F_notes"}'),    # notes: create
         ]
-        leaf = prov._ensure_folder_path("data/Jim/notes/x.jpg")
+        leaf = prov._ensure_folder_path("data/Alex/notes/x.jpg")
         assert leaf == "F_notes"
 
     def test_ensure_folder_path_caches(self, gdrive):
@@ -177,30 +177,30 @@ class TestGdriveProvider:
     def test_find_has_no_parent_constraint(self, gdrive):
         prov, fake, calls, _ = gdrive
         fake.responses = [_files_resp({"id": "NESTED"})]
-        assert prov._find("data/Jim/notes/deep/x.jpg") == "NESTED"
+        assert prov._find("data/Alex/notes/deep/x.jpg") == "NESTED"
         assert "parents" not in calls[-1]["url"]      # query no longer parent-scoped
 
     def test_list_remote_finds_nested_and_drops_parent(self, gdrive):
         prov, fake, calls, _ = gdrive
         fake.responses = [
             _files_resp({"id": "1", "size": "7",
-                         "appProperties": {"rel": "data/Jim/notes/n.db"}}),
+                         "appProperties": {"rel": "data/Alex/notes/n.db"}}),
         ]
         out = prov.list_remote()
-        assert out == {"data/Jim/notes/n.db": {"size": 7}}
+        assert out == {"data/Alex/notes/n.db": {"size": 7}}
         assert "parents" not in calls[-1]["url"]
 
     def test_reorganize_moves_flat_to_folders(self, gdrive):
         prov, fake, calls, _ = gdrive
         fake.responses = [
             _files_resp({"id": "X", "parents": ["FOLDER1"],
-                         "appProperties": {"rel": "data/Jim/x.jpg"}}),  # list page
+                         "appProperties": {"rel": "data/Alex/x.jpg"}}),  # list page
             _files_resp(), (200, b'{"id": "Fd"}'),   # folder: data
-            _files_resp(), (200, b'{"id": "FJ"}'),   # folder: Jim
+            _files_resp(), (200, b'{"id": "FJ"}'),   # folder: Alex
             (200, b'{"id": "X"}'),                    # PATCH move
         ]
         r = prov.reorganize()
-        assert r["moved"] == ["data/Jim/x.jpg"]
+        assert r["moved"] == ["data/Alex/x.jpg"]
         move = calls[-1]
         assert move["method"] == "PATCH"
         assert "addParents=FJ" in move["url"]
@@ -208,10 +208,10 @@ class TestGdriveProvider:
 
     def test_reorganize_skips_already_nested(self, gdrive):
         prov, fake, calls, _ = gdrive
-        prov._path_cache = {"data": "Fd", "data/Jim": "FJ"}   # leaf resolves with no HTTP
+        prov._path_cache = {"data": "Fd", "data/Alex": "FJ"}   # leaf resolves with no HTTP
         fake.responses = [
             _files_resp({"id": "X", "parents": ["FJ"],
-                         "appProperties": {"rel": "data/Jim/x.jpg"}}),
+                         "appProperties": {"rel": "data/Alex/x.jpg"}}),
         ]
         r = prov.reorganize()
         assert r["moved"] == [] and r["skipped"] == 1
@@ -222,9 +222,9 @@ import backup_sync
 
 @pytest.fixture
 def bk(tmp_path, monkeypatch):
-    """Per-member engine: fake ROOT, global clock in tmp, one configured member (Jim)."""
+    """Per-member engine: fake ROOT, global clock in tmp, one configured member (Alex)."""
     root = tmp_path / "root"
-    (root / "data" / "Jim").mkdir(parents=True)
+    (root / "data" / "Alex").mkdir(parents=True)
     (root / "data" / "Family").mkdir(parents=True)
     (root / "config.json").write_text("{}", encoding="utf-8")
 
@@ -253,10 +253,10 @@ def bk(tmp_path, monkeypatch):
             Path(local_path).write_bytes(self.files[remote_rel])
 
     fake = FakeProvider()
-    pref = {"name": "Jim", "dir": "Jim", "provider": "google_drive",
+    pref = {"name": "Alex", "dir": "Alex", "provider": "google_drive",
             "cred_prefix": "GDRIVE", "remote_root": "FamilyAssistant",
-            "enabled": True, "scopes": ["Jim", "Family", "config.json"]}
-    monkeypatch.setattr(backup_sync, "_backup_members", lambda: [("Jim", pref)])
+            "enabled": True, "scopes": ["Alex", "Family", "config.json"]}
+    monkeypatch.setattr(backup_sync, "_backup_members", lambda: [("Alex", pref)])
     monkeypatch.setattr(backup_sync, "_make_provider", lambda p: fake)
     return root, fake, pref
 
@@ -280,34 +280,34 @@ class TestStateClock:
 
 
 class TestSync:
-    def _jim_manifest(self, root):
-        return backup_sync._load_json(root / "data" / "Jim" / ".backup_manifest.json")
+    def _alex_manifest(self, root):
+        return backup_sync._load_json(root / "data" / "Alex" / ".backup_manifest.json")
 
     def test_uploads_new_and_skips_unchanged(self, bk):
         root, fake, _ = bk
         d = root / "data" / "Family" / "documents"
         d.mkdir(parents=True)
         (d / "a.pdf").write_bytes(b"img-a")
-        r1 = backup_sync.sync("Jim")
+        r1 = backup_sync.sync("Alex")
         assert "data/Family/documents/a.pdf" in r1["uploaded"]
         assert fake.files["data/Family/documents/a.pdf"] == b"img-a"
-        r2 = backup_sync.sync("Jim")
+        r2 = backup_sync.sync("Alex")
         assert r2["uploaded"] == [] and r2["skipped"] >= 1
 
     def test_manifest_lands_under_member(self, bk):
         root, fake, _ = bk
-        (root / "data" / "Jim" / "note.txt").write_bytes(b"x")
-        backup_sync.sync("Jim")
-        assert (root / "data" / "Jim" / ".backup_manifest.json").exists()
-        assert "data/Jim/note.txt" in self._jim_manifest(root)
+        (root / "data" / "Alex" / "note.txt").write_bytes(b"x")
+        backup_sync.sync("Alex")
+        assert (root / "data" / "Alex" / ".backup_manifest.json").exists()
+        assert "data/Alex/note.txt" in self._alex_manifest(root)
 
     def test_reuploads_changed(self, bk):
         root, fake, _ = bk
         f = root / "data" / "Family" / "x.bin"
         f.write_bytes(b"v1")
-        backup_sync.sync("Jim")
+        backup_sync.sync("Alex")
         f.write_bytes(b"v2")
-        r = backup_sync.sync("Jim")
+        r = backup_sync.sync("Alex")
         assert "data/Family/x.bin" in r["uploaded"]
         assert fake.files["data/Family/x.bin"] == b"v2"
 
@@ -315,10 +315,10 @@ class TestSync:
         root, fake, _ = bk
         f = root / "data" / "Family" / "old.pdf"
         f.write_bytes(b"x")
-        backup_sync.sync("Jim")
+        backup_sync.sync("Alex")
         assert "data/Family/old.pdf" in fake.files
         f.unlink()
-        r = backup_sync.sync("Jim")
+        r = backup_sync.sync("Alex")
         assert "data/Family/old.pdf" in r["deleted"]
         assert "data/Family/old.pdf" not in fake.files
 
@@ -326,11 +326,11 @@ class TestSync:
         # 守卫：local 全空但清单非空时不镜像删除（防盘未挂/误清空 scope 抹掉整个远端）
         root, fake, _ = bk
         (root / "data" / "Family" / "keep.pdf").write_bytes(b"x")
-        backup_sync.sync("Jim")
+        backup_sync.sync("Alex")
         assert "data/Family/keep.pdf" in fake.files
         (root / "data" / "Family" / "keep.pdf").unlink()
         (root / "config.json").unlink()          # 现在所有 scope 都解析为空
-        r = backup_sync.sync("Jim")
+        r = backup_sync.sync("Alex")
         assert r["deleted"] == []                 # 未删任何远端
         assert "data/Family/keep.pdf" in fake.files
         assert r["errors"]                        # 记录告警
@@ -346,7 +346,7 @@ class TestSync:
         conn.execute("INSERT INTO t VALUES (1)")
         conn.commit()
         try:
-            r = backup_sync.sync("Jim")
+            r = backup_sync.sync("Alex")
             assert "data/Family/ledger.db" in r["uploaded"]
             fd, tmp = tempfile.mkstemp(suffix=".db")
             os.close(fd)
@@ -362,9 +362,9 @@ class TestSync:
         root, fake, _ = bk
         (root / "data" / "Family" / "a.jpg").write_bytes(b"x")
         fake.fail_uploads = True
-        r = backup_sync.sync("Jim")
+        r = backup_sync.sync("Alex")
         assert r["errors"]
-        mst = backup_sync._load_json(root / "data" / "Jim" / ".backup_state.json")
+        mst = backup_sync._load_json(root / "data" / "Alex" / ".backup_state.json")
         assert mst["last_error"] and mst["last_sync"]
 
     def test_sync_unknown_member_raises(self, bk):
@@ -424,7 +424,7 @@ class TestTick:
         monkeypatch.setattr(backup_sync, "sync", boom)
         later = datetime.now() + timedelta(seconds=120)
         assert backup_sync.backup_tick(now=later) is False
-        mst = backup_sync._load_json(root / "data" / "Jim" / ".backup_state.json")
+        mst = backup_sync._load_json(root / "data" / "Alex" / ".backup_state.json")
         assert "explode" in (mst.get("last_error") or "")
 
 
@@ -436,10 +436,10 @@ class TestRestoreVerifyStatus:
             "data/Family/receipts/2026-06/a.jpg": b"img",
             "config.json": b"{}",
         }
-        r = backup_sync.restore("Jim")
+        r = backup_sync.restore("Alex")
         assert sorted(r["downloaded"]) == sorted(fake.files)
         assert (root / "data" / "Family" / "receipts" / "2026-06" / "a.jpg").read_bytes() == b"img"
-        manifest = backup_sync._load_json(root / "data" / "Jim" / ".backup_manifest.json")
+        manifest = backup_sync._load_json(root / "data" / "Alex" / ".backup_manifest.json")
         assert set(manifest) == set(fake.files)
 
     def test_restore_refuses_non_empty(self, bk):
@@ -447,37 +447,37 @@ class TestRestoreVerifyStatus:
         (root / "data" / "Family" / "existing.jpg").write_bytes(b"x")
         fake.files = {"data/Family/other.jpg": b"y"}
         with pytest.raises(ValueError):
-            backup_sync.restore("Jim")
-        backup_sync.restore("Jim", force=True)
+            backup_sync.restore("Alex")
+        backup_sync.restore("Alex", force=True)
         assert (root / "data" / "Family" / "other.jpg").exists()
 
     def test_restore_unconfigured_raises(self, bk):
         root, fake, _ = bk
         fake._configured = False
         with pytest.raises(ValueError):
-            backup_sync.restore("Jim")
+            backup_sync.restore("Alex")
 
     def test_restore_bootstrap_via_override(self, bk, monkeypatch):
         root, fake, _ = bk
         monkeypatch.setattr(backup_sync, "_backup_members", lambda: [])
         fake.files = {"data/members.json": b"{}", "config.json": b"{}"}
         override = {"provider": "google_drive", "cred_prefix": "GDRIVE",
-                    "remote_root": "FamilyAssistant", "scopes": [], "dir": "Jim"}
-        r = backup_sync.restore("Jim Zheng", override=override)
+                    "remote_root": "FamilyAssistant", "scopes": [], "dir": "Alex"}
+        r = backup_sync.restore("Alex Lee", override=override)
         assert "data/members.json" in r["downloaded"]
         assert (root / "data" / "members.json").exists()
 
     def test_verify_reports(self, bk):
         root, fake, _ = bk
         (root / "data" / "Family" / "a.jpg").write_bytes(b"aaaa")
-        backup_sync.sync("Jim")
+        backup_sync.sync("Alex")
         fake.files["data/Family/ghost.jpg"] = b"zz"
         fake.files["data/Family/a.jpg"] = b"a"
-        v = backup_sync.verify("Jim")
+        v = backup_sync.verify("Alex")
         assert "data/Family/ghost.jpg" in v["extra_remote"]
         assert "data/Family/a.jpg" in v["size_mismatch"]
         del fake.files["data/Family/a.jpg"]
-        v = backup_sync.verify("Jim")
+        v = backup_sync.verify("Alex")
         assert "data/Family/a.jpg" in v["missing_remote"]
 
     def test_status_global_and_members(self, bk):
@@ -485,14 +485,14 @@ class TestRestoreVerifyStatus:
         assert s["enabled"] is True
         assert len(s["members"]) == 1
         row = s["members"][0]
-        assert row["member"] == "Jim" and row["configured"] is True
+        assert row["member"] == "Alex" and row["configured"] is True
         assert row["files_tracked"] == 0
         backup_sync.mark_dirty()
         s = backup_sync.status()
         assert s["dirty_since"] is not None
 
     def test_status_single_member_filter(self, bk):
-        assert [m["member"] for m in backup_sync.status(member="Jim")["members"]] == ["Jim"]
+        assert [m["member"] for m in backup_sync.status(member="Alex")["members"]] == ["Alex"]
         assert backup_sync.status(member="Nobody")["members"] == []
 
 
@@ -527,10 +527,10 @@ def _enabled_member_env(tmp_path):
     cfg.write_text(json.dumps({"backup": {"enabled": True, "debounce_seconds": 60},
                                "data_root": "data"}), encoding="utf-8")
     mp = tmp_path / "members.json"
-    mp.write_text(json.dumps({"Jim Zheng": {"dir": "Jim", "backup": {
+    mp.write_text(json.dumps({"Alex Lee": {"dir": "Alex", "backup": {
         "provider": "google_drive", "cred_prefix": "GDRIVE",
         "remote_root": "FamilyAssistant", "enabled": True,
-        "scopes": ["Jim", "Family"]}}}), encoding="utf-8")
+        "scopes": ["Alex", "Family"]}}}), encoding="utf-8")
     return {"BACKUP_STATE_DIR": str(tmp_path), "BACKUP_CONFIG": str(cfg),
             "BACKUP_MEMBERS": str(mp), "DATA_ROOT": str(tmp_path / "data")}
 
@@ -552,7 +552,7 @@ class TestCli:
             env[var] = ""
         r = _run_cli("backup-status", env_extra=env)
         assert r.returncode == 0
-        assert "Jim" in r.stdout
+        assert "Alex" in r.stdout
 
     def test_now_skips_unconfigured_member(self, tmp_path):
         env = _enabled_member_env(tmp_path)
@@ -629,17 +629,17 @@ class TestScopeResolver:
 
     def test_scope_to_prefix(self, sr):
         assert backup_sync._scope_to_prefix("config.json") == "config.json"
-        assert backup_sync._scope_to_prefix("Jim") == "data/Jim"
+        assert backup_sync._scope_to_prefix("Alex") == "data/Alex"
         assert backup_sync._scope_to_prefix("Family/documents") == "data/Family/documents"
 
     def test_member_files_prefix_boundary(self, sr):
         root = sr
-        (root / "data" / "Jim" / "notes").mkdir(parents=True)
-        (root / "data" / "Jim" / "notes" / "n.db").write_bytes(b"x")
+        (root / "data" / "Alex" / "notes").mkdir(parents=True)
+        (root / "data" / "Alex" / "notes" / "n.db").write_bytes(b"x")
         (root / "data" / "Jimbo").mkdir()
         (root / "data" / "Jimbo" / "y.txt").write_text("y")
-        files = backup_sync._member_files(["Jim"])
-        assert "data/Jim/notes/n.db" in files
+        files = backup_sync._member_files(["Alex"])
+        assert "data/Alex/notes/n.db" in files
         assert not any("Jimbo" in f for f in files)   # 前缀不跨目录边界
 
     def test_member_files_config_and_members_aliases(self, sr):
@@ -652,14 +652,14 @@ class TestScopeResolver:
 
     def test_member_files_applies_hard_excludes(self, sr):
         root = sr
-        (root / "data" / "Jim").mkdir(parents=True)
-        (root / "data" / "Jim" / "notes.db").write_bytes(b"")
-        (root / "data" / "Jim" / ".backup_manifest.json").write_text("{}")
-        (root / "data" / "Jim" / "wechat_creds.json").write_text("secret")
-        files = backup_sync._member_files(["Jim"])
-        assert "data/Jim/notes.db" in files
+        (root / "data" / "Alex").mkdir(parents=True)
+        (root / "data" / "Alex" / "notes.db").write_bytes(b"")
+        (root / "data" / "Alex" / ".backup_manifest.json").write_text("{}")
+        (root / "data" / "Alex" / "wechat_creds.json").write_text("secret")
+        files = backup_sync._member_files(["Alex"])
+        assert "data/Alex/notes.db" in files
         assert not any("creds" in f for f in files)
-        assert "data/Jim/.backup_manifest.json" not in files
+        assert "data/Alex/.backup_manifest.json" not in files
 
     def test_member_files_missing_token_is_silent(self, sr):
         assert backup_sync._member_files(["Ghost"]) == {}
@@ -675,16 +675,16 @@ def test_cmd_reorg_invokes_provider(monkeypatch, capsys):
         def is_configured(self):
             return True
         def reorganize(self):
-            return {"moved": ["data/Jim/x.jpg"], "skipped": 2}
+            return {"moved": ["data/Alex/x.jpg"], "skipped": 2}
     monkeypatch.setattr(cli.backup_sync, "_resolve",
                         lambda m: {"provider": "google_drive", "name": m})
     monkeypatch.setattr(cli.backup_sync, "_make_provider", lambda p: P())
 
     class Args:
-        member = "Jim Zheng"
+        member = "Alex Lee"
     cli.cmd_reorg(Args())
     out = capsys.readouterr().out
-    assert "data/Jim/x.jpg" in out
+    assert "data/Alex/x.jpg" in out
     assert "移动 1" in out and "已就位 2" in out
 
 

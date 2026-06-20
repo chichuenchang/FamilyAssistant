@@ -1,7 +1,7 @@
 # Per-Member Remote Backup — Design Spec
 
 Date: 2026-06-19
-Status: approved (Jim, standing approval through implementation)
+Status: approved (Alex, standing approval through implementation)
 
 ## Problem
 
@@ -20,7 +20,7 @@ provider registry, per-domain `.sync_state.json`). Backup did not get the same t
 Each family member can back up to their **own** remote provider/account, selecting **what**
 they back up. Provider, credentials, destination, and the file set are all per-member.
 
-Concrete first case: Jim backs up to the existing Google Drive, covering the same data the
+Concrete first case: Alex backs up to the existing Google Drive, covering the same data the
 monolithic engine covers today (no coverage regression).
 
 Non-goals (YAGNI): a second provider implementation (Dropbox/S3/etc.) — registry is built,
@@ -34,9 +34,9 @@ backup-side encryption (unchanged — relies on the cloud's at-rest encryption).
    expresses "notes but not my schedule" and "documents but not ledger".
 2. **Credentials: generic env-prefix, built now.** The backup block names `provider` +
    `cred_prefix` + `remote_root`. The provider resolves creds from `{cred_prefix}_*` env vars.
-   Default prefix `GDRIVE` ⇒ Jim's existing setup works unchanged. The full multi-member
+   Default prefix `GDRIVE` ⇒ Alex's existing setup works unchanged. The full multi-member
    mechanism is built now (not just plumbed).
-3. **Scope tokens: rel-path prefixes.** Data-root-relative path roots (e.g. `Jim/notes`,
+3. **Scope tokens: rel-path prefixes.** Data-root-relative path roots (e.g. `Alex/notes`,
    `Family/documents`), reusing the rel-path convention the codebase already speaks. Filter =
    prefix match. `config.json` is a recognized infra alias (the one backup-worthy file outside
    `data/`).
@@ -47,8 +47,8 @@ backup-side encryption (unchanged — relies on the cloud's at-rest encryption).
    and cheap (one write, no member enumeration). One member's provider failure is isolated to
    its own `last_error`; the global clock simply stays dirty and the next tick retries (cheap,
    sha-gated). Mirrors the calendar per-member precedent for the per-member parts.
-5. **Jim's scope = full current coverage.** `["Jim", "Family", "members.json", "config.json"]`
-   reproduces today's exact backup set (same rels), so Jim's existing Drive contents + manifest
+5. **Alex's scope = full current coverage.** `["Alex", "Family", "members.json", "config.json"]`
+   reproduces today's exact backup set (same rels), so Alex's existing Drive contents + manifest
    carry over with **zero re-upload**. No data-safety regression.
 
 ## Components
@@ -58,17 +58,17 @@ backup-side encryption (unchanged — relies on the cloud's at-rest encryption).
 Optional `backup` block per member:
 
 ```json
-"Jim Zheng": {
-  "aliases": ["Jichun Zheng", "郑佶淳"],
+"Alex Lee": {
+  "aliases": ["Alex Lee", "安宁"],
   "wechat": ["…"],
-  "dir": "Jim",
+  "dir": "Alex",
   "sync": { "schedule": {...}, "tasks": {...} },
   "backup": {
     "provider": "google_drive",
     "cred_prefix": "GDRIVE",
     "remote_root": "FamilyAssistant",
     "enabled": true,
-    "scopes": ["Jim", "Family", "members.json", "config.json"]
+    "scopes": ["Alex", "Family", "members.json", "config.json"]
   }
 }
 ```
@@ -97,10 +97,10 @@ per-member). Mirrors the calendar global-`enabled` vs per-member-enable split.
 ### Scope resolution (in `backup_sync`)
 
 Token → ROOT-relative prefix (preserves the existing rel scheme, which is ROOT-relative posix,
-e.g. `data/Jim/notes/x.jpg`, `data/members.json`, `config.json`):
+e.g. `data/Alex/notes/x.jpg`, `data/members.json`, `config.json`):
 
 - token `config.json` → `config.json` (recognized infra alias; the one file outside `data/`)
-- any other token → `data/<token>` (`Jim` → `data/Jim`, `Family/documents` →
+- any other token → `data/<token>` (`Alex` → `data/Alex`, `Family/documents` →
   `data/Family/documents`, `members.json` → `data/members.json`)
 
 A walked file's ROOT-rel `r` is in a member's set iff some resolved prefix `p` satisfies
@@ -141,7 +141,7 @@ Module-level Google globals become a factory parameterized by `(cred_prefix, rem
 - `GoogleDriveProvider(cred_prefix, remote_root)` exposing the existing contract as methods:
   `is_configured`, `upload`, `delete`, `list_remote`, `download`.
 - `is_configured()` checks `{cred_prefix}_CLIENT_ID/SECRET/REFRESH_TOKEN` (default `GDRIVE` ⇒
-  Jim's existing env unchanged). Token/folder caches become per-instance.
+  Alex's existing env unchanged). Token/folder caches become per-instance.
 - `remote_root` comes from the constructor (no longer reads `config.json`).
 - `--auth` gains `--prefix` (default `GDRIVE`): a future member authorizes with
   `python backup_provider.py --auth --prefix WLI_GDRIVE` and the printed `setx` line uses the
@@ -167,12 +167,12 @@ unchanged (the three read/now commands already present; restore stays local-only
 
 ## Bootstrap / restore on a fresh device
 
-members.json lives inside Jim's backup set, creating a chicken-and-egg: you need members.json
-to know Jim's scopes, but members.json comes from Jim's backup. Resolution:
+members.json lives inside Alex's backup set, creating a chicken-and-egg: you need members.json
+to know Alex's scopes, but members.json comes from Alex's backup. Resolution:
 
-1. Clone repo, set Jim's three `GDRIVE_*` env vars.
-2. `backup-restore --member "Jim Zheng" --prefix GDRIVE --remote-root FamilyAssistant`
-   (provider config from flags, no members.json needed) → recovers all of Jim's files,
+1. Clone repo, set Alex's three `GDRIVE_*` env vars.
+2. `backup-restore --member "Alex Lee" --prefix GDRIVE --remote-root FamilyAssistant`
+   (provider config from flags, no members.json needed) → recovers all of Alex's files,
    including `data/members.json` and `config.json`.
 3. With members.json present, restore any other member normally.
 
@@ -184,21 +184,21 @@ Idempotent script in Agent_Runtime:
 
 1. Snapshot: copy `data/members.json` → `.bak`, `config.json` → `.bak`, and the global
    `data/.backup_manifest.json` / `.backup_state.json` if present → `.bak`.
-2. Add Jim's `backup` block to members.json (provider `google_drive`, `cred_prefix` `GDRIVE`,
+2. Add Alex's `backup` block to members.json (provider `google_drive`, `cred_prefix` `GDRIVE`,
    `remote_root` `FamilyAssistant`, `enabled` true, scopes
-   `["Jim", "Family", "members.json", "config.json"]`).
+   `["Alex", "Family", "members.json", "config.json"]`).
 3. Rewrite `config.json` `backup` → `{enabled, debounce_seconds}` (drop `include`,
    `remote_root`).
-4. Move the global manifest → Jim: `data/.backup_manifest.json` →
-   `data/Jim/.backup_manifest.json`. The rel scheme is identical (ROOT-relative), so the next
+4. Move the global manifest → Alex: `data/.backup_manifest.json` →
+   `data/Alex/.backup_manifest.json`. The rel scheme is identical (ROOT-relative), so the next
    `sync` is a no-op diff → **zero re-upload, zero remote churn**. The global
    `data/.backup_state.json` (debounce clock) **stays in place** — it remains the shared clock.
-   If the global manifest is absent (backup never ran), Jim simply starts empty → first sync is
+   If the global manifest is absent (backup never ran), Alex simply starts empty → first sync is
    a full upload (expected).
-5. Verify: assert `data/Wenliang/` and `data/Euphie/` contain no files (they are empty after
-   the storage refactor), so Jim's mirror will not delete anything unexpected from the remote;
+5. Verify: assert `data/Sam/` and `data/Robin/` contain no files (they are empty after
+   the storage refactor), so Alex's mirror will not delete anything unexpected from the remote;
    assert every relocated manifest rel still resolves to an existing in-scope local file.
-6. Idempotent: re-running detects Jim's block + relocated files and no-ops.
+6. Idempotent: re-running detects Alex's block + relocated files and no-ops.
 
 Rollback: move the state files back, restore the `.bak` copies of config.json + members.json.
 
@@ -216,7 +216,7 @@ Rollback: move the state files back, restore the `.bak` copies of config.json + 
 
 - `members.backup_pref`: block normalization, defaults, `None` when absent.
 - Scope resolution: token→prefix mapping, `config.json` infra alias, prefix-boundary match
-  (`Jim` must not match `data/Jimbo/…`), hard-excludes layered on top, missing-token warning.
+  (`Alex` must not match `data/Jimbo/…`), hard-excludes layered on top, missing-token warning.
 - Provider factory: `{cred_prefix}_*` env read, `is_configured` true/false, default `GDRIVE`,
   per-instance caches, `--auth --prefix`.
 - Engine: `mark_dirty` still writes the global clock (unchanged); `backup_tick` loops and
@@ -226,9 +226,9 @@ Rollback: move the state files back, restore the `.bak` copies of config.json + 
 - CLI: `--member` selection and default-all on now/status/verify; restore per-member +
   bootstrap via `--prefix`/`--remote-root`.
 - Migration test: synthesize a global manifest/state + old config/members.json, run the
-  migration, assert Jim's block added, config shrunk, state relocated with rels preserved,
-  Wenliang/Euphie empty assertion, and idempotent re-run.
-- Existing backup tests repointed from the global state/manifest to Jim's per-member files.
+  migration, assert Alex's block added, config shrunk, state relocated with rels preserved,
+  Sam/Robin empty assertion, and idempotent re-run.
+- Existing backup tests repointed from the global state/manifest to Alex's per-member files.
 - Full `pytest` suite green before completion.
 
 ## Implementation order (phased, TDD)

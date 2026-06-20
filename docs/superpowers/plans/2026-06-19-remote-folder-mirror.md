@@ -55,12 +55,12 @@ Append to `class TestGdriveProvider` in `tests/test_remote_backup.py`:
         fake.responses = [
             _files_resp(),                  # data: query miss
             (200, b'{"id": "F_data"}'),     # data: create
-            _files_resp(),                  # Jim: query miss
-            (200, b'{"id": "F_Jim"}'),      # Jim: create
+            _files_resp(),                  # Alex: query miss
+            (200, b'{"id": "F_Alex"}'),      # Alex: create
             _files_resp(),                  # notes: query miss
             (200, b'{"id": "F_notes"}'),    # notes: create
         ]
-        leaf = prov._ensure_folder_path("data/Jim/notes/x.jpg")
+        leaf = prov._ensure_folder_path("data/Alex/notes/x.jpg")
         assert leaf == "F_notes"
 
     def test_ensure_folder_path_caches(self, gdrive):
@@ -165,17 +165,17 @@ Append to `class TestGdriveProvider`:
     def test_find_has_no_parent_constraint(self, gdrive):
         prov, fake, calls, _ = gdrive
         fake.responses = [_files_resp({"id": "NESTED"})]
-        assert prov._find("data/Jim/notes/deep/x.jpg") == "NESTED"
+        assert prov._find("data/Alex/notes/deep/x.jpg") == "NESTED"
         assert "parents" not in calls[-1]["url"]      # query no longer parent-scoped
 
     def test_list_remote_finds_nested_and_drops_parent(self, gdrive):
         prov, fake, calls, _ = gdrive
         fake.responses = [
             _files_resp({"id": "1", "size": "7",
-                         "appProperties": {"rel": "data/Jim/notes/n.db"}}),
+                         "appProperties": {"rel": "data/Alex/notes/n.db"}}),
         ]
         out = prov.list_remote()
-        assert out == {"data/Jim/notes/n.db": {"size": 7}}
+        assert out == {"data/Alex/notes/n.db": {"size": 7}}
         assert "parents" not in calls[-1]["url"]
 ```
 
@@ -327,13 +327,13 @@ Append to `class TestGdriveProvider`:
         prov, fake, calls, _ = gdrive
         fake.responses = [
             _files_resp({"id": "X", "parents": ["FOLDER1"],
-                         "appProperties": {"rel": "data/Jim/x.jpg"}}),  # list page
+                         "appProperties": {"rel": "data/Alex/x.jpg"}}),  # list page
             _files_resp(), (200, b'{"id": "Fd"}'),   # folder: data
-            _files_resp(), (200, b'{"id": "FJ"}'),   # folder: Jim
+            _files_resp(), (200, b'{"id": "FJ"}'),   # folder: Alex
             (200, b'{"id": "X"}'),                    # PATCH move
         ]
         r = prov.reorganize()
-        assert r["moved"] == ["data/Jim/x.jpg"]
+        assert r["moved"] == ["data/Alex/x.jpg"]
         move = calls[-1]
         assert move["method"] == "PATCH"
         assert "addParents=FJ" in move["url"]
@@ -341,10 +341,10 @@ Append to `class TestGdriveProvider`:
 
     def test_reorganize_skips_already_nested(self, gdrive):
         prov, fake, calls, _ = gdrive
-        prov._path_cache = {"data": "Fd", "data/Jim": "FJ"}   # leaf resolves with no HTTP
+        prov._path_cache = {"data": "Fd", "data/Alex": "FJ"}   # leaf resolves with no HTTP
         fake.responses = [
             _files_resp({"id": "X", "parents": ["FJ"],
-                         "appProperties": {"rel": "data/Jim/x.jpg"}}),
+                         "appProperties": {"rel": "data/Alex/x.jpg"}}),
         ]
         r = prov.reorganize()
         assert r["moved"] == [] and r["skipped"] == 1
@@ -436,16 +436,16 @@ def test_cmd_reorg_invokes_provider(monkeypatch, capsys):
         def is_configured(self):
             return True
         def reorganize(self):
-            return {"moved": ["data/Jim/x.jpg"], "skipped": 2}
+            return {"moved": ["data/Alex/x.jpg"], "skipped": 2}
     monkeypatch.setattr(cli.backup_sync, "_resolve",
                         lambda m: {"provider": "google_drive", "name": m})
     monkeypatch.setattr(cli.backup_sync, "_make_provider", lambda p: P())
 
     class Args:
-        member = "Jim Zheng"
+        member = "Alex Lee"
     cli.cmd_reorg(Args())
     out = capsys.readouterr().out
-    assert "data/Jim/x.jpg" in out
+    assert "data/Alex/x.jpg" in out
     assert "移动 1" in out and "已就位 2" in out
 
 
@@ -529,7 +529,7 @@ Update `.codewhale/skills/Remote_Backup/SKILL.md`:
   file as the engine's source of truth (lookups/list/delete/restore key off it, so the mirror is
   robust even if files are hand-moved); `drive.file` scope is unchanged.
 - In the CLI section, add a row/example for the one-time command:
-  `python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Jim Zheng"` — re-parents
+  `python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Alex Lee"` — re-parents
   existing flat files into the folder tree (metadata move, zero re-upload); local-only, idempotent,
   not agent-callable.
 - Add a one-line note under 用户开启备份 or 迁移: after upgrading to the folder-mirror version,
@@ -563,7 +563,7 @@ Expected: exits non-zero with the "需要 --member" error (proves the subcommand
 
 - [ ] **One-time live step (manual, user-run when ready)**
 
-After deploy, with creds set: `python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Jim Zheng"` re-nests the existing flat files; a following `backup-verify --member "Jim Zheng"` stays consistent. (Not run by the implementer — needs real Drive creds.)
+After deploy, with creds set: `python .codewhale/skills/Remote_Backup/cli.py backup-reorg --member "Alex Lee"` re-nests the existing flat files; a following `backup-verify --member "Alex Lee"` stays consistent. (Not run by the implementer — needs real Drive creds.)
 
 ---
 

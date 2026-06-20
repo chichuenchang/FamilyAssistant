@@ -1,7 +1,7 @@
 # Per-Member / Family Storage Layout — Design Spec
 
 Date: 2026-06-19
-Status: approved (Jim, standing approval through implementation)
+Status: approved (Alex, standing approval through implementation)
 
 ## Problem
 
@@ -27,7 +27,7 @@ family are intermingled under `documents/`.
 3. `Family/` holds shared financials (expenses/incomes/savings/transfers/tax/fx), the ledger,
    receipts/invoices, and long-term documents (family **and** member documents).
 4. Ledger rows point to their original receipt image by a path that resolves reliably.
-5. Keep the code flexible: per-member sync is plumbed now; only Jim is wired live (→ Google);
+5. Keep the code flexible: per-member sync is plumbed now; only Alex is wired live (→ Google);
    other members are local-only until they configure their own provider.
 
 Non-goals (YAGNI): building a second remote provider (Todoist/Outlook/etc.) now; per-member
@@ -38,10 +38,10 @@ notes to any remote (notes are local + backed up only).
 
 - **Calendar model: per-member private.** Each member owns schedule+tasks and their own
   remote. There is no longer an auto-shared family calendar. All 41 existing schedule rows
-  live on Jim's single Google account, so they all migrate to Jim's stores; Wenliang and
-  Euphie start empty/local-only.
-- **Sync scope: plumb per-member now, only Jim live.** Per-member sync state + provider
-  selection are wired; Jim→Google works exactly as today; others are local-only. No second
+  live on Alex's single Google account, so they all migrate to Alex's stores; Sam and
+  Robin start empty/local-only.
+- **Sync scope: plumb per-member now, only Alex live.** Per-member sync state + provider
+  selection are wired; Alex→Google works exactly as today; others are local-only. No second
   platform is implemented.
 - **Events vs tasks: physically separate.** Events live in a `schedule` store, tasks in a
   `tasks` store, per member — each with its own sync state and provider selection.
@@ -50,13 +50,13 @@ notes to any remote (notes are local + backed up only).
 
 ```
 data/
-  Jim/
+  Alex/
     schedule/  schedule.db  .sync_state.json      # kind='event'
     tasks/     tasks.db      .sync_state.json      # kind='task'
     notes/     notes.db      YYYY-MM/*.jpg          # member-private notes + images
     inbox/     YYYY-MM/*.jpg                         # incoming-photo staging (sender-scoped)
-  Wenliang/  (same shape; empty stores until used)
-  Euphie/    (same shape; empty stores until used)
+  Sam/  (same shape; empty stores until used)
+  Robin/    (same shape; empty stores until used)
   Family/
     ledger.db                # transactions, deposits, transfers, tax_filings, exchange_rates, documents
     receipts/  YYYY-MM/*      # receipt / invoice images
@@ -87,7 +87,7 @@ Single source of truth for on-disk locations. Reads `config.json` for `data_root
 - `member_sync_state(member, domain) -> Path` (`.sync_state.json` next to the store)
 - `to_rel(abs_path) -> str` / `resolve_rel(rel) -> Path` — store file links relative to
   `data_root` so they survive cwd changes. `rel` form e.g. `Family/receipts/2026-06/x.jpg`,
-  `Jim/notes/2026-06/y.jpg`.
+  `Alex/notes/2026-06/y.jpg`.
 
 Slug fallback: lowercase first whitespace-delimited token, filesystem-sanitized.
 
@@ -112,17 +112,17 @@ Slug fallback: lowercase first whitespace-delimited token, filesystem-sanitized.
 
 ```json
 {
-  "Jim Zheng": {
-    "aliases": ["Jichun Zheng", "郑佶淳"],
+  "Alex Lee": {
+    "aliases": ["Alex Lee", "安宁"],
     "wechat": ["…"],
-    "dir": "Jim",
+    "dir": "Alex",
     "sync": {
       "schedule": { "provider": "google_calendar", "enabled": true },
       "tasks":    { "provider": "google_tasks",    "enabled": true }
     }
   },
-  "Wenliang Li": { "aliases": ["李雯靓"], "dir": "Wenliang" },
-  "Euphie":      { "aliases": ["Ruiyi Li", "李芮仪", "Euphemia"], "dir": "Euphie" }
+  "Sam Lee": { "aliases": ["安雅"], "dir": "Sam" },
+  "Robin":      { "aliases": ["Robin Lee", "安琪", "Robin"], "dir": "Robin" }
 }
 ```
 
@@ -156,7 +156,7 @@ test isolation mechanical.
     schedule store + schedule provider; `refresh_tasks(member)` does **tasks** likewise.
   - `calendar_tick()` iterates `registered_members()`; for each member+domain that is
     `enabled` and whose provider `is_configured()`, runs that domain's refresh under its own
-    throttle. Today only Jim's two domains fire.
+    throttle. Today only Alex's two domains fire.
   - `push_pending` runs after a member's `cal-add/done/delete`, scoped to that member+domain
     store + provider.
 - **Provider contract split.** The contract divides into an **events provider**
@@ -164,7 +164,7 @@ test isolation mechanical.
   (`is_configured`, `list_tasks`, `create_task`, `complete_task`, `delete_task`). The
   existing `calendar_provider.py` (Google) implements both halves and is registered under
   `google_calendar` (events) and `google_tasks` (tasks). It keeps reading `GCAL_*` env, so
-  Jim's working setup is untouched. A second Google-using member would require namespaced
+  Alex's working setup is untouched. A second Google-using member would require namespaced
   env vars — documented as a future step, not built.
 
 ### Receipt → ledger linkage
@@ -202,14 +202,14 @@ A `migrate_storage.py` script (in Agent_Runtime), runnable once, idempotent:
    transactions/deposits/transfers/tax_filings/exchange_rates/documents rows from the old
    ledger (all currently empty → no-op, but coded generally). Rewrite any `receipt_path` /
    `file_path` to rel form.
-4. Notes (7, all Jim): write to `data/Jim/notes/notes.db`; move each `source_image` file
-   into `data/Jim/notes/YYYY-MM/`; rewrite `source_image` to rel form.
-5. Schedule: **all 41 rows → Jim's stores** (they are all on Jim's Google). Split by `kind`:
-   events → `data/Jim/schedule/schedule.db`, tasks → `data/Jim/tasks/tasks.db`. Preserve
+4. Notes (7, all Alex): write to `data/Alex/notes/notes.db`; move each `source_image` file
+   into `data/Alex/notes/YYYY-MM/`; rewrite `source_image` to rel form.
+5. Schedule: **all 41 rows → Alex's stores** (they are all on Alex's Google). Split by `kind`:
+   events → `data/Alex/schedule/schedule.db`, tasks → `data/Alex/tasks/tasks.db`. Preserve
    `uid`, `synced`, `origin`, `status`, timestamps **exactly** → zero re-push, zero Google
-   duplicates. Relabel the `爸爸` test rows' `member` → `Jim Zheng`. Euphie's 3 events stay
-   in Jim's schedule store (they exist on Jim's Google; member label preserved).
-6. Seed `data/Jim/schedule/.sync_state.json` and `…/tasks/.sync_state.json` from the old
+   duplicates. Relabel the `爸爸` test rows' `member` → `Alex Lee`. Robin's 3 events stay
+   in Alex's schedule store (they exist on Alex's Google; member label preserved).
+6. Seed `data/Alex/schedule/.sync_state.json` and `…/tasks/.sync_state.json` from the old
    global `.calendar_state.json` (`last_refresh` preserved so no immediate churn).
 7. Rename old `data/ledger.db` → `…premigration.bak` (leave in place for verification); the
    running code reads only the new paths afterward.
@@ -240,7 +240,7 @@ Rollback: restore the `.bak` files and revert config/members.json.
   local-only member (no provider → no-op).
 - A migration test: synthesize an old-shape `ledger.db` + `.calendar_state.json`, run the
   migration, assert the Family/member split, `uid`/`synced` preservation, `kind` routing,
-  `爸爸`→Jim relabel, and moved image files.
+  `爸爸`→Alex relabel, and moved image files.
 - Backup tests updated for `include: ["data", …]` and the `.sync_state.json` exclusion.
 - Full `pytest` suite green before completion.
 

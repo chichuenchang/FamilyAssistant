@@ -143,16 +143,16 @@ class TestCalDb:
         assert item["status"] == "done"
 
     def test_add_with_source_image(self, cal_db_path):
-        iid = _add_event(cal_db_path, source_image="Jim/schedule/2026-06/x.jpg")
+        iid = _add_event(cal_db_path, source_image="Alex/schedule/2026-06/x.jpg")
         assert cal_db.get_item(iid, db_path=cal_db_path)["source_image"] == \
-            "Jim/schedule/2026-06/x.jpg"
+            "Alex/schedule/2026-06/x.jpg"
 
     def test_source_image_defaults_empty(self, cal_db_path):
         iid = _add_event(cal_db_path)
         assert cal_db.get_item(iid, db_path=cal_db_path)["source_image"] == ""
 
     def test_clear_source_image_keeps_row_and_sync(self, cal_db_path):
-        iid = _add_event(cal_db_path, source_image="Jim/schedule/2026-06/x.jpg")
+        iid = _add_event(cal_db_path, source_image="Alex/schedule/2026-06/x.jpg")
         cal_db.mark_synced(iid, uid="ev-1", db_path=cal_db_path)
         assert cal_db.clear_source_image(iid, db_path=cal_db_path) is True
         item = cal_db.get_item(iid, db_path=cal_db_path)
@@ -726,11 +726,30 @@ class TestSourceImageRelocate:
         assert paths.resolve_rel(si).exists()
 
 
+def _write_members(mp):
+    """临时 members.json（通用占位成员），让路由测试不依赖真实私有注册表。"""
+    import json as _json
+    mp.parent.mkdir(parents=True, exist_ok=True)
+    mp.write_text(_json.dumps({
+        "Alex Lee": {"wechat": ["wxAlex"], "dir": "Alex"},
+        "Robin": {"dir": "Robin"},
+        "Sam Lee": {"dir": "Sam"},
+    }, ensure_ascii=False), encoding="utf-8")
+
+
 class TestForMemberRouting:
     """默认归发送者；显式 for-member 把活动/待办路由到目标成员日历，图片仍存发送者名下。
 
-    依赖真实 members.json（Jim Zheng→dir Jim, Euphie→dir Euphie）。
+    用临时 members.json（Alex Lee→dir Alex, Robin→dir Robin），不碰真实私有注册表。
     """
+
+    @pytest.fixture(autouse=True)
+    def _registry(self, tmp_path, monkeypatch):
+        import members
+        mp = tmp_path / "members.json"
+        _write_members(mp)
+        monkeypatch.setattr(members, "MEMBERS_PATH", mp)
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
 
     def _rows(self, member, domain):
         import paths
@@ -745,51 +764,51 @@ class TestForMemberRouting:
         import paths as _p
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        img = _p.member_inbox_dir("Jim Zheng") / "a.jpg"; img.write_bytes(b"x")
+        img = _p.member_inbox_dir("Alex Lee") / "a.jpg"; img.write_bytes(b"x")
         out = agent_core._tool_add_event(
-            {"member": "Jim Zheng", "title": "关于Euphie的活动", "date": D1,
+            {"member": "Alex Lee", "title": "关于Robin的活动", "date": D1,
              "source-image": str(img)})
         assert "已添加" in out
-        jim = self._rows("Jim Zheng", "schedule")
-        assert len(jim) == 1 and jim[0]["member"] == "Jim Zheng"
-        assert jim[0]["source_image"].startswith("Jim/schedule/")
-        assert self._rows("Euphie", "schedule") == []        # 未碰 Euphie 日历
+        alex = self._rows("Alex Lee", "schedule")
+        assert len(alex) == 1 and alex[0]["member"] == "Alex Lee"
+        assert alex[0]["source_image"].startswith("Alex/schedule/")
+        assert self._rows("Robin", "schedule") == []        # 未碰 Robin 日历
 
     def test_event_for_member_routes_to_target_image_stays_sender(self, tmp_path, monkeypatch):
         import agent_core
         import paths as _p
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        img = _p.member_inbox_dir("Jim Zheng") / "b.jpg"; img.write_bytes(b"x")
+        img = _p.member_inbox_dir("Alex Lee") / "b.jpg"; img.write_bytes(b"x")
         out = agent_core._tool_add_event(
-            {"member": "Jim Zheng", "for-member": "Euphie", "title": "Euphie recital",
+            {"member": "Alex Lee", "for-member": "Robin", "title": "Robin recital",
              "date": D1, "source-image": str(img)})
         assert "已添加" in out
-        eu = self._rows("Euphie", "schedule")
-        assert len(eu) == 1 and eu[0]["member"] == "Euphie"   # 路由到 Euphie 日历
-        assert eu[0]["source_image"].startswith("Jim/schedule/")  # 图片归发送者 Jim
+        eu = self._rows("Robin", "schedule")
+        assert len(eu) == 1 and eu[0]["member"] == "Robin"   # 路由到 Robin 日历
+        assert eu[0]["source_image"].startswith("Alex/schedule/")  # 图片归发送者 Alex
         assert _p.resolve_rel(eu[0]["source_image"]).exists()
-        assert self._rows("Jim Zheng", "schedule") == []      # Jim 日历无该活动
+        assert self._rows("Alex Lee", "schedule") == []      # Alex 日历无该活动
 
     def test_task_for_member_routes_to_target(self, tmp_path, monkeypatch):
         import agent_core
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
         out = agent_core._tool_add_task(
-            {"member": "Jim Zheng", "for-member": "Euphie", "title": "Euphie homework"})
+            {"member": "Alex Lee", "for-member": "Robin", "title": "Robin homework"})
         assert "已添加" in out
-        assert len(self._rows("Euphie", "tasks")) == 1
-        assert self._rows("Jim Zheng", "tasks") == []
+        assert len(self._rows("Robin", "tasks")) == 1
+        assert self._rows("Alex Lee", "tasks") == []
 
     def test_for_member_unregistered_falls_back_to_sender(self, tmp_path, monkeypatch):
         import agent_core
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
         out = agent_core._tool_add_event(
-            {"member": "Jim Zheng", "for-member": "Stranger", "title": "X", "date": D1})
+            {"member": "Alex Lee", "for-member": "Stranger", "title": "X", "date": D1})
         assert "已添加" in out
-        jim = self._rows("Jim Zheng", "schedule")
-        assert len(jim) == 1 and jim[0]["member"] == "Jim Zheng"  # 退回发送者
+        alex = self._rows("Alex Lee", "schedule")
+        assert len(alex) == 1 and alex[0]["member"] == "Alex Lee"  # 退回发送者
 
 
 def _cli_member(args, data_root, tmp):
@@ -810,31 +829,31 @@ class TestCliPerMember:
 
     def test_event_and_task_go_to_separate_stores(self, tmp_path):
         data_root = tmp_path / "data"
-        r = _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "event",
+        r = _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "event",
                          "--title", "游泳课", "--date", D1, "--start", "14:00"],
                         data_root, tmp_path)
         assert r.returncode == 0, r.stderr
-        r = _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "task",
+        r = _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "task",
                          "--title", "买蛋糕"], data_root, tmp_path)
         assert r.returncode == 0, r.stderr
-        assert (data_root / "Jim" / "schedule" / "schedule.db").exists()
-        assert (data_root / "Jim" / "tasks" / "tasks.db").exists()
+        assert (data_root / "Alex" / "schedule" / "schedule.db").exists()
+        assert (data_root / "Alex" / "tasks" / "tasks.db").exists()
         # event lives in schedule.db only
         ev = cal_db.list_upcoming(days=10, today=date.today(),
-                                  db_path=str(data_root / "Jim" / "schedule" / "schedule.db"))
+                                  db_path=str(data_root / "Alex" / "schedule" / "schedule.db"))
         assert [r["title"] for r in ev] == ["游泳课"]
         tk = cal_db.list_upcoming(days=10, today=date.today(), include_closed=True,
-                                  db_path=str(data_root / "Jim" / "tasks" / "tasks.db"))
+                                  db_path=str(data_root / "Alex" / "tasks" / "tasks.db"))
         assert [r["title"] for r in tk] == ["买蛋糕"]
 
     def test_list_merges_member_stores(self, tmp_path):
         data_root = tmp_path / "data"
-        _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "event",
+        _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "event",
                      "--title", "游泳课", "--date", D1, "--start", "14:00"],
                     data_root, tmp_path)
-        _cli_member(["cal-add", "--member", "Jim Zheng", "--kind", "task",
+        _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "task",
                      "--title", "买蛋糕"], data_root, tmp_path)
-        out = _cli_member(["cal-list", "--member", "Jim Zheng"], data_root, tmp_path)
+        out = _cli_member(["cal-list", "--member", "Alex Lee"], data_root, tmp_path)
         assert out.returncode == 0, out.stderr
         assert "游泳课" in out.stdout and "买蛋糕" in out.stdout
 
