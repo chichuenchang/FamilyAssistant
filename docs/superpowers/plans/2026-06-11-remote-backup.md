@@ -1,5 +1,8 @@
 # Remote Backup Implementation Plan
 
+> ⚠️ **历史设计文档** — 描述的是当时的单库布局。存储已于 2026-06-19 重构为分库（`data/Family/` 家庭共享 + `data/<成员>/` 成员私有），权威设计见 `docs/superpowers/specs/2026-06-19-per-member-storage-layout-design.md`。下文路径/配置键（`data/ledger.db`、`db_path`/`receipts_dir`/`documents_dir`、根级 `receipts/`/`documents/`）多已过时。
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** New `.codewhale/skills/Remote_Backup/` skill: real sync engine (manifest, dirty-flag, debounced mirror, restore) over a stub provider that the user's own agent implements privately; hooked into both CLIs and both transports.

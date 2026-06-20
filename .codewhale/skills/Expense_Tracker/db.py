@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 models
 from models import (
     SCHEMA, TRANSACTION_TYPES, BASE_CURRENCY, SUPPORTED_CURRENCIES, CATEGORIES, DB_PATH,
 )
-# DB_PATH 来自 config.json db_path（经 models）。
+# DB_PATH 经 models = paths.family_ledger()（data/Family/ledger.db）。
 
 
 # ── 合法值访问器（薄封装 models 常量，供 cli / 校验复用） ──────

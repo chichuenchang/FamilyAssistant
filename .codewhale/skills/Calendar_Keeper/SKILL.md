@@ -2,7 +2,7 @@
 
 > 日程（活动/安排）与待办（任务），**按成员私有**，与各成员自己的远程日历静默双向同步。
 > 活动与待办分库分 provider：每个成员的 schedule（活动）/ tasks（待办）各有独立存储、同步状态、
-> 同步偏好，可指向不同远程平台。当前只有 Jim 配了 Google（Calendar+Tasks），其余成员本地模式。
+> 同步偏好，可指向不同远程平台。当前只有 Alex 配了 Google（Calendar+Tasks），其余成员本地模式。
 > 远程是事实源（家人直接在手机上改日历）；本地是缓存 + 离线缓冲。未配置 provider 时本地照常工作。
 
 ## 代码位置
@@ -14,8 +14,14 @@
 ├── calendar_sync.py     ← 同步引擎：按(成员,域)先推后拉、对账、状态；calendar_tick 遍历成员
 ├── calendar_provider.py ← Google Calendar + Tasks 实现（契约见文件头注释，可换）
 ├── providers.py         ← provider 注册表：(domain, name) → 实现（google_calendar/google_tasks）
+├── image_gc.py          ← 陈旧来图清理：删 N 年前活动/待办的 source_image（节流，传输层调）
 └── cli.py               ← cal-add / cal-list / cal-done / cal-delete / cal-sync / cal-status
 ```
+
+活动/待办可带 `source_image`（原始来图，data 相对路径）：从图片建活动/待办时，传输层把来图
+搬进 `data/<成员>/{schedule,tasks}/YYYY-MM/` 并记录。`image_gc.image_gc_tick()` 在成员消息到达时
+节流（`calendar.image_prune_interval_days`，默认 30 天）扫一次，清掉 `calendar.image_retention_years`
+（默认 2 年）前的来图文件并清空链接（保留行；图片非远端字段，不触发同步）。
 
 存储分库：活动 `data/<成员>/schedule/schedule.db`，待办 `data/<成员>/tasks/tasks.db`
 （路径经 `Agent_Runtime/paths.member_store`）。同步状态 `.sync_state.json` 与库同目录，不入备份。
@@ -68,7 +74,7 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
 6. `config.json` 设 `calendar.enabled: true`（总开关），重启机器人。
    `cal-sync --member "<名>"` 首次全量刷新，`cal-status --member "<名>"` 确认。
 
-> 多个成员都用 Google：`GCAL_*` 当前是单账号（Jim，复用 Remote_Backup 客户端）。第二个 Google
+> 多个成员都用 Google：`GCAL_*` 当前是单账号（Alex，复用 Remote_Backup 客户端）。第二个 Google
 > 成员需扩展 provider 读命名空间环境变量（按成员区分凭据）—— 结构已就绪，凭据命名空间待实现。
 
 权限范围（最小化）：`calendar.events`（只能读写日历上的活动，不能管理日历本身）

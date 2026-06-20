@@ -92,7 +92,7 @@ if __name__ == "__main__":
 要点：
 - 每条消息先过成员闸门：`members.resolve(频道, 频道id)` 返回 None → 静默丢弃（不回复、不进 LLM）。
 - 用频道内唯一 id 作 `user`（隔离对话历史），解析出的成员名作 `member` 传给 `agent.handle(text, user, member)` / `agent.handle_image(path, user, member)`。
-- 图片消息：先存到按月子目录 `receipts/YYYY-MM/`（用 `agent_core.receipt_month_dir()`），再调 `agent.handle_image(path, user)`。
+- 图片消息：先存到发送成员的 inbox `data/<成员>/inbox/YYYY-MM/`（用 `agent_core.member_inbox_dir(member)`），再调 `agent.handle_image(path, user, member)`；分类后 agent 搬到对应位置（备忘→成员 notes，票据→Family/receipts，文档→Family/documents）。
 - 长回复需分段的频道（如 Telegram 4096 字限制）自行在传输层切分（见 `telegram_bot.py:send_message`）。
 - 不在传输层写任何记账/查账逻辑 —— 全部交给 Agent。
 

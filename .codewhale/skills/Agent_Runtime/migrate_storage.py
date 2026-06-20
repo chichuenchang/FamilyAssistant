@@ -8,9 +8,9 @@ Family Assistant — 一次性存储迁移：单库 data/ledger.db → 分库布
     data/<owner>/tasks/tasks.db         待办（kind=task）
 
 日历归属：所有 schedule_items 都活在日历 owner（唯一配置了 schedule 同步的成员，
-当前=Jim）的远程账号上 → 全部迁到 owner 分库，**保留 uid/synced/origin/status/时间戳**，
+当前=Alex）的远程账号上 → 全部迁到 owner 分库，**保留 uid/synced/origin/status/时间戳**，
 避免下一轮同步把它们当新行重推（远端重复）。未登记的旧 member 标签（如"爸爸"）改为 owner；
-已登记标签（如 Euphie）保留。owner 两个域 .sync_state.json 以旧全局状态播种。
+已登记标签（如 Robin）保留。owner 两个域 .sync_state.json 以旧全局状态播种。
 
 幂等：schedule 按 uid、notes 按 (member,content,created_at) 跳过已存在行；family 表
 已有行则跳过整表。成功后把旧库改名 <name>.premigration.bak（即快照）。
@@ -82,7 +82,7 @@ def _exists(conn, table: str, where: str, params: list) -> bool:
 
 
 def _detect_calendar_owner() -> str | None:
-    """日历 owner = 唯一配置了 schedule 远程同步的成员（当前 = Jim）。"""
+    """日历 owner = 唯一配置了 schedule 远程同步的成员（当前 = Alex）。"""
     for m in members.member_names():
         if members.sync_pref(m, "schedule"):
             return m

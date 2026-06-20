@@ -2,7 +2,7 @@
 Family Assistant — Note Keeper 数据库操作层
 
 个人备忘（notes）的 SQLite CRUD。Agent / CLI 统一走这个模块。
-表建在共享账本库 data/ledger.db（DB_PATH 来自 config.json db_path）。
+备忘按成员私有分库：data/<成员>/notes/notes.db（路径经 paths.member_store，CLI 据 --member 解析；db_path 参数注入）。
 所有查询强制按 member 过滤，实现按成员隔离。
 """
 
@@ -25,7 +25,8 @@ def _load_config() -> dict:
 
 _cfg = _load_config()
 _ROOT = _CONFIG_PATH.parent
-DB_PATH = _ROOT / (_cfg.get("db_path") or "data/ledger.db")
+# 旧单库默认：仅未传 db_path 时的兜底；运行时一律按成员分库经 paths 注入 db_path。
+DB_PATH = _ROOT / "data" / "ledger.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS notes (

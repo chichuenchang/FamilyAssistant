@@ -16,7 +16,7 @@
 
 账本是家庭共享：`data/Family/ledger.db`（经 `Agent_Runtime/paths.family_ledger()`）。票据存 `data/Family/receipts/YYYY-MM/`，行内 `receipt_path` 记 data 相对路径（`Family/receipts/...`）。
 
-数据与配置仍在项目根：`data/ledger.db`（SQLite）、`config.json`（分类 & 路径）、`receipts/YYYY-MM/`（票据按月存档）。`cli.py` 把同目录加入 `sys.path` 后 `from db import ...`，无需从项目根 import。
+`cli.py` 把同目录加入 `sys.path` 后 `from db import ...`，无需从项目根 import；落盘位置经 `Agent_Runtime/paths`。
 
 ## 数据模型
 

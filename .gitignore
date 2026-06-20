@@ -6,13 +6,11 @@ data/
 __pycache__/
 *.pyc
 
-# 票据（按月子目录 receipts/YYYY-MM/）
-receipts/*
-!receipts/.gitkeep
+# 备份/迁移快照（config.json.bak、*.premigration.bak 等）——绝不入库
+*.bak
 
-# 文档存档（按类型子目录 documents/<type>/）
-documents/*
-!documents/.gitkeep
+# 注：票据/文档/备忘图等用户数据现归 data/（整体已忽略，见上）。
+# 旧的根级 receipts/ documents/ 目录已随分库重构移除。
 
 # 防御：OAuth 凭据文件绝不入库（provider 实现只允许用环境变量）
 **/Remote_Backup/token*.json
@@ -29,3 +27,6 @@ client_secret*.json
 
 # Conda
 env/
+
+# Subagent-driven-development orchestration scratch (ledger + review diffs)
+.superpowers/

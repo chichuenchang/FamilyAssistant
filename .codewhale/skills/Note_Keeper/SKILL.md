@@ -80,7 +80,7 @@ python .codewhale/skills/Note_Keeper/cli.py note-pin --member 爸爸 --id 3 --un
 
 ## 存储
 
-数据存储在 `data/ledger.db` 的 `notes` 表中，与交易/文档共库。该文件已被现有备份配置覆盖（`config.json backup.include`），无需额外备份配置。
+备忘按成员私有分库：`data/<成员目录>/notes/notes.db`（路径经 `Agent_Runtime/paths.member_store(member,"notes")`，CLI 据 `--member` 解析）。图片存同成员 `notes/YYYY-MM/`，库内 `source_image` 记 data 相对路径。整个 `data/` 已随云备份镜像（`config.json backup.include`），无需额外配置。
 
 ## 技能边界
 

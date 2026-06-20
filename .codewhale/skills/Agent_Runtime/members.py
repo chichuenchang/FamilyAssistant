@@ -97,6 +97,28 @@ def sync_pref(name: str, domain: str, members_path: Path | None = None) -> dict 
     return {"provider": d.get("provider", ""), "enabled": bool(d.get("enabled", False))}
 
 
+def backup_pref(name: str, members_path: Path | None = None) -> dict | None:
+    """成员的远程备份偏好。无 backup 块 → None（= 不备份，仅本地）。
+
+    返回规范化 dict：{provider, cred_prefix, remote_root, enabled, scopes}。
+    凭据永远不在此，走 {cred_prefix}_CLIENT_ID/SECRET/REFRESH_TOKEN 环境变量。
+    remote_root 缺省取成员目录名；cred_prefix 缺省 GDRIVE（兼容现有单一备份）。
+    """
+    entry = load_members(members_path).get(name)
+    if not isinstance(entry, dict):
+        return None
+    b = entry.get("backup")
+    if not isinstance(b, dict):
+        return None
+    return {
+        "provider": b.get("provider", "google_drive"),
+        "cred_prefix": b.get("cred_prefix", "GDRIVE"),
+        "remote_root": b.get("remote_root") or member_dir_name(name, members_path),
+        "enabled": bool(b.get("enabled", False)),
+        "scopes": list(b.get("scopes") or []),
+    }
+
+
 def _save_members(members: dict, members_path: Path | None = None) -> None:
     """原子写回 members.json（临时文件 + replace，写一半不毁原文件）。"""
     path = members_path or MEMBERS_PATH

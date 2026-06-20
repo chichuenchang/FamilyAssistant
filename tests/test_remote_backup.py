@@ -9,18 +9,19 @@ import backup_provider
 
 @pytest.fixture
 def gdrive(monkeypatch, tmp_path):
-    """Google Drive provider with env creds set and HTTP layer faked."""
+    """A GoogleDriveProvider instance with creds in env and the HTTP layer faked."""
     monkeypatch.setenv("GDRIVE_CLIENT_ID", "cid")
     monkeypatch.setenv("GDRIVE_CLIENT_SECRET", "cs")
     monkeypatch.setenv("GDRIVE_REFRESH_TOKEN", "rt")
-    monkeypatch.setattr(backup_provider, "_token", lambda: "TOK")
-    backup_provider._folder_cache["id"] = "FOLDER1"
+    prov = backup_provider.GoogleDriveProvider("GDRIVE", "FamilyAssistant")
+    monkeypatch.setattr(prov, "_token", lambda: "TOK")
+    prov._folder_cache["id"] = "FOLDER1"
 
     calls = []
 
     class FakeHttp:
         def __init__(self):
-            self.responses = []  # list of (status, body-bytes)
+            self.responses = []
         def __call__(self, method, url, data=None, headers=None):
             calls.append({"method": method, "url": url, "data": data,
                           "headers": headers or {}})
@@ -28,8 +29,7 @@ def gdrive(monkeypatch, tmp_path):
 
     fake = FakeHttp()
     monkeypatch.setattr(backup_provider, "_http", fake)
-    yield fake, calls, tmp_path
-    backup_provider._folder_cache["id"] = None
+    return prov, fake, calls, tmp_path
 
 
 def _files_resp(*files, next_token=None):
@@ -41,88 +41,180 @@ def _files_resp(*files, next_token=None):
 
 
 class TestGdriveProvider:
-    def test_is_configured_requires_all_env(self, monkeypatch):
-        for var in ("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN"):
+    def test_is_configured_uses_prefix(self, monkeypatch):
+        for var in ("WLI_GDRIVE_CLIENT_ID", "WLI_GDRIVE_CLIENT_SECRET",
+                    "WLI_GDRIVE_REFRESH_TOKEN"):
             monkeypatch.delenv(var, raising=False)
-        assert backup_provider.is_configured() is False
+        prov = backup_provider.GoogleDriveProvider("WLI_GDRIVE", "SamBackup")
+        assert prov.is_configured() is False
+        monkeypatch.setenv("WLI_GDRIVE_CLIENT_ID", "x")
+        monkeypatch.setenv("WLI_GDRIVE_CLIENT_SECRET", "y")
+        assert prov.is_configured() is False
+        monkeypatch.setenv("WLI_GDRIVE_REFRESH_TOKEN", "z")
+        assert prov.is_configured() is True
+
+    def test_default_prefix_is_gdrive(self, monkeypatch):
         monkeypatch.setenv("GDRIVE_CLIENT_ID", "x")
         monkeypatch.setenv("GDRIVE_CLIENT_SECRET", "y")
-        assert backup_provider.is_configured() is False
         monkeypatch.setenv("GDRIVE_REFRESH_TOKEN", "z")
-        assert backup_provider.is_configured() is True
+        assert backup_provider.GoogleDriveProvider().is_configured() is True
 
     def test_upload_new_file_multipart_create(self, gdrive):
-        fake, calls, tmp_path = gdrive
+        prov, fake, calls, tmp_path = gdrive
         f = tmp_path / "a.jpg"
         f.write_bytes(b"IMGBYTES")
         fake.responses = [
             _files_resp(),                       # _find: no existing
-            (200, b'{"id": "NEW1"}'),            # multipart POST
+            _files_resp(), (200, b'{"id": "Fd"}'),   # folder: data
+            _files_resp(), (200, b'{"id": "FF"}'),   # folder: Family
+            _files_resp(), (200, b'{"id": "Fr"}'),   # folder: receipts
+            _files_resp(), (200, b'{"id": "Fm"}'),   # folder: 2026-06
+            (200, b'{"id": "NEW1"}'),            # multipart create
         ]
-        backup_provider.upload(f, "receipts/2026-06/a.jpg")
+        prov.upload(f, "data/Family/receipts/2026-06/a.jpg")
         up = calls[-1]
         assert up["method"] == "POST"
         assert "uploadType=multipart" in up["url"]
         assert b"IMGBYTES" in up["data"]
-        assert b'"rel": "receipts/2026-06/a.jpg"' in up["data"]
-        assert b'"parents": ["FOLDER1"]' in up["data"]
+        assert b'"rel": "data/Family/receipts/2026-06/a.jpg"' in up["data"]
+        assert b'"parents": ["Fm"]' in up["data"]      # leaf folder, not remote_root
+
+    def test_upload_dirless_parents_to_root(self, gdrive):
+        prov, fake, calls, tmp_path = gdrive
+        f = tmp_path / "config.json"
+        f.write_bytes(b"{}")
+        fake.responses = [_files_resp(), (200, b'{"id": "C1"}')]   # _find miss, create
+        prov.upload(f, "config.json")
+        up = calls[-1]
+        assert up["method"] == "POST"
+        assert b'"parents": ["FOLDER1"]' in up["data"]   # remote_root
 
     def test_upload_existing_file_patches(self, gdrive):
-        fake, calls, tmp_path = gdrive
+        prov, fake, calls, tmp_path = gdrive
         f = tmp_path / "a.jpg"
         f.write_bytes(b"V2")
-        fake.responses = [
-            _files_resp({"id": "OLD9"}),         # _find: existing
-            (200, b'{"id": "OLD9"}'),            # multipart PATCH
-        ]
-        backup_provider.upload(f, "receipts/a.jpg")
+        fake.responses = [_files_resp({"id": "OLD9"}), (200, b'{"id": "OLD9"}')]
+        prov.upload(f, "data/Family/a.jpg")
         up = calls[-1]
         assert up["method"] == "PATCH"
         assert "/files/OLD9?" in up["url"]
-        assert b'"parents"' not in up["data"]    # update never re-parents
+        assert b'"parents"' not in up["data"]
 
     def test_delete_missing_is_noop(self, gdrive):
-        fake, calls, _ = gdrive
-        fake.responses = [_files_resp()]         # _find: nothing
-        backup_provider.delete("gone.jpg")       # must not raise
-        assert len(calls) == 1                   # no DELETE issued
+        prov, fake, calls, _ = gdrive
+        fake.responses = [_files_resp()]
+        prov.delete("gone.jpg")
+        assert len(calls) == 1
 
     def test_list_remote_paginates_and_maps_rel(self, gdrive):
-        fake, calls, _ = gdrive
+        prov, fake, calls, _ = gdrive
         fake.responses = [
             _files_resp({"id": "1", "size": "10",
-                         "appProperties": {"rel": "config.json"}},
-                        next_token="T2"),
+                         "appProperties": {"rel": "config.json"}}, next_token="T2"),
             _files_resp({"id": "2", "size": "20",
-                         "appProperties": {"rel": "receipts/a.jpg"}},
-                        {"id": "3", "size": "5"}),   # no rel tag → skipped
+                         "appProperties": {"rel": "data/Family/r.jpg"}},
+                        {"id": "3", "size": "5"}),
         ]
-        out = backup_provider.list_remote()
+        out = prov.list_remote()
         assert out == {"config.json": {"size": 10},
-                       "receipts/a.jpg": {"size": 20}}
+                       "data/Family/r.jpg": {"size": 20}}
         assert "pageToken=T2" in calls[-1]["url"]
 
     def test_download_writes_bytes(self, gdrive):
-        fake, calls, tmp_path = gdrive
-        fake.responses = [
-            _files_resp({"id": "F7"}),
-            (200, b"CONTENT"),
-        ]
+        prov, fake, calls, tmp_path = gdrive
+        fake.responses = [_files_resp({"id": "F7"}), (200, b"CONTENT")]
         target = tmp_path / "sub" / "x.bin"
-        backup_provider.download("documents/x.bin", target)
+        prov.download("data/Family/documents/x.bin", target)
         assert target.read_bytes() == b"CONTENT"
         assert "alt=media" in calls[-1]["url"]
 
     def test_api_error_raises_runtimeerror(self, gdrive):
-        fake, calls, tmp_path = gdrive
+        prov, fake, calls, tmp_path = gdrive
         f = tmp_path / "a.jpg"
         f.write_bytes(b"x")
-        fake.responses = [
-            _files_resp(),
-            (403, b'{"error": "rate limit"}'),
-        ]
+        fake.responses = [_files_resp(), (403, b'{"error": "rate limit"}')]
         with pytest.raises(RuntimeError):
-            backup_provider.upload(f, "a.jpg")
+            prov.upload(f, "a.jpg")
+
+    def test_two_instances_isolate_folder_cache(self, monkeypatch):
+        a = backup_provider.GoogleDriveProvider("GDRIVE", "RootA")
+        b = backup_provider.GoogleDriveProvider("WLI_GDRIVE", "RootB")
+        a._folder_cache["id"] = "FA"
+        assert b._folder_cache["id"] is None
+
+    def test_ensure_folder_path_creates_chain(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [
+            _files_resp(),                  # data: query miss
+            (200, b'{"id": "F_data"}'),     # data: create
+            _files_resp(),                  # Alex: query miss
+            (200, b'{"id": "F_Alex"}'),      # Alex: create
+            _files_resp(),                  # notes: query miss
+            (200, b'{"id": "F_notes"}'),    # notes: create
+        ]
+        leaf = prov._ensure_folder_path("data/Alex/notes/x.jpg")
+        assert leaf == "F_notes"
+
+    def test_ensure_folder_path_caches(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [_files_resp(), (200, b'{"id": "F_data"}')]
+        assert prov._ensure_folder_path("data/a.txt") == "F_data"
+        n = len(calls)
+        assert prov._ensure_folder_path("data/b.txt") == "F_data"  # cached
+        assert len(calls) == n                                     # no new HTTP
+
+    def test_ensure_folder_path_dirless_is_root(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        assert prov._ensure_folder_path("config.json") == "FOLDER1"
+        assert calls == []                                         # no folder lookups
+
+    def test_child_folder_reuses_existing(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [_files_resp({"id": "EXIST"})]            # query hit
+        assert prov._child_folder("FOLDER1", "data") == "EXIST"
+        assert len(calls) == 1                                     # no create call
+
+    def test_find_has_no_parent_constraint(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [_files_resp({"id": "NESTED"})]
+        assert prov._find("data/Alex/notes/deep/x.jpg") == "NESTED"
+        assert "parents" not in calls[-1]["url"]      # query no longer parent-scoped
+
+    def test_list_remote_finds_nested_and_drops_parent(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [
+            _files_resp({"id": "1", "size": "7",
+                         "appProperties": {"rel": "data/Alex/notes/n.db"}}),
+        ]
+        out = prov.list_remote()
+        assert out == {"data/Alex/notes/n.db": {"size": 7}}
+        assert "parents" not in calls[-1]["url"]
+
+    def test_reorganize_moves_flat_to_folders(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        fake.responses = [
+            _files_resp({"id": "X", "parents": ["FOLDER1"],
+                         "appProperties": {"rel": "data/Alex/x.jpg"}}),  # list page
+            _files_resp(), (200, b'{"id": "Fd"}'),   # folder: data
+            _files_resp(), (200, b'{"id": "FJ"}'),   # folder: Alex
+            (200, b'{"id": "X"}'),                    # PATCH move
+        ]
+        r = prov.reorganize()
+        assert r["moved"] == ["data/Alex/x.jpg"]
+        move = calls[-1]
+        assert move["method"] == "PATCH"
+        assert "addParents=FJ" in move["url"]
+        assert "removeParents=FOLDER1" in move["url"]
+
+    def test_reorganize_skips_already_nested(self, gdrive):
+        prov, fake, calls, _ = gdrive
+        prov._path_cache = {"data": "Fd", "data/Alex": "FJ"}   # leaf resolves with no HTTP
+        fake.responses = [
+            _files_resp({"id": "X", "parents": ["FJ"],
+                         "appProperties": {"rel": "data/Alex/x.jpg"}}),
+        ]
+        r = prov.reorganize()
+        assert r["moved"] == [] and r["skipped"] == 1
 
 
 import backup_sync
@@ -130,28 +222,24 @@ import backup_sync
 
 @pytest.fixture
 def bk(tmp_path, monkeypatch):
-    """Isolated engine: fake ROOT tree, state in tmp, enabled config, fake provider."""
+    """Per-member engine: fake ROOT, global clock in tmp, one configured member (Alex)."""
     root = tmp_path / "root"
-    (root / "data").mkdir(parents=True)
-    (root / "receipts").mkdir()
-    (root / "documents").mkdir()
+    (root / "data" / "Alex").mkdir(parents=True)
+    (root / "data" / "Family").mkdir(parents=True)
     (root / "config.json").write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(backup_sync, "ROOT", root)
-    monkeypatch.setattr(backup_sync, "STATE_FILE", tmp_path / "state.json")
-    monkeypatch.setattr(backup_sync, "MANIFEST_FILE", tmp_path / "manifest.json")
-    monkeypatch.setattr(backup_sync, "CFG", {
-        "enabled": True, "debounce_seconds": 60,
-        "include": ["data/ledger.db", "receipts", "documents", "config.json"],
-        "remote_root": "FamilyAssistant",
-    })
+    monkeypatch.setattr(backup_sync, "_DATA_DIRNAME", "data")
+    monkeypatch.setattr(backup_sync, "STATE_FILE", tmp_path / "clock.json")
+    monkeypatch.setattr(backup_sync, "CFG", {"enabled": True, "debounce_seconds": 60})
 
     class FakeProvider:
         def __init__(self):
-            self.files = {}      # remote_rel -> bytes
+            self.files = {}
             self.fail_uploads = False
+            self._configured = True
         def is_configured(self):
-            return True
+            return self._configured
         def upload(self, local_path, remote_rel):
             if self.fail_uploads:
                 raise RuntimeError("network down")
@@ -165,11 +253,15 @@ def bk(tmp_path, monkeypatch):
             Path(local_path).write_bytes(self.files[remote_rel])
 
     fake = FakeProvider()
-    monkeypatch.setattr(backup_sync, "provider", fake)
-    return root, fake
+    pref = {"name": "Alex", "dir": "Alex", "provider": "google_drive",
+            "cred_prefix": "GDRIVE", "remote_root": "FamilyAssistant",
+            "enabled": True, "scopes": ["Alex", "Family", "config.json"]}
+    monkeypatch.setattr(backup_sync, "_backup_members", lambda: [("Alex", pref)])
+    monkeypatch.setattr(backup_sync, "_make_provider", lambda p: fake)
+    return root, fake, pref
 
 
-class TestStateAndWalk:
+class TestStateClock:
     def test_mark_dirty_sets_timestamps(self, bk):
         backup_sync.mark_dirty()
         st = backup_sync._load_json(backup_sync.STATE_FILE)
@@ -183,92 +275,82 @@ class TestStateAndWalk:
         assert st["dirty_since"] == first
 
     def test_mark_dirty_never_raises(self, bk, monkeypatch):
-        monkeypatch.setattr(backup_sync, "STATE_FILE",
-                            Path("Z:/nonexistent/state.json"))
-        backup_sync.mark_dirty()  # must not raise
-
-    def test_walk_includes_files_and_dirs(self, bk):
-        root, _ = bk
-        (root / "receipts" / "2026-06").mkdir()
-        (root / "receipts" / "2026-06" / "a.jpg").write_bytes(b"img")
-        (root / "documents" / "lease").mkdir()
-        (root / "documents" / "lease" / "l.pdf").write_bytes(b"pdf")
-        files = backup_sync._iter_local_files()
-        assert "receipts/2026-06/a.jpg" in files
-        assert "documents/lease/l.pdf" in files
-        assert "config.json" in files
-        assert "data/ledger.db" not in files  # doesn't exist yet
-
-    def test_walk_hard_excludes(self, bk):
-        root, _ = bk
-        backup_sync.CFG["include"] = backup_sync.CFG["include"] + ["data"]
-        (root / "data" / "ledger.db").write_bytes(b"")
-        (root / "data" / "wechat_creds.json").write_text("secret")
-        (root / "data" / ".telegram_offset").write_text("1")
-        (root / "data" / ".doc_reminder_state").write_text("{}")
-        (root / "data" / ".backup_state.json").write_text("{}")
-        (root / "data" / "Jim" / "schedule").mkdir(parents=True)
-        (root / "data" / "Jim" / "schedule" / ".sync_state.json").write_text("{}")
-        (root / "data" / "Jim" / "schedule" / "schedule.db").write_bytes(b"")
-        files = backup_sync._iter_local_files()
-        assert "data/ledger.db" in files
-        assert not any("creds" in f for f in files)
-        assert "data/.telegram_offset" not in files
-        assert "data/.doc_reminder_state" not in files
-        assert "data/.backup_state.json" not in files
-        # 每成员每域的同步状态文件可再生，不进备份；分库 .db 照常入备份
-        assert "data/Jim/schedule/.sync_state.json" not in files
-        assert "data/Jim/schedule/schedule.db" in files
+        monkeypatch.setattr(backup_sync, "STATE_FILE", Path("Z:/nope/state.json"))
+        backup_sync.mark_dirty()
 
 
 class TestSync:
+    def _alex_manifest(self, root):
+        return backup_sync._load_json(root / "data" / "Alex" / ".backup_manifest.json")
+
     def test_uploads_new_and_skips_unchanged(self, bk):
-        root, fake = bk
-        (root / "receipts" / "a.jpg").write_bytes(b"img-a")
-        r1 = backup_sync.sync()
-        assert "receipts/a.jpg" in r1["uploaded"]
-        assert fake.files["receipts/a.jpg"] == b"img-a"
-        r2 = backup_sync.sync()
+        root, fake, _ = bk
+        d = root / "data" / "Family" / "documents"
+        d.mkdir(parents=True)
+        (d / "a.pdf").write_bytes(b"img-a")
+        r1 = backup_sync.sync("Alex")
+        assert "data/Family/documents/a.pdf" in r1["uploaded"]
+        assert fake.files["data/Family/documents/a.pdf"] == b"img-a"
+        r2 = backup_sync.sync("Alex")
         assert r2["uploaded"] == [] and r2["skipped"] >= 1
 
+    def test_manifest_lands_under_member(self, bk):
+        root, fake, _ = bk
+        (root / "data" / "Alex" / "note.txt").write_bytes(b"x")
+        backup_sync.sync("Alex")
+        assert (root / "data" / "Alex" / ".backup_manifest.json").exists()
+        assert "data/Alex/note.txt" in self._alex_manifest(root)
+
     def test_reuploads_changed(self, bk):
-        root, fake = bk
-        f = root / "receipts" / "a.jpg"
+        root, fake, _ = bk
+        f = root / "data" / "Family" / "x.bin"
         f.write_bytes(b"v1")
-        backup_sync.sync()
+        backup_sync.sync("Alex")
         f.write_bytes(b"v2")
-        r = backup_sync.sync()
-        assert "receipts/a.jpg" in r["uploaded"]
-        assert fake.files["receipts/a.jpg"] == b"v2"
+        r = backup_sync.sync("Alex")
+        assert "data/Family/x.bin" in r["uploaded"]
+        assert fake.files["data/Family/x.bin"] == b"v2"
 
     def test_propagates_deletes(self, bk):
-        root, fake = bk
-        f = root / "documents" / "old.pdf"
+        root, fake, _ = bk
+        f = root / "data" / "Family" / "old.pdf"
         f.write_bytes(b"x")
-        backup_sync.sync()
-        assert "documents/old.pdf" in fake.files
+        backup_sync.sync("Alex")
+        assert "data/Family/old.pdf" in fake.files
         f.unlink()
-        r = backup_sync.sync()
-        assert "documents/old.pdf" in r["deleted"]
-        assert "documents/old.pdf" not in fake.files
+        r = backup_sync.sync("Alex")
+        assert "data/Family/old.pdf" in r["deleted"]
+        assert "data/Family/old.pdf" not in fake.files
+
+    def test_empty_scope_skips_mirror_delete(self, bk):
+        # 守卫：local 全空但清单非空时不镜像删除（防盘未挂/误清空 scope 抹掉整个远端）
+        root, fake, _ = bk
+        (root / "data" / "Family" / "keep.pdf").write_bytes(b"x")
+        backup_sync.sync("Alex")
+        assert "data/Family/keep.pdf" in fake.files
+        (root / "data" / "Family" / "keep.pdf").unlink()
+        (root / "config.json").unlink()          # 现在所有 scope 都解析为空
+        r = backup_sync.sync("Alex")
+        assert r["deleted"] == []                 # 未删任何远端
+        assert "data/Family/keep.pdf" in fake.files
+        assert r["errors"]                        # 记录告警
 
     def test_sqlite_snapshot_with_open_connection(self, bk):
         import os
         import sqlite3 as sq
         import tempfile
-        root, fake = bk
-        db = root / "data" / "ledger.db"
+        root, fake, _ = bk
+        db = root / "data" / "Family" / "ledger.db"
         conn = sq.connect(str(db))
         conn.execute("CREATE TABLE t (x)")
         conn.execute("INSERT INTO t VALUES (1)")
         conn.commit()
         try:
-            r = backup_sync.sync()
-            assert "data/ledger.db" in r["uploaded"]
-            # snapshot must be a valid sqlite db containing the row
+            r = backup_sync.sync("Alex")
+            assert "data/Family/ledger.db" in r["uploaded"]
             fd, tmp = tempfile.mkstemp(suffix=".db")
             os.close(fd)
-            Path(tmp).write_bytes(fake.files["data/ledger.db"])
+            Path(tmp).write_bytes(fake.files["data/Family/ledger.db"])
             check = sq.connect(tmp)
             assert check.execute("SELECT count(*) FROM t").fetchone()[0] == 1
             check.close()
@@ -276,21 +358,18 @@ class TestSync:
         finally:
             conn.close()
 
-    def test_failure_records_error_keeps_dirty(self, bk):
-        root, fake = bk
-        (root / "receipts" / "a.jpg").write_bytes(b"x")
-        backup_sync.mark_dirty()
+    def test_per_member_error_recorded(self, bk):
+        root, fake, _ = bk
+        (root / "data" / "Family" / "a.jpg").write_bytes(b"x")
         fake.fail_uploads = True
-        r = backup_sync.sync()
+        r = backup_sync.sync("Alex")
         assert r["errors"]
-        st = backup_sync._load_json(backup_sync.STATE_FILE)
-        assert st["dirty_since"] is not None
-        assert st["last_error"]
-        fake.fail_uploads = False
-        r = backup_sync.sync()
-        assert "receipts/a.jpg" in r["uploaded"]
-        st = backup_sync._load_json(backup_sync.STATE_FILE)
-        assert st["dirty_since"] is None and st["last_error"] is None
+        mst = backup_sync._load_json(root / "data" / "Alex" / ".backup_state.json")
+        assert mst["last_error"] and mst["last_sync"]
+
+    def test_sync_unknown_member_raises(self, bk):
+        with pytest.raises(ValueError):
+            backup_sync.sync("Nobody")
 
 
 class TestTick:
@@ -303,90 +382,118 @@ class TestTick:
         assert backup_sync.backup_tick() is False
 
     def test_recent_write_waits(self, bk):
-        root, _ = bk
-        (root / "receipts" / "a.jpg").write_bytes(b"x")
-        backup_sync.mark_dirty()  # last_write = now
+        root, _, _ = bk
+        (root / "data" / "Family" / "a.jpg").write_bytes(b"x")
+        backup_sync.mark_dirty()
         assert backup_sync.backup_tick() is False  # 60s 未到
 
-    def test_quiet_period_syncs(self, bk):
-        root, fake = bk
-        (root / "receipts" / "a.jpg").write_bytes(b"x")
+    def test_quiet_period_syncs_and_clears(self, bk):
+        root, fake, _ = bk
+        (root / "data" / "Family" / "a.jpg").write_bytes(b"x")
         backup_sync.mark_dirty()
         later = datetime.now() + timedelta(seconds=120)
         assert backup_sync.backup_tick(now=later) is True
-        assert "receipts/a.jpg" in fake.files
-        # 干净后再 tick 不动
+        assert "data/Family/a.jpg" in fake.files
+        st = backup_sync._load_json(backup_sync.STATE_FILE)
+        assert st["dirty_since"] is None
         assert backup_sync.backup_tick(now=later) is False
 
-    def test_unconfigured_provider_noop(self, bk, monkeypatch):
-        root, fake = bk
-        monkeypatch.setattr(fake, "is_configured", lambda: False)
+    def test_unconfigured_member_skipped(self, bk):
+        root, fake, _ = bk
+        fake._configured = False
         backup_sync.mark_dirty()
         later = datetime.now() + timedelta(seconds=120)
         assert backup_sync.backup_tick(now=later) is False
 
-    def test_tick_never_raises(self, bk, monkeypatch):
-        root, fake = bk
-        (root / "receipts" / "a.jpg").write_bytes(b"x")
+    def test_failing_member_keeps_dirty(self, bk):
+        root, fake, _ = bk
+        (root / "data" / "Family" / "a.jpg").write_bytes(b"x")
+        fake.fail_uploads = True
         backup_sync.mark_dirty()
-        def boom():
+        later = datetime.now() + timedelta(seconds=120)
+        assert backup_sync.backup_tick(now=later) is True
+        st = backup_sync._load_json(backup_sync.STATE_FILE)
+        assert st["dirty_since"] is not None
+
+    def test_tick_never_raises(self, bk, monkeypatch):
+        root, fake, _ = bk
+        (root / "data" / "Family" / "a.jpg").write_bytes(b"x")
+        backup_sync.mark_dirty()
+        def boom(_m):
             raise RuntimeError("explode")
         monkeypatch.setattr(backup_sync, "sync", boom)
         later = datetime.now() + timedelta(seconds=120)
         assert backup_sync.backup_tick(now=later) is False
-        st = backup_sync._load_json(backup_sync.STATE_FILE)
-        assert "explode" in (st.get("last_error") or "")
+        mst = backup_sync._load_json(root / "data" / "Alex" / ".backup_state.json")
+        assert "explode" in (mst.get("last_error") or "")
 
 
 class TestRestoreVerifyStatus:
     def test_restore_to_empty_root(self, bk):
-        root, fake = bk
+        root, fake, _ = bk
         fake.files = {
-            "data/ledger.db": b"db-bytes",
-            "receipts/2026-06/a.jpg": b"img",
-            "documents/lease/l.pdf": b"pdf",
+            "data/Family/ledger.db": b"db-bytes",
+            "data/Family/receipts/2026-06/a.jpg": b"img",
+            "config.json": b"{}",
         }
-        r = backup_sync.restore()
+        r = backup_sync.restore("Alex")
         assert sorted(r["downloaded"]) == sorted(fake.files)
-        assert (root / "receipts" / "2026-06" / "a.jpg").read_bytes() == b"img"
-        manifest = backup_sync._load_json(backup_sync.MANIFEST_FILE)
+        assert (root / "data" / "Family" / "receipts" / "2026-06" / "a.jpg").read_bytes() == b"img"
+        manifest = backup_sync._load_json(root / "data" / "Alex" / ".backup_manifest.json")
         assert set(manifest) == set(fake.files)
 
     def test_restore_refuses_non_empty(self, bk):
-        root, fake = bk
-        (root / "receipts" / "existing.jpg").write_bytes(b"x")
-        fake.files = {"receipts/other.jpg": b"y"}
+        root, fake, _ = bk
+        (root / "data" / "Family" / "existing.jpg").write_bytes(b"x")
+        fake.files = {"data/Family/other.jpg": b"y"}
         with pytest.raises(ValueError):
-            backup_sync.restore()
-        backup_sync.restore(force=True)  # force 放行
-        assert (root / "receipts" / "other.jpg").exists()
+            backup_sync.restore("Alex")
+        backup_sync.restore("Alex", force=True)
+        assert (root / "data" / "Family" / "other.jpg").exists()
 
-    def test_restore_unconfigured_raises(self, bk, monkeypatch):
-        root, fake = bk
-        monkeypatch.setattr(fake, "is_configured", lambda: False)
+    def test_restore_unconfigured_raises(self, bk):
+        root, fake, _ = bk
+        fake._configured = False
         with pytest.raises(ValueError):
-            backup_sync.restore()
+            backup_sync.restore("Alex")
+
+    def test_restore_bootstrap_via_override(self, bk, monkeypatch):
+        root, fake, _ = bk
+        monkeypatch.setattr(backup_sync, "_backup_members", lambda: [])
+        fake.files = {"data/members.json": b"{}", "config.json": b"{}"}
+        override = {"provider": "google_drive", "cred_prefix": "GDRIVE",
+                    "remote_root": "FamilyAssistant", "scopes": [], "dir": "Alex"}
+        r = backup_sync.restore("Alex Lee", override=override)
+        assert "data/members.json" in r["downloaded"]
+        assert (root / "data" / "members.json").exists()
 
     def test_verify_reports(self, bk):
-        root, fake = bk
-        (root / "receipts" / "a.jpg").write_bytes(b"aaaa")
-        backup_sync.sync()
-        fake.files["receipts/ghost.jpg"] = b"zz"        # extra remote
-        fake.files["receipts/a.jpg"] = b"a"             # size mismatch
-        v = backup_sync.verify()
-        assert "receipts/ghost.jpg" in v["extra_remote"]
-        assert "receipts/a.jpg" in v["size_mismatch"]
-        del fake.files["receipts/a.jpg"]
-        v = backup_sync.verify()
-        assert "receipts/a.jpg" in v["missing_remote"]
+        root, fake, _ = bk
+        (root / "data" / "Family" / "a.jpg").write_bytes(b"aaaa")
+        backup_sync.sync("Alex")
+        fake.files["data/Family/ghost.jpg"] = b"zz"
+        fake.files["data/Family/a.jpg"] = b"a"
+        v = backup_sync.verify("Alex")
+        assert "data/Family/ghost.jpg" in v["extra_remote"]
+        assert "data/Family/a.jpg" in v["size_mismatch"]
+        del fake.files["data/Family/a.jpg"]
+        v = backup_sync.verify("Alex")
+        assert "data/Family/a.jpg" in v["missing_remote"]
 
-    def test_status_fields(self, bk):
+    def test_status_global_and_members(self, bk):
         s = backup_sync.status()
-        assert s["enabled"] is True and s["configured"] is True
-        assert s["files_tracked"] == 0
+        assert s["enabled"] is True
+        assert len(s["members"]) == 1
+        row = s["members"][0]
+        assert row["member"] == "Alex" and row["configured"] is True
+        assert row["files_tracked"] == 0
         backup_sync.mark_dirty()
         s = backup_sync.status()
         assert s["dirty_since"] is not None
+
+    def test_status_single_member_filter(self, bk):
+        assert [m["member"] for m in backup_sync.status(member="Alex")["members"]] == ["Alex"]
+        assert backup_sync.status(member="Nobody")["members"] == []
 
 
 import json
@@ -415,6 +522,19 @@ def _disabled_cfg(tmp_path):
     return {"BACKUP_STATE_DIR": str(tmp_path), "BACKUP_CONFIG": str(cfg)}
 
 
+def _enabled_member_env(tmp_path):
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({"backup": {"enabled": True, "debounce_seconds": 60},
+                               "data_root": "data"}), encoding="utf-8")
+    mp = tmp_path / "members.json"
+    mp.write_text(json.dumps({"Alex Lee": {"dir": "Alex", "backup": {
+        "provider": "google_drive", "cred_prefix": "GDRIVE",
+        "remote_root": "FamilyAssistant", "enabled": True,
+        "scopes": ["Alex", "Family"]}}}), encoding="utf-8")
+    return {"BACKUP_STATE_DIR": str(tmp_path), "BACKUP_CONFIG": str(cfg),
+            "BACKUP_MEMBERS": str(mp), "DATA_ROOT": str(tmp_path / "data")}
+
+
 class TestCli:
     def test_backup_status_works_unconfigured(self, tmp_path):
         r = _run_cli("backup-status", env_extra=_disabled_cfg(tmp_path))
@@ -422,18 +542,30 @@ class TestCli:
         assert "enabled" in r.stdout and "False" in r.stdout
 
     def test_backup_now_disabled_exits_1(self, tmp_path):
-        # 隔离配置 backup.enabled = false → 拒绝
         r = _run_cli("backup-now", env_extra=_disabled_cfg(tmp_path))
         assert r.returncode == 1
-        assert "未启用" in r.stderr or "未实现" in r.stderr
+        assert "未启用" in r.stderr
 
-    def test_backup_verify_unconfigured_exits_1(self, tmp_path):
-        r = _run_cli("backup-verify", env_extra=_disabled_cfg(tmp_path))
-        assert r.returncode == 1
+    def test_status_lists_member(self, tmp_path):
+        env = _enabled_member_env(tmp_path)
+        for var in ("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN"):
+            env[var] = ""
+        r = _run_cli("backup-status", env_extra=env)
+        assert r.returncode == 0
+        assert "Alex" in r.stdout
 
-    def test_backup_restore_unconfigured_exits_1(self, tmp_path):
-        r = _run_cli("backup-restore", env_extra=_disabled_cfg(tmp_path))
+    def test_now_skips_unconfigured_member(self, tmp_path):
+        env = _enabled_member_env(tmp_path)
+        for var in ("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN"):
+            env[var] = ""
+        r = _run_cli("backup-now", env_extra=env)
+        assert r.returncode == 0
+        assert "跳过" in (r.stdout + r.stderr)
+
+    def test_restore_requires_member(self, tmp_path):
+        r = _run_cli("backup-restore", env_extra=_enabled_member_env(tmp_path))
         assert r.returncode == 1
+        assert "member" in r.stderr.lower() or "成员" in r.stderr
 
 
 _DOC_CLI = str(Path(__file__).resolve().parent.parent
@@ -470,6 +602,7 @@ import agent_core
 class TestAgentIntegration:
     def test_backup_commands_route(self):
         assert agent_core._cli_path("backup-now").parts[-2] == "Remote_Backup"
+        assert agent_core._cli_path("backup-reorg").parts[-2] == "Remote_Backup"
         assert agent_core._cli_path("doc-add").parts[-2] == "Document_Keeper"
         assert agent_core._cli_path("add").parts[-2] == "Expense_Tracker"
 
@@ -483,3 +616,80 @@ class TestAgentIntegration:
             assert name in agent_core._TOOL_MAP
         schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
         assert "backup_status" in schema_names
+
+
+class TestScopeResolver:
+    @pytest.fixture
+    def sr(self, tmp_path, monkeypatch):
+        root = tmp_path / "root"
+        (root / "data").mkdir(parents=True)
+        monkeypatch.setattr(backup_sync, "ROOT", root)
+        monkeypatch.setattr(backup_sync, "_DATA_DIRNAME", "data")
+        return root
+
+    def test_scope_to_prefix(self, sr):
+        assert backup_sync._scope_to_prefix("config.json") == "config.json"
+        assert backup_sync._scope_to_prefix("Alex") == "data/Alex"
+        assert backup_sync._scope_to_prefix("Family/documents") == "data/Family/documents"
+
+    def test_member_files_prefix_boundary(self, sr):
+        root = sr
+        (root / "data" / "Alex" / "notes").mkdir(parents=True)
+        (root / "data" / "Alex" / "notes" / "n.db").write_bytes(b"x")
+        (root / "data" / "Jimbo").mkdir()
+        (root / "data" / "Jimbo" / "y.txt").write_text("y")
+        files = backup_sync._member_files(["Alex"])
+        assert "data/Alex/notes/n.db" in files
+        assert not any("Jimbo" in f for f in files)   # 前缀不跨目录边界
+
+    def test_member_files_config_and_members_aliases(self, sr):
+        root = sr
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        (root / "data" / "members.json").write_text("{}", encoding="utf-8")
+        files = backup_sync._member_files(["members.json", "config.json"])
+        assert "config.json" in files
+        assert "data/members.json" in files
+
+    def test_member_files_applies_hard_excludes(self, sr):
+        root = sr
+        (root / "data" / "Alex").mkdir(parents=True)
+        (root / "data" / "Alex" / "notes.db").write_bytes(b"")
+        (root / "data" / "Alex" / ".backup_manifest.json").write_text("{}")
+        (root / "data" / "Alex" / "wechat_creds.json").write_text("secret")
+        files = backup_sync._member_files(["Alex"])
+        assert "data/Alex/notes.db" in files
+        assert not any("creds" in f for f in files)
+        assert "data/Alex/.backup_manifest.json" not in files
+
+    def test_member_files_missing_token_is_silent(self, sr):
+        assert backup_sync._member_files(["Ghost"]) == {}
+
+
+def test_cmd_reorg_invokes_provider(monkeypatch, capsys):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_rb_cli", _CLI)
+    cli = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli)
+
+    class P:
+        def is_configured(self):
+            return True
+        def reorganize(self):
+            return {"moved": ["data/Alex/x.jpg"], "skipped": 2}
+    monkeypatch.setattr(cli.backup_sync, "_resolve",
+                        lambda m: {"provider": "google_drive", "name": m})
+    monkeypatch.setattr(cli.backup_sync, "_make_provider", lambda p: P())
+
+    class Args:
+        member = "Alex Lee"
+    cli.cmd_reorg(Args())
+    out = capsys.readouterr().out
+    assert "data/Alex/x.jpg" in out
+    assert "移动 1" in out and "已就位 2" in out
+
+
+class TestReorgCli:
+    def test_reorg_requires_member(self, tmp_path):
+        r = _run_cli("backup-reorg", env_extra=_enabled_member_env(tmp_path))
+        assert r.returncode == 1
+        assert "member" in r.stderr.lower() or "成员" in r.stderr

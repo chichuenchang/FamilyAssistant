@@ -15,10 +15,10 @@
 
 ### 🧾 票据 OCR
 - 发票/小票照片 → 腾讯云 OCR 文字识别（1000 次/月免费）→ DeepSeek 结构化提取（金额/日期/分类/描述）→ 自动记账
-- 原始票据按月存档 `receipts/YYYY-MM/`，与账目记录关联
+- 原始票据按月存档 `data/Family/receipts/YYYY-MM/`，与账目记录关联（行内 `receipt_path` 记 data 相对路径）
 
 ### 📁 家庭文档管理（Document Keeper）
-- 重要文档归档：租约、保险单、证件、健康卡等，原件存 `documents/<类型>/`
+- 重要文档归档：租约、保险单、证件、健康卡等，原件存 `data/Family/documents/<类型>/`
 - OCR 全文索引，关键词检索（"我们有哪些保险"）
 - **到期跟踪 + 每日主动提醒**：到期前 Bot 每天推送（如 "租约 20 天后到期 — 提前60天通知房东"），`doc-ack` 确认后不再重复
 - 重复检测（证件编号 / 文件哈希）
@@ -56,9 +56,9 @@
 
 ### 🔒 安全设计
 - Agent 只能调 `config.json` 白名单内的 CLI 命令；成员/文档删除等敏感命令仅限本机
-- OCR 路径限制在票据目录内，防文件外泄；所有凭据走环境变量或本地加密存储，永不入库
-- **隐私分层**：git 跟踪的文件（代码 + `config.json`）不含任何个人数据；隐私数据（成员注册表/账本/票据/文档）
-  全部在 git 忽略路径（`data/` `receipts/` `documents/`），只存本机 + 你自己的云盘镜像
+- OCR 路径限制在数据目录 `data/` 内，防文件外泄；所有凭据走环境变量或本地加密存储，永不入库
+- **隐私分层**：git 跟踪的文件（代码 + `config.json`）不含任何个人数据；隐私数据（成员注册表/账本/票据/文档/备忘/日程）
+  全部在 git 忽略路径 `data/`（家庭共享 `data/Family/` + 成员私有 `data/<成员>/`），只存本机 + 你自己的云盘镜像
 
 ## 快速开始
 
@@ -118,6 +118,63 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 归档的文档到期前 Bot 会每天主动提醒（如 "租约 20 天后到期 — 提前60天通知房东"）。
 （可选）配置云盘备份后，所有数据自动镜像到你自己的网盘；换电脑 `backup-restore` 一键恢复。
 
+## 换新机 / 灾难恢复
+
+代码在 git，**家庭数据在你自己的云盘备份里**，凭据走环境变量（按设计不进备份、不进 git）。
+换机就三步：克隆代码 → 恢复数据 → 重设凭据。
+
+**恢复地图**
+
+| 东西 | 在哪 | 怎么回来 |
+|------|------|---------|
+| 代码 | git 仓库 | `git clone` |
+| 家庭数据（账本/票据/文档/备忘/日程/成员注册表） | 你的 Google Drive 备份 | `backup-restore` |
+| `config.json` | 随 git 克隆（也在备份里） | 自带 |
+| 凭据（GDRIVE_* / GCAL_* / 微信 / Telegram / OCR / DeepSeek） | **只在环境变量，不在备份** | 手动重设 / 重新授权 |
+
+**步骤**
+
+```bash
+# 1. 装 Python 3.10+ 与依赖，克隆代码
+pip install "weixin-ilink[qr]"
+git clone <你的仓库地址> && cd FamilyAssistant
+
+# 2. 设 Google Drive 凭据（恢复用）。CLIENT_ID/SECRET 来自 Google Cloud Console 的 OAuth 客户端
+setx GDRIVE_CLIENT_ID "xxx"
+setx GDRIVE_CLIENT_SECRET "xxx"
+#    refresh token 若已保存：setx GDRIVE_REFRESH_TOKEN "xxx"
+#    丢了也没关系——数据还在云端，重新授权一次即可（开新终端让 setx 生效后）：
+python .codewhale/skills/Remote_Backup/backup_provider.py --auth   # 浏览器批准 → 按提示 setx GDRIVE_REFRESH_TOKEN
+
+# 3. 引导恢复：先恢复"持有注册表的主成员"——即备份 scope 含 members.json/config.json 的那个成员
+#    （members.json 在该成员的备份里，故首次用显式参数、无需本地注册表）。三处占位按实际替换：
+#      <主成员> = 成员名   <前缀> = 该成员 cred_prefix（默认 GDRIVE）   <根目录> = 该成员 remote_root
+python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "<主成员>" --prefix <前缀> --remote-root <根目录>
+#    → 拉回 config.json + data/members.json + 该成员的全部数据
+#    其他成员若各有备份：再 backup-restore --member "成员名"（此时注册表已恢复，正常模式）
+
+# 4. 重设其余凭据（都不在备份里）
+setx DEEPSEEK_API_KEY "sk-xxx"        # 必须
+setx GCAL_CLIENT_ID "xxx"             # 日历同步（可复用 Drive 的同一 OAuth 客户端）
+setx GCAL_CLIENT_SECRET "xxx"
+setx GCAL_CALENDAR_ID "xxx"
+#    GCAL refresh token 同样可 calendar_provider.py --auth 重授
+#    可选：setx TENCENT_SECRET_ID / TENCENT_SECRET_KEY（OCR）、setx TELEGRAM_BOT_TOKEN（Telegram）
+
+# 5. 启动 Bot；微信通道重新扫码登录（wechat_creds.json 自动重建，不从备份恢复）
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run     # 或 telegram_bot.py
+
+# 6. 确认备份续上（应报告全部一致、零重传）
+python .codewhale/skills/Remote_Backup/cli.py backup-verify --member "<主成员>"
+```
+
+**唯一必须自己保管好的：Google 账号 + 那个 OAuth 客户端的 `CLIENT_ID` / `CLIENT_SECRET`。**
+数据躺在该 Google 账号的云盘里；只要有 CLIENT_ID/SECRET，随时能 `--auth` 换一个新的 refresh token 再恢复。
+把这两个值（连同各 refresh token）存进**密码管理器**——它们按设计不进备份、不进 git、不进日志，丢了没有第二份。
+凭据不入备份是有意为之（见「安全设计」）：备份云盘一旦被盗，泄露的也只是数据、不含登录密钥。
+
+> 提示：Google OAuth 同意屏幕发布状态设为 **In production**，否则 refresh token 约 7 天过期（过期了 `--auth` 重授即可）。
+
 ## 目录结构
 
 ```
@@ -160,9 +217,10 @@ FamilyAssistant/
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）
-├── data/                 ← SQLite + 凭据 + 成员注册表 members.json（均 git 不跟踪）
-├── receipts/             ← 票据存档（按月子目录）
-├── documents/            ← 家庭文档存档（按类型子目录）
+├── data/                 ← 全部用户数据（git 不跟踪）
+│   ├── Family/           ← 家庭共享：ledger.db、receipts/、documents/
+│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/
+│   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档
 └── requirements-dev.txt  ← 开发依赖（pytest）

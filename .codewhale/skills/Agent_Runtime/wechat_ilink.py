@@ -65,6 +65,7 @@ from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup
 
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
 from calendar_sync import calendar_tick as _calendar_tick
+from image_gc import image_gc_tick as _image_gc_tick
 
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
@@ -102,6 +103,7 @@ def run_bot(relogin: bool = False) -> None:
         print(f"[wx] 文字消息 from {msg.from_user}({member}): {msg.text[:60]}")
         log.debug("文字 from %s(%s): %s", msg.from_user, member, msg.text)
         _calendar_tick()  # 已注册成员消息 → 静默节流刷新远程日历（内部把关，永不抛）
+        _image_gc_tick()  # 节流（约每月）清理陈旧来图
         try:
             reply = agent.handle(msg.text, user=msg.from_user, member=member)
             log.debug("文字回复 → %s", (reply or "")[:200])
@@ -119,6 +121,7 @@ def run_bot(relogin: bool = False) -> None:
             return
         print(f"[wx] 图片消息 from {msg.from_user}({member})")
         _calendar_tick()
+        _image_gc_tick()
         try:
             now = datetime.now()
             ts = now.strftime("%Y%m%d_%H%M%S")

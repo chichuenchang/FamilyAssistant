@@ -55,24 +55,6 @@ _FOLDER_MIME = "application/vnd.google-apps.folder"
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# 进程内缓存（access token ~1h 有效；remote_root 文件夹 id 不变）
-_token_cache: dict = {"access": None, "exp": 0.0}
-_folder_cache: dict = {"id": None}
-
-
-def _remote_root() -> str:
-    try:
-        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-        return (cfg.get("backup") or {}).get("remote_root") or "FamilyAssistant"
-    except Exception:
-        return "FamilyAssistant"
-
-
-def is_configured() -> bool:
-    """三个环境变量齐备即视为已配置。"""
-    return all(os.environ.get(v) for v in
-               ("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN"))
-
 
 def _http(method: str, url: str, data: bytes | None = None,
           headers: dict | None = None) -> tuple[int, bytes]:
@@ -85,157 +67,230 @@ def _http(method: str, url: str, data: bytes | None = None,
         return e.code, e.read()
 
 
-def _token() -> str:
-    """refresh token 换 access token，进程内缓存到过期前 1 分钟。"""
-    if _token_cache["access"] and time.time() < _token_cache["exp"]:
-        return _token_cache["access"]
-    data = urllib.parse.urlencode({
-        "client_id": os.environ["GDRIVE_CLIENT_ID"],
-        "client_secret": os.environ["GDRIVE_CLIENT_SECRET"],
-        "refresh_token": os.environ["GDRIVE_REFRESH_TOKEN"],
-        "grant_type": "refresh_token",
-    }).encode()
-    status, body = _http("POST", TOKEN_URL, data,
-                         {"Content-Type": "application/x-www-form-urlencoded"})
-    if status != 200:
-        raise RuntimeError(f"Google OAuth token 刷新失败 {status}: {body[:200]!r}")
-    tok = json.loads(body)
-    _token_cache["access"] = tok["access_token"]
-    _token_cache["exp"] = time.time() + int(tok.get("expires_in", 3600)) - 60
-    return _token_cache["access"]
-
-
-def _api_json(method: str, url: str, payload: dict | None = None) -> dict:
-    headers = {"Authorization": f"Bearer {_token()}"}
-    data = None
-    if payload is not None:
-        data = json.dumps(payload).encode()
-        headers["Content-Type"] = "application/json"
-    status, body = _http(method, url, data, headers)
-    if status >= 300:
-        raise RuntimeError(f"Drive API {method} {url} → {status}: {body[:200]!r}")
-    return json.loads(body) if body else {}
-
-
 def _q(value: str) -> str:
     """Drive 查询字符串里的单引号/反斜杠转义。"""
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def _folder_id() -> str:
-    """remote_root 文件夹 id，不存在则创建。进程内缓存。"""
-    if _folder_cache["id"]:
-        return _folder_cache["id"]
-    root_name = _remote_root()
-    query = (f"name = '{_q(root_name)}' and mimeType = '{_FOLDER_MIME}' "
-             f"and trashed = false")
-    r = _api_json("GET", f"{API}/files?" + urllib.parse.urlencode(
-        {"q": query, "fields": "files(id)", "pageSize": 10}))
-    files = r.get("files") or []
-    if files:
-        _folder_cache["id"] = files[0]["id"]
-    else:
-        created = _api_json("POST", f"{API}/files",
-                            {"name": root_name, "mimeType": _FOLDER_MIME})
-        _folder_cache["id"] = created["id"]
-    return _folder_cache["id"]
+class GoogleDriveProvider:
+    """Google Drive 备份 provider（drive.file 最小权限）。
 
+    凭据从 {cred_prefix}_CLIENT_ID/SECRET/REFRESH_TOKEN 环境变量读取，进程内缓存
+    access token 与 remote_root 文件夹 id。多成员各持一个实例，缓存互不干扰。
+    云端布局：文件平铺在 remote_root 文件夹，rel 存 appProperties.rel（上限 124B）。
+    """
 
-def _find(remote_rel: str) -> str | None:
-    """按 appProperties.rel 找文件 id；不存在返回 None。"""
-    query = (f"appProperties has {{ key='rel' and value='{_q(remote_rel)}' }} "
-             f"and '{_folder_id()}' in parents and trashed = false")
-    r = _api_json("GET", f"{API}/files?" + urllib.parse.urlencode(
-        {"q": query, "fields": "files(id)", "pageSize": 2}))
-    files = r.get("files") or []
-    return files[0]["id"] if files else None
+    def __init__(self, cred_prefix: str = "GDRIVE",
+                 remote_root: str = "FamilyAssistant") -> None:
+        self.cred_prefix = cred_prefix
+        self.remote_root = remote_root
+        self._token_cache: dict = {"access": None, "exp": 0.0}
+        self._folder_cache: dict = {"id": None}
+        self._path_cache: dict = {}
 
+    def _env(self, suffix: str) -> str:
+        return os.environ.get(f"{self.cred_prefix}_{suffix}", "")
 
-def upload(local_path: Path, remote_rel: str) -> None:
-    """上传/覆盖：已有同 rel 文件则原地更新内容，否则新建。"""
-    content = Path(local_path).read_bytes()
-    existing = _find(remote_rel)
-    meta: dict = {"name": remote_rel.rsplit("/", 1)[-1],
-                  "appProperties": {"rel": remote_rel}}
-    if existing is None:
-        meta["parents"] = [_folder_id()]
-        method, url = "POST", f"{UPLOAD_API}/files?uploadType=multipart"
-    else:
-        method, url = "PATCH", f"{UPLOAD_API}/files/{existing}?uploadType=multipart"
-    boundary = "codewhale-backup-7e3f9d"
-    body = ((f"--{boundary}\r\n"
-             f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
-             f"{json.dumps(meta, ensure_ascii=False)}\r\n"
-             f"--{boundary}\r\n"
-             f"Content-Type: application/octet-stream\r\n\r\n").encode()
-            + content + f"\r\n--{boundary}--".encode())
-    headers = {"Authorization": f"Bearer {_token()}",
-               "Content-Type": f"multipart/related; boundary={boundary}"}
-    status, resp = _http(method, url, body, headers)
-    if status >= 300:
-        raise RuntimeError(f"Drive 上传失败 {remote_rel} → {status}: {resp[:200]!r}")
+    def is_configured(self) -> bool:
+        return all(self._env(s) for s in ("CLIENT_ID", "CLIENT_SECRET", "REFRESH_TOKEN"))
 
+    def _token(self) -> str:
+        if self._token_cache["access"] and time.time() < self._token_cache["exp"]:
+            return self._token_cache["access"]
+        data = urllib.parse.urlencode({
+            "client_id": self._env("CLIENT_ID"),
+            "client_secret": self._env("CLIENT_SECRET"),
+            "refresh_token": self._env("REFRESH_TOKEN"),
+            "grant_type": "refresh_token",
+        }).encode()
+        status, body = _http("POST", TOKEN_URL, data,
+                             {"Content-Type": "application/x-www-form-urlencoded"})
+        if status != 200:
+            raise RuntimeError(f"Google OAuth token 刷新失败 {status}: {body[:200]!r}")
+        tok = json.loads(body)
+        self._token_cache["access"] = tok["access_token"]
+        self._token_cache["exp"] = time.time() + int(tok.get("expires_in", 3600)) - 60
+        return self._token_cache["access"]
 
-def delete(remote_rel: str) -> None:
-    """删除云端文件。不存在视为成功。"""
-    fid = _find(remote_rel)
-    if fid is None:
-        return
-    headers = {"Authorization": f"Bearer {_token()}"}
-    status, body = _http("DELETE", f"{API}/files/{fid}", None, headers)
-    if status >= 300 and status != 404:
-        raise RuntimeError(f"Drive 删除失败 {remote_rel} → {status}: {body[:200]!r}")
+    def _api_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        data = None
+        if payload is not None:
+            data = json.dumps(payload).encode()
+            headers["Content-Type"] = "application/json"
+        status, body = _http(method, url, data, headers)
+        if status >= 300:
+            raise RuntimeError(f"Drive API {method} {url} → {status}: {body[:200]!r}")
+        return json.loads(body) if body else {}
 
+    def _folder_id(self) -> str:
+        if self._folder_cache["id"]:
+            return self._folder_cache["id"]
+        query = (f"name = '{_q(self.remote_root)}' and mimeType = '{_FOLDER_MIME}' "
+                 f"and trashed = false")
+        r = self._api_json("GET", f"{API}/files?" + urllib.parse.urlencode(
+            {"q": query, "fields": "files(id)", "pageSize": 10}))
+        files = r.get("files") or []
+        if files:
+            self._folder_cache["id"] = files[0]["id"]
+        else:
+            created = self._api_json("POST", f"{API}/files",
+                                     {"name": self.remote_root, "mimeType": _FOLDER_MIME})
+            self._folder_cache["id"] = created["id"]
+        return self._folder_cache["id"]
 
-def list_remote() -> dict:
-    """remote_root 下全部带 rel 标签的文件：{rel: {"size": int}}。分页拉全。"""
-    out: dict = {}
-    page_token = None
-    while True:
-        params = {"q": f"'{_folder_id()}' in parents and trashed = false",
-                  "fields": "nextPageToken, files(id, size, appProperties)",
-                  "pageSize": 1000}
-        if page_token:
-            params["pageToken"] = page_token
-        r = _api_json("GET", f"{API}/files?" + urllib.parse.urlencode(params))
-        for f in r.get("files", []):
-            rel = (f.get("appProperties") or {}).get("rel")
-            if rel:
-                out[rel] = {"size": int(f.get("size") or 0)}
-        page_token = r.get("nextPageToken")
-        if not page_token:
-            break
-    return out
+    def _find(self, remote_rel: str) -> str | None:
+        query = (f"appProperties has {{ key='rel' and value='{_q(remote_rel)}' }} "
+                 f"and trashed = false")
+        r = self._api_json("GET", f"{API}/files?" + urllib.parse.urlencode(
+            {"q": query, "fields": "files(id)", "pageSize": 2}))
+        files = r.get("files") or []
+        return files[0]["id"] if files else None
 
+    def _child_folder(self, parent_id: str, name: str) -> str:
+        """parent 下名为 name 的子文件夹 id，不存在则创建。"""
+        query = (f"name = '{_q(name)}' and mimeType = '{_FOLDER_MIME}' "
+                 f"and '{parent_id}' in parents and trashed = false")
+        r = self._api_json("GET", f"{API}/files?" + urllib.parse.urlencode(
+            {"q": query, "fields": "files(id)", "pageSize": 1}))
+        files = r.get("files") or []
+        if files:
+            return files[0]["id"]
+        created = self._api_json("POST", f"{API}/files",
+                                 {"name": name, "mimeType": _FOLDER_MIME,
+                                  "parents": [parent_id]})
+        return created["id"]
 
-def download(remote_rel: str, local_path: Path) -> None:
-    """下载云端文件到本地（覆盖），自动建父目录。"""
-    fid = _find(remote_rel)
-    if fid is None:
-        raise RuntimeError(f"云端不存在: {remote_rel}")
-    headers = {"Authorization": f"Bearer {_token()}"}
-    status, body = _http("GET", f"{API}/files/{fid}?alt=media", None, headers)
-    if status >= 300:
-        raise RuntimeError(f"Drive 下载失败 {remote_rel} → {status}: {body[:200]!r}")
-    target = Path(local_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(body)
+    def _ensure_folder_path(self, remote_rel: str) -> str:
+        """rel 的目录链在云端建好（mkdir -p），返回叶目录 id；无目录则 remote_root。
+
+        路径段逐级缓存（path → id），同目录重复上传零额外查询。
+        """
+        parts = remote_rel.split("/")[:-1]            # 去掉文件名
+        parent = self._folder_id()
+        path = ""
+        for part in parts:
+            path = f"{path}/{part}" if path else part
+            cached = self._path_cache.get(path)
+            if cached:
+                parent = cached
+                continue
+            parent = self._child_folder(parent, part)
+            self._path_cache[path] = parent
+        return parent
+
+    def upload(self, local_path, remote_rel: str) -> None:
+        content = Path(local_path).read_bytes()
+        existing = self._find(remote_rel)
+        meta: dict = {"name": remote_rel.rsplit("/", 1)[-1],
+                      "appProperties": {"rel": remote_rel}}
+        if existing is None:
+            meta["parents"] = [self._ensure_folder_path(remote_rel)]
+            method, url = "POST", f"{UPLOAD_API}/files?uploadType=multipart"
+        else:
+            method, url = "PATCH", f"{UPLOAD_API}/files/{existing}?uploadType=multipart"
+        boundary = "codewhale-backup-7e3f9d"
+        body = ((f"--{boundary}\r\n"
+                 f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
+                 f"{json.dumps(meta, ensure_ascii=False)}\r\n"
+                 f"--{boundary}\r\n"
+                 f"Content-Type: application/octet-stream\r\n\r\n").encode()
+                + content + f"\r\n--{boundary}--".encode())
+        headers = {"Authorization": f"Bearer {self._token()}",
+                   "Content-Type": f"multipart/related; boundary={boundary}"}
+        status, resp = _http(method, url, body, headers)
+        if status >= 300:
+            raise RuntimeError(f"Drive 上传失败 {remote_rel} → {status}: {resp[:200]!r}")
+
+    def delete(self, remote_rel: str) -> None:
+        fid = self._find(remote_rel)
+        if fid is None:
+            return
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        status, body = _http("DELETE", f"{API}/files/{fid}", None, headers)
+        if status >= 300 and status != 404:
+            raise RuntimeError(f"Drive 删除失败 {remote_rel} → {status}: {body[:200]!r}")
+
+    def list_remote(self) -> dict:
+        out: dict = {}
+        page_token = None
+        while True:
+            params = {"q": f"mimeType != '{_FOLDER_MIME}' and trashed = false",
+                      "fields": "nextPageToken, files(id, size, appProperties)",
+                      "pageSize": 1000}
+            if page_token:
+                params["pageToken"] = page_token
+            r = self._api_json("GET", f"{API}/files?" + urllib.parse.urlencode(params))
+            for f in r.get("files", []):
+                rel = (f.get("appProperties") or {}).get("rel")
+                if rel:
+                    out[rel] = {"size": int(f.get("size") or 0)}
+            page_token = r.get("nextPageToken")
+            if not page_token:
+                break
+        return out
+
+    def download(self, remote_rel: str, local_path) -> None:
+        fid = self._find(remote_rel)
+        if fid is None:
+            raise RuntimeError(f"云端不存在: {remote_rel}")
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        status, body = _http("GET", f"{API}/files/{fid}?alt=media", None, headers)
+        if status >= 300:
+            raise RuntimeError(f"Drive 下载失败 {remote_rel} → {status}: {body[:200]!r}")
+        target = Path(local_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(body)
+
+    def reorganize(self) -> dict:
+        """把现有平铺文件按 rel 重新归入文件夹树（元数据移动，零字节重传）。幂等。
+
+        遍历全部带 rel 的文件（drive.file 作用域即本应用文件）；当前父 ≠ 目标叶目录
+        则用 files.update 改 parents（addParents/removeParents），已就位的跳过。
+        """
+        moved: list[str] = []
+        skipped = 0
+        page_token = None
+        while True:
+            params = {"q": f"mimeType != '{_FOLDER_MIME}' and trashed = false",
+                      "fields": "nextPageToken, files(id, parents, appProperties)",
+                      "pageSize": 1000}
+            if page_token:
+                params["pageToken"] = page_token
+            r = self._api_json("GET", f"{API}/files?" + urllib.parse.urlencode(params))
+            for f in r.get("files", []):
+                rel = (f.get("appProperties") or {}).get("rel")
+                if not rel:
+                    continue
+                target = self._ensure_folder_path(rel)
+                current = (f.get("parents") or [None])[0]
+                if current == target:
+                    skipped += 1
+                    continue
+                url = f"{API}/files/{f['id']}?" + urllib.parse.urlencode(
+                    {"addParents": target, "removeParents": current or "",
+                     "fields": "id"})
+                self._api_json("PATCH", url)
+                moved.append(rel)
+            page_token = r.get("nextPageToken")
+            if not page_token:
+                break
+        return {"moved": moved, "skipped": skipped}
 
 
 # ── 一次性授权：python backup_provider.py --auth ────────────────
 # 本地回环 OAuth：起临时 http 服务接 code，浏览器里用户批准，换 refresh token。
 
-def _run_auth() -> None:
+def _run_auth(prefix: str = "GDRIVE") -> None:
     import http.server
     import threading
     import webbrowser
 
-    client_id = os.environ.get("GDRIVE_CLIENT_ID", "")
-    client_secret = os.environ.get("GDRIVE_CLIENT_SECRET", "")
+    client_id = os.environ.get(f"{prefix}_CLIENT_ID", "")
+    client_secret = os.environ.get(f"{prefix}_CLIENT_SECRET", "")
     if not client_id or not client_secret:
-        print("先设置 GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET 环境变量"
-              "（Google Cloud Console → OAuth 客户端，Desktop app 类型），"
-              "然后开新终端重跑。")
+        print(f"先设置 {prefix}_CLIENT_ID / {prefix}_CLIENT_SECRET 环境变量"
+              "（Google Cloud Console → OAuth 客户端，Desktop app 类型），然后开新终端重跑。")
         raise SystemExit(1)
 
     code_holder: dict = {}
@@ -297,14 +352,17 @@ def _run_auth() -> None:
         raise SystemExit(1)
 
     print("\n授权成功。在你自己的终端执行（之后开新终端生效）：\n")
-    print(f'  setx GDRIVE_REFRESH_TOKEN "{refresh}"')
+    print(f'  setx {prefix}_REFRESH_TOKEN "{refresh}"')
     print("\n然后告诉助手继续（启用备份 + 首次全量上传）。")
 
 
 if __name__ == "__main__":
     if "--auth" in sys.argv:
-        _run_auth()
+        prefix = "GDRIVE"
+        if "--prefix" in sys.argv:
+            prefix = sys.argv[sys.argv.index("--prefix") + 1]
+        _run_auth(prefix)
     else:
         print(__doc__)
-        print(f"configured: {is_configured()}")
-        print("一次性授权：python backup_provider.py --auth")
+        print(f"configured (GDRIVE): {GoogleDriveProvider().is_configured()}")
+        print("一次性授权：python backup_provider.py --auth [--prefix PREFIX]")

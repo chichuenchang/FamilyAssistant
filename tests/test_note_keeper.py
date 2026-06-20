@@ -293,27 +293,27 @@ class TestCli:
 class TestPerMemberStore:
     """无 NOTE_DB_PATH 覆盖时，备忘按成员落到 data/<成员目录>/notes/notes.db。
 
-    依赖真实 data/members.json（Jim Zheng→dir Jim, Wenliang Li→dir Wenliang）。
+    依赖真实 data/members.json（Alex Lee→dir Alex, Sam Lee→dir Sam）。
     """
 
     def test_note_add_goes_to_member_store(self, tmp_path):
         env = {"DATA_ROOT": str(tmp_path / "data")}
-        r = _run_cli("note-add", "--member", "Jim Zheng",
+        r = _run_cli("note-add", "--member", "Alex Lee",
                      "--content", "wifi pw abcd", env=env)
         assert r.returncode == 0, r.stderr
-        assert (tmp_path / "data" / "Jim" / "notes" / "notes.db").exists()
-        r = _run_cli("note-list", "--member", "Jim Zheng", env=env)
+        assert (tmp_path / "data" / "Alex" / "notes" / "notes.db").exists()
+        r = _run_cli("note-list", "--member", "Alex Lee", env=env)
         assert "wifi pw abcd" in r.stdout
 
     def test_members_have_separate_stores(self, tmp_path):
         env = {"DATA_ROOT": str(tmp_path / "data")}
-        _run_cli("note-add", "--member", "Jim Zheng",
-                 "--content", "jim secret", env=env)
-        r = _run_cli("note-list", "--member", "Wenliang Li", env=env)
-        assert "jim secret" not in r.stdout
-        assert not (tmp_path / "data" / "Jim" / "notes" / "notes.db").samefile(
-            tmp_path / "data" / "Wenliang" / "notes" / "notes.db") \
-            if (tmp_path / "data" / "Wenliang" / "notes" / "notes.db").exists() else True
+        _run_cli("note-add", "--member", "Alex Lee",
+                 "--content", "alex secret", env=env)
+        r = _run_cli("note-list", "--member", "Sam Lee", env=env)
+        assert "alex secret" not in r.stdout
+        assert not (tmp_path / "data" / "Alex" / "notes" / "notes.db").samefile(
+            tmp_path / "data" / "Sam" / "notes" / "notes.db") \
+            if (tmp_path / "data" / "Sam" / "notes" / "notes.db").exists() else True
 
 
 class TestAgentRegistration:
@@ -350,7 +350,7 @@ class TestRelocateNoteImage:
         import agent_core
         import members
         mp = tmp_path / "members.json"
-        mp.write_text(_json.dumps({"Jim Zheng": {"dir": "Jim"}}), encoding="utf-8")
+        mp.write_text(_json.dumps({"Alex Lee": {"dir": "Alex"}}), encoding="utf-8")
         monkeypatch.setattr(members, "MEMBERS_PATH", mp)
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         return agent_core
@@ -358,38 +358,38 @@ class TestRelocateNoteImage:
     def test_moves_inbox_image(self, monkeypatch, tmp_path):
         ac = self._setup(monkeypatch, tmp_path)
         import paths
-        img = paths.member_inbox_dir("Jim Zheng") / "a.jpg"
+        img = paths.member_inbox_dir("Alex Lee") / "a.jpg"
         img.write_bytes(b"x")
-        out = ac._relocate_note_image(str(img), "Jim Zheng")
+        out = ac._relocate_note_image(str(img), "Alex Lee")
         assert not img.exists()
-        assert out.startswith("Jim/notes/") and out.endswith("a.jpg")
+        assert out.startswith("Alex/notes/") and out.endswith("a.jpg")
         assert paths.resolve_rel(out).read_bytes() == b"x"
 
     def test_leaves_outside_paths_alone(self, monkeypatch, tmp_path):
         ac = self._setup(monkeypatch, tmp_path)
         other = tmp_path / "elsewhere.jpg"; other.write_bytes(b"x")   # 不在 data_root 下
-        assert ac._relocate_note_image(str(other), "Jim Zheng") == str(other)
+        assert ac._relocate_note_image(str(other), "Alex Lee") == str(other)
         assert other.exists()
 
     def test_missing_file_returns_original(self, monkeypatch, tmp_path):
         ac = self._setup(monkeypatch, tmp_path)
         import paths
-        ghost = str(paths.member_inbox_dir("Jim Zheng") / "nope.jpg")
-        assert ac._relocate_note_image(ghost, "Jim Zheng") == ghost
+        ghost = str(paths.member_inbox_dir("Alex Lee") / "nope.jpg")
+        assert ac._relocate_note_image(ghost, "Alex Lee") == ghost
 
     def test_no_member_returns_original(self, monkeypatch, tmp_path):
         ac = self._setup(monkeypatch, tmp_path)
         import paths
-        img = paths.member_inbox_dir("Jim Zheng") / "a.jpg"; img.write_bytes(b"x")
+        img = paths.member_inbox_dir("Alex Lee") / "a.jpg"; img.write_bytes(b"x")
         assert ac._relocate_note_image(str(img), "") == str(img)
         assert img.exists()
 
     def test_name_collision_gets_suffix(self, monkeypatch, tmp_path):
         ac = self._setup(monkeypatch, tmp_path)
         import paths
-        taken = paths.member_notes_image_dir("Jim Zheng")
+        taken = paths.member_notes_image_dir("Alex Lee")
         (taken / "a.jpg").write_bytes(b"old")
-        img = paths.member_inbox_dir("Jim Zheng") / "a.jpg"; img.write_bytes(b"new")
-        out = ac._relocate_note_image(str(img), "Jim Zheng")
+        img = paths.member_inbox_dir("Alex Lee") / "a.jpg"; img.write_bytes(b"new")
+        out = ac._relocate_note_image(str(img), "Alex Lee")
         assert _Path(out).name == "a_1.jpg"
         assert paths.resolve_rel(out).read_bytes() == b"new"
