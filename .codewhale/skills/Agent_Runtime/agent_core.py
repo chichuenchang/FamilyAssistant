@@ -88,14 +88,15 @@ def member_inbox_dir(member: str, dt: date | None = None) -> Path:
     return _paths.member_inbox_dir(member, dt)
 
 
-# ── 调试日志（各 Bot 共用；--debug 开，默认关） ─────────────────
+# ── 调试日志（各 Bot 共用；默认开，--no-debug 关） ─────────────────
 
-def setup_logging(debug: bool = False) -> logging.Logger:
+def setup_logging(debug: bool = True) -> logging.Logger:
     """配置 "familyassist" 日志器，各传输层（telegram/wechat）调一次即可。
 
-    debug=False（默认）：仅 WARNING 及以上，安静运行。
-    debug=True：DEBUG 全量，同时写 stderr 和 data/bot_debug.log（含完整 traceback），
+    项目规范：所有 Bot 默认开调试日志（debug=True）。新增 Bot 直接 setup_logging() 即继承。
+    debug=True（默认）：DEBUG 全量，同时写 stderr 和 data/bot_debug.log（含完整 traceback），
                 供排查 OCR/记账/工具调用链路。
+    debug=False（--no-debug）：仅 WARNING 及以上，安静运行。
     子日志器（familyassist.telegram 等）自动继承本配置。
     """
     logger = logging.getLogger("familyassist")

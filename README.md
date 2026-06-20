@@ -76,7 +76,7 @@ setx DEEPSEEK_API_KEY "sk-xxx"
 python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx --alias 法定名
 python .codewhale/skills/Expense_Tracker/cli.py member-list
 
-# 4. 启动 Agent（终端出二维码；加 --debug 可写调试日志 data/bot_debug.log）
+# 4. 启动 Agent（终端出二维码；默认写调试日志 data/bot_debug.log，--no-debug 关闭）
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # （可选）设 OCR：
@@ -97,7 +97,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # ── 或用 Telegram（多人，推荐） ──
 #   setx TELEGRAM_BOT_TOKEN "xxx"
-#   python .codewhale/skills/Agent_Runtime/telegram_bot.py   # 同样支持 --debug
+#   python .codewhale/skills/Agent_Runtime/telegram_bot.py   # 同样默认写调试日志，--no-debug 关闭
 ```
 
 ### 手机端
