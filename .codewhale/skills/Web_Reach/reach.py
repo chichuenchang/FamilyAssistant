@@ -123,6 +123,16 @@ def jina_fetch(url, *, timeout=_JINA_TIMEOUT):
         return resp.read().decode("utf-8", "replace")
 
 
+def _best_vtt(paths):
+    """Pick the best-language .vtt path (prefer en, then zh, then any); None if none."""
+    vtts = [p for p in paths if str(p).lower().endswith(".vtt")]
+    if not vtts:
+        return None
+    vtts.sort(key=lambda p: (0 if ".en" in p.name.lower()
+                             else 1 if ".zh" in p.name.lower() else 2, p.name))
+    return vtts[0]
+
+
 def ytdlp_subs(url, *, timeout=_SUBS_TIMEOUT):
     """Download auto/uploaded subs to a temp dir; return best-language .vtt text or None."""
     with tempfile.TemporaryDirectory() as td:
@@ -135,13 +145,11 @@ def ytdlp_subs(url, *, timeout=_SUBS_TIMEOUT):
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
-        vtts = list(Path(td).glob("*.vtt"))
-        if not vtts:
+        best = _best_vtt(Path(td).glob("*.vtt"))
+        if best is None:
             return None
-        vtts.sort(key=lambda p: (0 if ".en" in p.name.lower()
-                                 else 1 if ".zh" in p.name.lower() else 2, p.name))
         try:
-            return vtts[0].read_text(encoding="utf-8", errors="replace")
+            return best.read_text(encoding="utf-8", errors="replace")
         except OSError:
             return None
 

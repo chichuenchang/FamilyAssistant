@@ -169,6 +169,39 @@ class TestWebRead:
         assert reach.web_read("https://x", fetch=boom).startswith("[错误]")
 
 
+class TestBestVtt:
+    """Subtitle-file language ranking (en > zh > other); pure, no filesystem."""
+
+    def test_prefers_english(self):
+        picked = reach._best_vtt(
+            [_Path("v.zh.vtt"), _Path("v.en.vtt"), _Path("v.fr.vtt")])
+        assert picked.name == "v.en.vtt"
+
+    def test_falls_back_to_zh_when_no_english(self):
+        picked = reach._best_vtt([_Path("v.fr.vtt"), _Path("v.zh-Hans.vtt")])
+        assert ".zh" in picked.name.lower()
+
+    def test_ignores_non_vtt_and_none_when_empty(self):
+        assert reach._best_vtt([_Path("v.en.srt"), _Path("notes.txt")]) is None
+        assert reach._best_vtt([]) is None
+
+
+class TestYtdlpGracefulDegrade:
+    """yt-dlp absent/failing → adapters return None (summarize then falls back/errors)."""
+
+    def test_subs_none_when_ytdlp_absent(self, monkeypatch):
+        def boom(*a, **k):
+            raise FileNotFoundError("yt-dlp")
+        monkeypatch.setattr(reach.subprocess, "run", boom)
+        assert reach.ytdlp_subs("https://youtu.be/x") is None
+
+    def test_meta_none_when_ytdlp_absent(self, monkeypatch):
+        def boom(*a, **k):
+            raise FileNotFoundError("yt-dlp")
+        monkeypatch.setattr(reach.subprocess, "run", boom)
+        assert reach.ytdlp_meta("https://youtu.be/x") is None
+
+
 class TestCli:
     """cli.py error paths — no network needed (empty args short-circuit before fetch)."""
 
