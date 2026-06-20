@@ -77,7 +77,8 @@ class GoogleDriveProvider:
 
     凭据从 {cred_prefix}_CLIENT_ID/SECRET/REFRESH_TOKEN 环境变量读取，进程内缓存
     access token 与 remote_root 文件夹 id。多成员各持一个实例，缓存互不干扰。
-    云端布局：文件平铺在 remote_root 文件夹，rel 存 appProperties.rel（上限 124B）。
+    云端布局：嵌套文件夹镜像本地目录树（rel 目录链逐级建在 remote_root 下），
+    rel 另存 appProperties.rel 作为定位依据（上限 124B）。
     """
 
     def __init__(self, cred_prefix: str = "GDRIVE",
