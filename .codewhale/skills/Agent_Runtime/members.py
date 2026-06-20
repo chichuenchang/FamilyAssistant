@@ -8,8 +8,8 @@
     }
 
 为什么独立文件：姓名/法定名/频道 id 属隐私，config.json 是 git 跟踪文件，
-不能进仓库。data/members.json 在 .gitignore 里，并加入 backup.include
-随云备份镜像（backup-restore 在新设备上会一并恢复）。
+不能进仓库。data/members.json 在 .gitignore 里，由持有它的成员 backup scope
+（members.json 各成员 backup 块的 scopes）随云备份镜像（backup-restore 在新设备上会一并恢复）。
 
 aliases = 别名/法定名（出现在票据、合同、证件等文档里的名字），仅供 Agent
 理解"文档里的名字 ↔ 家庭成员"，不参与频道闸门（resolve 只认频道 id）。
