@@ -88,14 +88,15 @@ Wrap in try/except (reply the error) exactly like `handle_image`. Non-PDF files 
 sender's inbox, route to `agent.handle_file`; non-PDF → friendly "暂不支持"). If Telegram has no file
 handler yet, add one following its existing photo-handler pattern.
 
-### 4. Storage / cleanup
+### 4. Storage
 
 - The inbox PDF (`data/<member>/inbox/YYYY-MM/<ts>_<channel>.pdf`) is sender-private staging.
   `doc-add --file` copies the authoritative file to `Family/documents/<type>/<date>_<type>_<title>.pdf`
   (existing `_store_file` logic, suffix-preserving). Backup picks up `Family/documents/...` via Jim's
   scope.
-- `image_gc` currently sweeps stale **image** files from inboxes; extend its inbox sweep to also
-  include `.pdf` (same retention rule) so abandoned inbox PDFs are cleaned up.
+- The inbox copy lingers exactly like a document-classified inbox **image** does today (`doc-add`
+  copies, it does not move) — existing accepted behavior, **not addressed here**. (`image_gc` only
+  cleans stale *calendar-item* `source_image` files, not the inbox, so it is unrelated.)
 
 ## Error handling
 
@@ -116,9 +117,10 @@ handler yet, add one following its existing photo-handler pattern.
 - `Agent.handle_file`: with OCR faked to return text, asserts it calls `self.handle` with a prompt
   containing the saved path + OCR text; with OCR unavailable, asserts the fallback reply and that no
   LLM call is made.
-- Transport: a `.pdf` file message routes to `agent.handle_file` and saves a `.pdf` into the inbox;
-  a `.docx` message hits the "暂不支持" reply. (Use the existing transport test seams / monkeypatching.)
-- `image_gc` sweeps a stale inbox `.pdf`.
+- Transport: Telegram's `download_document` (mock `_api` + `urllib`) saves a `.pdf` into the sender
+  inbox; the PDF-suffix routing decision (PDF → `handle_file`, non-PDF → "暂不支持") is unit-tested via
+  a small pure helper. The SDK message-loop closures themselves are thin glue, verified by inspection
+  + the live smoke run.
 - Full `pytest` suite green before completion.
 
 ## Implementation order (phased, TDD)
@@ -129,6 +131,5 @@ handler yet, add one following its existing photo-handler pattern.
 3. `agent_core.py`: `handle_file` + register nothing new in tool maps (it drives existing tools)
    (+ tests).
 4. Transport: `wechat_ilink` `on_file` wiring + `telegram_bot` document wiring (+ tests).
-5. `image_gc`: include `.pdf` in the inbox sweep (+ test).
-6. Docs: OCR `SKILL.md` (PDF support) + Agent_Runtime `SKILL.md` / README note that the bot ingests
+5. Docs: OCR `SKILL.md` (PDF support) + Agent_Runtime `SKILL.md` / README note that the bot ingests
    PDFs. Full suite green.
