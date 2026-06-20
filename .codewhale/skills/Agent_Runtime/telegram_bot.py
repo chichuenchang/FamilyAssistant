@@ -241,7 +241,7 @@ def run() -> None:
                     dest = download_document(file_id, name, member) if file_id else None
                     log.debug("文件 from %s(%s) → %s", user_name, member, dest)
                     if dest:
-                        reply = agent.handle_file(str(dest), user=str(chat_id), member=member)
+                        reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
                     else:
                         reply = "文件下载失败，请重发。"
                 else:

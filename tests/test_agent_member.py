@@ -54,12 +54,8 @@ def test_system_prompt_omits_member_block_when_registry_empty(monkeypatch):
     assert "## 家庭成员" not in prompt
 
 
-def test_handle_file_returns_empty_without_member(tmp_path):
-    agent = agent_core.Agent()
-    assert agent.handle_file(str(tmp_path / "x.pdf"), user="x", member="") == ""
-
-
-def test_handle_file_ocr_drives_handle(monkeypatch):
+def test_handle_image_ocr_drives_handle_for_pdf(monkeypatch):
+    # 图片/PDF 同一入口：.pdf 路径也走 handle_image
     import ocr
     monkeypatch.setattr(ocr, "is_available", lambda: True)
     monkeypatch.setattr(ocr, "ocr_image", lambda path: "CONSENT FORM TEXT")
@@ -67,23 +63,23 @@ def test_handle_file_ocr_drives_handle(monkeypatch):
     cap = {}
     monkeypatch.setattr(agent, "handle",
                         lambda prompt, user="default", member="": cap.update(p=prompt) or "ok")
-    out = agent.handle_file("data/Alex/inbox/2026-06/x.pdf", user="u", member="Alex Lee")
+    out = agent.handle_image("data/Alex/inbox/2026-06/x.pdf", user="u", member="Alex Lee")
     assert out == "ok"
     assert "x.pdf" in cap["p"] and "CONSENT FORM TEXT" in cap["p"]
 
 
-def test_handle_file_fallback_when_ocr_unavailable(monkeypatch):
+def test_handle_image_fallback_when_ocr_unavailable(monkeypatch):
     import ocr
     monkeypatch.setattr(ocr, "is_available", lambda: False)
     agent = agent_core.Agent()
     called = {"handle": False}
     monkeypatch.setattr(agent, "handle",
                         lambda *a, **k: called.__setitem__("handle", True) or "x")
-    out = agent.handle_file("x.pdf", member="Alex Lee")
-    assert "PDF" in out and called["handle"] is False
+    out = agent.handle_image("x.pdf", member="Alex Lee")
+    assert "材料" in out and called["handle"] is False
 
 
-def test_handle_file_no_text_message_when_ocr_empty(monkeypatch):
+def test_handle_image_no_text_message_when_ocr_empty(monkeypatch):
     import ocr
     monkeypatch.setattr(ocr, "is_available", lambda: True)
     monkeypatch.setattr(ocr, "ocr_image", lambda path: "")   # OCR 跑了但没识别到文字
@@ -91,5 +87,5 @@ def test_handle_file_no_text_message_when_ocr_empty(monkeypatch):
     called = {"handle": False}
     monkeypatch.setattr(agent, "handle",
                         lambda *a, **k: called.__setitem__("handle", True) or "x")
-    out = agent.handle_file("x.pdf", member="Alex Lee")
+    out = agent.handle_image("x.pdf", member="Alex Lee")
     assert "没识别到文字" in out and called["handle"] is False

@@ -32,8 +32,7 @@ from agent_core import Agent   # 传输层与 agent_core 同目录
 
 agent = Agent()
 reply = agent.handle(text, user="<频道内唯一id>", member="<成员名>")        # 文字消息
-reply = agent.handle_image(img_path, user="<频道内唯一id>", member="<成员名>")  # 图片消息
-reply = agent.handle_file(path, user="<频道内唯一id>", member="<成员名>")       # PDF 文件消息
+reply = agent.handle_image(path, user="<频道内唯一id>", member="<成员名>")     # 图片或 PDF 文件消息
 ```
 
 - `user` = 该频道内用户/会话的唯一标识（微信 `from_user`、Telegram `chat_id`）。Agent 按 `user` 隔离对话历史，互不串台。
@@ -92,9 +91,8 @@ if __name__ == "__main__":
 
 要点：
 - 每条消息先过成员闸门：`members.resolve(频道, 频道id)` 返回 None → 静默丢弃（不回复、不进 LLM）。
-- 用频道内唯一 id 作 `user`（隔离对话历史），解析出的成员名作 `member` 传给 `agent.handle(text, user, member)` / `agent.handle_image(path, user, member)` / `agent.handle_file(path, user, member)`。
-- 图片消息：先存到发送成员的 inbox `data/<成员>/inbox/YYYY-MM/`（用 `agent_core.member_inbox_dir(member)`），再调 `agent.handle_image(path, user, member)`；分类后 agent 搬到对应位置（备忘→成员 notes，票据→Family/receipts，文档→Family/documents）。
-- PDF 文件消息：同上，先下载到发送成员 inbox，调 `agent.handle_file(path, user, member)`；OCR 后 LLM 分类归档（多为长期文档 → Family/documents）。非 PDF 文件仍回复"暂不支持"。
+- 用频道内唯一 id 作 `user`（隔离对话历史），解析出的成员名作 `member` 传给 `agent.handle(text, user, member)` / `agent.handle_image(path, user, member)`（图片或 PDF）。
+- 图片或 PDF 文件消息：先存到发送成员的 inbox `data/<成员>/inbox/YYYY-MM/`（用 `agent_core.member_inbox_dir(member)`），再调 `agent.handle_image(path, user, member)`——**PDF 与图片同一入口**，`ocr_image` 对两者一视同仁（PDF 走腾讯 IsPdf 逐页）。OCR 后 LLM 分类，agent 搬到对应位置（备忘→成员 notes，票据→Family/receipts，文档→Family/documents）。非 PDF 文件仍回复"暂不支持"。
 - 长回复需分段的频道（如 Telegram 4096 字限制）自行在传输层切分（见 `telegram_bot.py:send_message`）。
 - 不在传输层写任何记账/查账逻辑 —— 全部交给 Agent。
 

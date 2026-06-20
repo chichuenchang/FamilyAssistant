@@ -162,7 +162,7 @@ def run_bot(relogin: bool = False) -> None:
             msg.save(str(pdf_path))
             _backup_mark_dirty()
             log.debug("文件 from %s(%s) 保存 → %s", msg.from_user, member, pdf_path)
-            reply = agent.handle_file(str(pdf_path), user=msg.from_user, member=member)
+            reply = agent.handle_image(str(pdf_path), user=msg.from_user, member=member)
             log.debug("文件回复 → %s", (reply or "")[:200])
             msg.reply_text(reply)
         except Exception as e:
