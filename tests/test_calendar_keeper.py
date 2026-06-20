@@ -1,6 +1,7 @@
 # tests/test_calendar_keeper.py — Calendar Keeper skill tests.
 # No real family names, channel ids, or credentials in test data.
 import json
+import os
 from datetime import date
 
 import pytest
@@ -10,6 +11,21 @@ import calendar_provider
 
 
 TODAY = date(2026, 6, 12)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gcal(monkeypatch):
+    """Hard guard: no test in this module may reach the real Google Calendar/Tasks.
+
+    Strips inherited GCAL_* before every test. Provider tests set their own fake
+    creds via the ``gcal`` fixture, which depends on this one so it runs after.
+    Without this guard, in-process tests that delete CAL_DB_PATH
+    (TestForMemberRouting, TestSourceImageRelocate) push to the real primary
+    calendar when GCAL_* happen to be set in the shell.
+    """
+    for k in list(os.environ):
+        if k.startswith("GCAL_"):
+            monkeypatch.delenv(k, raising=False)
 
 
 def _add_event(db, title="游泳课", start="2026-06-13T14:00", end="2026-06-13T15:00",
@@ -203,8 +219,12 @@ class TestCalDb:
 
 
 @pytest.fixture
-def gcal(monkeypatch):
-    """Google provider with env creds set and HTTP layer faked."""
+def gcal(monkeypatch, _no_real_gcal):
+    """Google provider with env creds set and HTTP layer faked.
+
+    Depends on ``_no_real_gcal`` so inherited real creds are stripped first,
+    then these fakes are set — provider tests stay hermetic regardless of shell.
+    """
     monkeypatch.setenv("GCAL_CLIENT_ID", "cid")
     monkeypatch.setenv("GCAL_CLIENT_SECRET", "cs")
     monkeypatch.setenv("GCAL_REFRESH_TOKEN", "rt")
