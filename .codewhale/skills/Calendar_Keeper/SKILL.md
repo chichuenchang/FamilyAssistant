@@ -87,7 +87,8 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
 ## 配置（config.json `calendar` 段）
 
 `enabled`（默认 false）/ `lookahead_days`（10，静默刷新与上下文注入的窗口）/
-`refresh_minutes`（15，节流间隔）。改后重启进程生效。
+`refresh_minutes`（15，节流间隔）/ `image_retention_years`（2，来图保留年限）/
+`image_prune_interval_days`（30，来图清理间隔）。改后重启进程生效。
 
 ## 边界
 
