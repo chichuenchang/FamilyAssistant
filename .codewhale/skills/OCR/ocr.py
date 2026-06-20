@@ -50,6 +50,7 @@ OCR_SERVICE = "ocr"
 OCR_VERSION = "2018-11-19"
 OCR_ACTION = "GeneralBasicOCR"
 OCR_REGION = "ap-guangzhou"
+MAX_PDF_PAGES = 20   # PDF 逐页 OCR 上限（腾讯免费额度 1000 次/月，防超大 PDF 烧额度）
 
 
 # ── TC3-HMAC-SHA256 签名 ───────────────────────────────────
@@ -134,23 +135,35 @@ def _call_ocr(payload: dict) -> Optional[dict]:
 # ── 通用 OCR ────────────────────────────────────────────────
 
 def ocr_image(image_path: str) -> Optional[str]:
-    """对图片进行通用文字识别，返回所有识别到的文字。
+    """通用文字识别。图片直接 OCR；.pdf 用腾讯 IsPdf 逐页 OCR 后拼接。
 
-    返回 None 表示 OCR 不可用。
+    返回 None = OCR 不可用 / 首页失败；空文档返回 ""。
     """
-    img = Path(image_path)
-    if not img.exists():
+    p = Path(image_path)
+    if not p.exists():
         return None
+    b64 = base64.b64encode(p.read_bytes()).decode()
 
-    with open(img, "rb") as f:
-        img_b64 = base64.b64encode(f.read()).decode()
+    if p.suffix.lower() == ".pdf":
+        pages: list[str] = []
+        for n in range(1, MAX_PDF_PAGES + 1):
+            data = _call_ocr({"ImageBase64": b64, "IsPdf": True,
+                              "PdfPageNumber": n, "LanguageType": "zh"})
+            if not data:
+                if n == 1:
+                    return None          # 首页失败 = OCR 不可用 / PDF 不可读
+                break                    # 后续页无数据 = 文档到此结束
+            words = [d["DetectedText"] for d in data.get("TextDetections", [])
+                     if d.get("DetectedText")]
+            if words:
+                pages.append("\n".join(words))
+        return "\n".join(pages) if pages else ""
 
-    data = _call_ocr({"ImageBase64": img_b64, "LanguageType": "zh"})
+    data = _call_ocr({"ImageBase64": b64, "LanguageType": "zh"})
     if not data:
         return None
-
-    detections = data.get("TextDetections", [])
-    words = [d["DetectedText"] for d in detections if d.get("DetectedText")]
+    words = [d["DetectedText"] for d in data.get("TextDetections", [])
+             if d.get("DetectedText")]
     return "\n".join(words) if words else ""
 
 

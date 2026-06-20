@@ -39,6 +39,12 @@ CAL_DIR = (
 )
 sys.path.insert(0, str(CAL_DIR))
 
+OCR_DIR = (
+    Path(__file__).resolve().parent.parent
+    / ".codewhale" / "skills" / "OCR"
+)
+sys.path.insert(0, str(OCR_DIR))
+
 import pytest
 import db as dbm  # the fixture below is named ``db`` — alias avoids shadowing
 
