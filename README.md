@@ -215,6 +215,8 @@ FamilyAssistant/
 │       │   ├── cal_db.py         ← 数据层（日程缓存）
 │       │   ├── calendar_sync.py  ← 同步引擎（静默节流刷新/先推后拉/对账）
 │       │   ├── calendar_provider.py ← Google Calendar+Tasks 实现（可按契约换）
+│       │   ├── providers.py       ← provider 注册表（(域,名)→实现）
+│       │   ├── image_gc.py        ← 陈旧来图清理（N 年前的 source_image）
 │       │   └── cli.py            ← 日程 CLI 入口
 │       ├── Web_Reach/        ← 只读联网：搜索 / 网页摘要 / YouTube 转写
 │       │   ├── SKILL.md
