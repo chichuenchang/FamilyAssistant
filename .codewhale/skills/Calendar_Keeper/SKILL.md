@@ -45,7 +45,7 @@
 
 | 命令 | 行为 | Agent 可调 |
 |------|------|-----------|
-| `cal-add --member M --kind event\|task --title T [--date D] [--start HH:MM] [--end HH:MM] [--all-day] [--location L] [--notes N]` | 新增（活动必须有日期；待办 --date=截止日可省） | ✅ |
+| `cal-add --member M --kind event\|task --title T [--date D] [--start HH:MM] [--end HH:MM] [--all-day] [--location L] [--notes N] [--source-image PATH]` | 新增（活动必须有日期；待办 --date=截止日可省；--source-image 关联原始来图） | ✅ |
 | `cal-list [--days N] [--kind K] [--member M] [--all]` | 未来 N 天日程 + 开放待办 | ✅ |
 | `cal-done --id N` | 完成待办 | ✅ |
 | `cal-delete --id N` | 取消日程（同步删除远端） | ✅ |
