@@ -65,7 +65,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `data_root` / `family_dir_name` | `Agent_Runtime/paths.py` — 磁盘布局的单一事实来源（family_ledger / family_receipts_dir / family_documents_dir / member_store / member_domain_image_dir / to_rel）。各 skill 的 DB/票据/文档/备忘路径全经此解析 |
 | `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
-| `backup`（enabled/debounce/include/remote_root） | `Remote_Backup/backup_sync.py`（CFG，读一次） |
+| `backup`（enabled/debounce_seconds） | `Remote_Backup/backup_sync.py`（CFG，读一次）。每成员 provider/cred_prefix/remote_root/scopes 在 `data/members.json` 的 backup 块 |
 | `calendar`（enabled/lookahead_days/refresh_minutes/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG）；`image_gc.py`（来图清理参数）；`agent_core`（_CAL_LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
 | ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
