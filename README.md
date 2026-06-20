@@ -226,6 +226,8 @@ FamilyAssistant/
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
 │           ├── members.py        ← 成员注册表（存 git 忽略的 data/members.json）
+│           ├── paths.py          ← 磁盘布局单一事实源（member_store / family_*）
+│           ├── migrate_storage.py ← 一次性存储迁移（单库 → 按成员分库）
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）
