@@ -12,8 +12,7 @@
 ├── backup_provider.py  ← Google Drive provider 类（drive.file 最小权限；凭据前缀化）
 ├── cli.py              ← backup-now / backup-status / backup-verify / backup-restore
 └── ../Agent_Runtime/
-    ├── members.py      ← backup_pref()：每成员 backup 块解析
-    └── migrate_backup.py ← 旧→新一次性迁移（bot 停用时运行）
+    └── members.py      ← backup_pref()：每成员 backup 块解析
 ```
 
 ## 工作方式

@@ -13,6 +13,7 @@
 | **Note Keeper** | 个人备忘（杂项信息长期记忆，按成员私有，支持图片 OCR 入忘、置顶常驻上下文） | [SKILL.md](.codewhale/skills/Note_Keeper/SKILL.md) | 记一下、帮我记住、备忘、我记过什么 |
 | **Calendar Keeper** | 按成员私有的日程与待办（活动/待办分库），与各成员自己的远程日历静默同步（作者已实现 Google Calendar + Tasks provider，按成员/域选择，用户可按契约换其他日历服务） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
+| **Web Reach** | 只读联网：搜最新资讯、抓取/总结网页、转写 YouTube 字幕（无需 key；YouTube 需 yt-dlp，缺失优雅降级） | [SKILL.md](.codewhale/skills/Web_Reach/SKILL.md) | 最新新闻、查一下、外面在发生什么、总结链接、YouTube、视频 |
 | **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
 
 ## 运行时提示词
@@ -39,7 +40,7 @@ python .codewhale/skills/Expense_Tracker/cli.py list --start 2026-05-01 --end 20
 python .codewhale/skills/Document_Keeper/cli.py doc-add --type lease --title "2026公寓租约" --expiry 2027-02-28
 python .codewhale/skills/Document_Keeper/cli.py doc-due
 
-# 启动微信 Bot（加 --debug 写调试日志 data/bot_debug.log）
+# 启动微信 Bot（默认写调试日志 data/bot_debug.log，--no-debug 关闭）
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 ```
 
@@ -48,8 +49,8 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `member-add <名> --telegram <chat_id> --wechat <wxid>`（可多次传同一 flag 绑多个 id）、`member-list`、`member-remove <名>`。
 - `--alias <别名/法定名>`（可多次）：登记文档票据里出现的名字（如法定中文名）。Agent 的 system prompt
   会带上成员+别名清单，识别"这份保单是谁的"；别名不参与频道闸门，仅别名登记也可（如还没手机的孩子）。
-- 注册表存 `data/members.json`（**git 不跟踪** — 姓名/法定名/频道 id 属隐私，不入仓库；已加入
-  `backup.include` 随云备份镜像，新设备 `backup-restore` 一并恢复）；改后重启机器人生效。
+- 注册表存 `data/members.json`（**git 不跟踪** — 姓名/法定名/频道 id 属隐私，不入仓库；由持有它的
+  成员 backup scope（`members.json` 各成员 backup 块的 `scopes`）随云备份镜像，新设备 `backup-restore` 一并恢复）；改后重启机器人生效。
   文件缺失/空注册表 = 锁定，所有远程消息静默丢弃。
 - 这三个命令**不在** `wechat.allowed_commands` 白名单内 —— Agent 只读注册表（`members.resolve`），无法增删成员。
 - 账目归属由代码注入解析出的成员名（LLM 给的 member 一律剥离，防冒名）。
@@ -64,7 +65,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `data_root` / `family_dir_name` | `Agent_Runtime/paths.py` — 磁盘布局的单一事实来源（family_ledger / family_receipts_dir / family_documents_dir / member_store / member_domain_image_dir / to_rel）。各 skill 的 DB/票据/文档/备忘路径全经此解析 |
 | `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
-| `backup`（enabled/debounce/include/remote_root） | `Remote_Backup/backup_sync.py`（CFG，读一次） |
+| `backup`（enabled/debounce_seconds） | `Remote_Backup/backup_sync.py`（CFG，读一次）。每成员 provider/cred_prefix/remote_root/scopes 在 `data/members.json` 的 backup 块 |
 | `calendar`（enabled/lookahead_days/refresh_minutes/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG）；`image_gc.py`（来图清理参数）；`agent_core`（_CAL_LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
 | ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |

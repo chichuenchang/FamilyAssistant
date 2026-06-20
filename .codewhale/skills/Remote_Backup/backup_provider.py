@@ -13,10 +13,10 @@ Drive REST API v3 + OAuth refresh token）。
 权限范围 drive.file（最小权限）：只能看到/操作本应用自己创建的文件，
 看不到用户 Drive 里的其他任何内容。
 
-云端布局：所有文件平铺在一个 remote_root 文件夹里（config.json
-backup.remote_root），相对路径存在每个文件的 appProperties.rel 元数据中
-（Drive 不是文件系统，平铺 + 路径标签比维护文件夹树简单且无竞态）。
-注意：appProperties 值上限 124 字节，本项目相对路径远低于此。
+云端布局：远端以嵌套文件夹镜像本地目录树，文件存放于 remote_root 下逐级
+子文件夹中（remote_root 来自 members.json 各成员 backup 块，非 config.json）。
+每个文件另存 appProperties.rel 元数据作为引擎查找/列出/删除/恢复的最终依据，
+即使文件被手动移动也能定位。注意：appProperties 值上限 124 字节，本项目相对路径远低于此。
 
 契约行为：
 - upload 覆盖同 rel 的已有远端文件（镜像语义）
@@ -77,7 +77,8 @@ class GoogleDriveProvider:
 
     凭据从 {cred_prefix}_CLIENT_ID/SECRET/REFRESH_TOKEN 环境变量读取，进程内缓存
     access token 与 remote_root 文件夹 id。多成员各持一个实例，缓存互不干扰。
-    云端布局：文件平铺在 remote_root 文件夹，rel 存 appProperties.rel（上限 124B）。
+    云端布局：嵌套文件夹镜像本地目录树（rel 目录链逐级建在 remote_root 下），
+    rel 另存 appProperties.rel 作为定位依据（上限 124B）。
     """
 
     def __init__(self, cred_prefix: str = "GDRIVE",

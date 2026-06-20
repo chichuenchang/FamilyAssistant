@@ -60,9 +60,9 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 # Telegram：设好 token 直接跑
 python .codewhale/skills/Agent_Runtime/telegram_bot.py
 
-# 两个 Bot 均支持 --debug：调试日志写 data/bot_debug.log（默认关）
-python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --debug
-python .codewhale/skills/Agent_Runtime/telegram_bot.py --debug
+# 两个 Bot 默认开调试日志（写 data/bot_debug.log）；用 --no-debug 关闭
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --no-debug
+python .codewhale/skills/Agent_Runtime/telegram_bot.py --no-debug
 ```
 
 微信凭据加密存于 `data/wechat_creds.json`；Telegram 去重 offset 存于 `data/.telegram_offset`。

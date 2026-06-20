@@ -45,7 +45,7 @@
 
 | 命令 | 行为 | Agent 可调 |
 |------|------|-----------|
-| `cal-add --member M --kind event\|task --title T [--date D] [--start HH:MM] [--end HH:MM] [--all-day] [--location L] [--notes N]` | 新增（活动必须有日期；待办 --date=截止日可省） | ✅ |
+| `cal-add --member M --kind event\|task --title T [--date D] [--start HH:MM] [--end HH:MM] [--all-day] [--location L] [--notes N] [--source-image PATH]` | 新增（活动必须有日期；待办 --date=截止日可省；--source-image 关联原始来图） | ✅ |
 | `cal-list [--days N] [--kind K] [--member M] [--all]` | 未来 N 天日程 + 开放待办 | ✅ |
 | `cal-done --id N` | 完成待办 | ✅ |
 | `cal-delete --id N` | 取消日程（同步删除远端） | ✅ |
@@ -87,7 +87,8 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
 ## 配置（config.json `calendar` 段）
 
 `enabled`（默认 false）/ `lookahead_days`（10，静默刷新与上下文注入的窗口）/
-`refresh_minutes`（15，节流间隔）。改后重启进程生效。
+`refresh_minutes`（15，节流间隔）/ `image_retention_years`（2，来图保留年限）/
+`image_prune_interval_days`（30，来图清理间隔）。改后重启进程生效。
 
 ## 边界
 

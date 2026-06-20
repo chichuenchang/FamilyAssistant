@@ -50,6 +50,11 @@
   按 provider 契约可换任意日历服务
 - 家人在手机日历上的改动会同步回来：远端是日程的事实源（改名/删除/完成都对账）
 
+### 🌐 联网资讯（Web Reach）
+- "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
+- 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结
+- **只读公开信息，无需 API key**（搜索走 DuckDuckGo + Jina 阅读器；YouTube 需 `yt-dlp`，缺失时优雅降级）
+
 ### ☁️ 云盘备份（Remote Backup，可选）
 - 用户数据（账本/票据/文档/配置）单向镜像到云盘，写入后防抖增量同步，本地永远是事实源
 - 当前内置 Google Drive 实现（最小 `drive.file` 权限，只能看到自己上传的文件）；按 provider 契约可换任意云端存储
@@ -76,7 +81,7 @@ setx DEEPSEEK_API_KEY "sk-xxx"
 python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx --alias 法定名
 python .codewhale/skills/Expense_Tracker/cli.py member-list
 
-# 4. 启动 Agent（终端出二维码；加 --debug 可写调试日志 data/bot_debug.log）
+# 4. 启动 Agent（终端出二维码；默认写调试日志 data/bot_debug.log，--no-debug 关闭）
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # （可选）设 OCR：
@@ -97,7 +102,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # ── 或用 Telegram（多人，推荐） ──
 #   setx TELEGRAM_BOT_TOKEN "xxx"
-#   python .codewhale/skills/Agent_Runtime/telegram_bot.py   # 同样支持 --debug
+#   python .codewhale/skills/Agent_Runtime/telegram_bot.py   # 同样默认写调试日志，--no-debug 关闭
 ```
 
 ### 手机端
@@ -210,11 +215,19 @@ FamilyAssistant/
 │       │   ├── cal_db.py         ← 数据层（日程缓存）
 │       │   ├── calendar_sync.py  ← 同步引擎（静默节流刷新/先推后拉/对账）
 │       │   ├── calendar_provider.py ← Google Calendar+Tasks 实现（可按契约换）
+│       │   ├── providers.py       ← provider 注册表（(域,名)→实现）
+│       │   ├── image_gc.py        ← 陈旧来图清理（N 年前的 source_image）
 │       │   └── cli.py            ← 日程 CLI 入口
+│       ├── Web_Reach/        ← 只读联网：搜索 / 网页摘要 / YouTube 转写
+│       │   ├── SKILL.md
+│       │   ├── reach.py           ← 搜索/抓取/YouTube 纯逻辑（可注入 fetcher）
+│       │   └── cli.py             ← CLI 入口 + 真实 HTTP 适配器
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
 │           ├── members.py        ← 成员注册表（存 git 忽略的 data/members.json）
+│           ├── paths.py          ← 磁盘布局单一事实源（member_store / family_*）
+│           ├── migrate_storage.py ← 一次性存储迁移（单库 → 按成员分库）
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）

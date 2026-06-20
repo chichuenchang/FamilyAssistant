@@ -70,7 +70,7 @@ python .codewhale/skills/Note_Keeper/cli.py note-pin --member 爸爸 --id 3 --un
 | `set_pinned(member, note_id, pinned)` | 置顶/取消置顶（仅本人） | `bool` — 是否成功更新 |
 | `pinned_and_recent(member, recent_limit=5)` | 置顶备忘 + 最近 N 条非置顶 | `list[dict]` |
 
-所有函数接受可选 `db_path` 关键字参数（默认使用 config.json 中的 `db_path`）。
+所有函数接受可选 `db_path` 关键字参数（不传时回退旧单库默认；运行时由 CLI 据 `--member` 经 `Agent_Runtime/paths.member_store(member,"notes")` 注入按成员分库路径）。
 
 ## 隐私
 
@@ -80,7 +80,7 @@ python .codewhale/skills/Note_Keeper/cli.py note-pin --member 爸爸 --id 3 --un
 
 ## 存储
 
-备忘按成员私有分库：`data/<成员目录>/notes/notes.db`（路径经 `Agent_Runtime/paths.member_store(member,"notes")`，CLI 据 `--member` 解析）。图片存同成员 `notes/YYYY-MM/`，库内 `source_image` 记 data 相对路径。整个 `data/` 已随云备份镜像（`config.json backup.include`），无需额外配置。
+备忘按成员私有分库：`data/<成员目录>/notes/notes.db`（路径经 `Agent_Runtime/paths.member_store(member,"notes")`，CLI 据 `--member` 解析）。图片存同成员 `notes/YYYY-MM/`，库内 `source_image` 记 data 相对路径。`data/` 由各成员的 backup scope（`members.json` 各成员 backup 块的 `scopes`）随云备份镜像，无需额外配置。
 
 ## 技能边界
 

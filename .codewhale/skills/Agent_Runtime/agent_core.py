@@ -88,14 +88,15 @@ def member_inbox_dir(member: str, dt: date | None = None) -> Path:
     return _paths.member_inbox_dir(member, dt)
 
 
-# ── 调试日志（各 Bot 共用；--debug 开，默认关） ─────────────────
+# ── 调试日志（各 Bot 共用；默认开，--no-debug 关） ─────────────────
 
-def setup_logging(debug: bool = False) -> logging.Logger:
+def setup_logging(debug: bool = True) -> logging.Logger:
     """配置 "familyassist" 日志器，各传输层（telegram/wechat）调一次即可。
 
-    debug=False（默认）：仅 WARNING 及以上，安静运行。
-    debug=True：DEBUG 全量，同时写 stderr 和 data/bot_debug.log（含完整 traceback），
+    项目规范：所有 Bot 默认开调试日志（debug=True）。新增 Bot 直接 setup_logging() 即继承。
+    debug=True（默认）：DEBUG 全量，同时写 stderr 和 data/bot_debug.log（含完整 traceback），
                 供排查 OCR/记账/工具调用链路。
+    debug=False（--no-debug）：仅 WARNING 及以上，安静运行。
     子日志器（familyassist.telegram 等）自动继承本配置。
     """
     logger = logging.getLogger("familyassist")
@@ -133,10 +134,12 @@ _BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify",
 _NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
 _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
                  "cal-sync", "cal-status"}
+_REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
 
-# 备忘/日程命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
+# 备忘/日程/联网命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
 ALLOWED_COMMANDS |= _CAL_COMMANDS
+ALLOWED_COMMANDS |= _REACH_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
@@ -149,6 +152,8 @@ def _cli_path(cmd: str) -> Path:
         skill = "Note_Keeper"
     elif cmd in _CAL_COMMANDS:
         skill = "Calendar_Keeper"
+    elif cmd in _REACH_COMMANDS:
+        skill = "Web_Reach"
     else:
         skill = "Expense_Tracker"
     return ROOT / ".codewhale" / "skills" / skill / "cli.py"
@@ -248,6 +253,7 @@ def _build_system_prompt() -> str:
 - 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
 - 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
+- 用户问"最新新闻/外面在发生什么/帮我查一下X" → web_search；发链接让看/总结文章 → web_read；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
 - 用户闲聊/问候 → 直接友好回复，不用调工具
 - 需要精确信息时（金额、日期）才调工具，闲聊不调
 - 工具执行后会返回结果，你基于结果用自然语言回复
@@ -402,6 +408,10 @@ def _tool_remove_schedule_item(args): return _run_cli("cal-delete", args)
 def _tool_sync_calendar(args): return _run_cli("cal-sync", args)
 def _tool_calendar_status(args): return _run_cli("cal-status", args)
 
+def _tool_web_search(args): return _run_cli("web-search", args)
+def _tool_web_read(args): return _run_cli("web-read", args)
+def _tool_youtube_summarize(args): return _run_cli("yt-summary", args)
+
 def _tool_ocr_image(args):
     path = args.get("path", "")
     # 安全：path 来自 LLM（间接来自用户消息），只允许数据根 data/ 内的文件
@@ -461,6 +471,9 @@ _TOOL_MAP = {
     "remove_schedule_item": _tool_remove_schedule_item,
     "sync_calendar": _tool_sync_calendar,
     "calendar_status": _tool_calendar_status,
+    "web_search": _tool_web_search,
+    "web_read": _tool_web_read,
+    "youtube_summarize": _tool_youtube_summarize,
 }
 
 # 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
@@ -720,6 +733,17 @@ TOOL_SCHEMAS = [
     }, ["id"]),
     _fn("sync_calendar", "立即与远程日历强制同步一轮（用户说\"刷新/同步日历\"）", {}),
     _fn("calendar_status", "查看日历同步状态（启用/配置/上次刷新/待同步/错误）", {}),
+    _fn("web_search", "联网搜索最新资讯/新闻/动态（用户问\"最新新闻\"\"外面在发生什么\"\"帮我查一下X\"）。"
+        "返回抓取到的网页结果原文，你据此用中文总结报告", {
+        "query": _s("搜索关键词/问题"),
+    }, ["query"]),
+    _fn("web_read", "抓取并阅读一个网页链接（用户发链接让看/总结文章时）。返回网页正文，你据此总结", {
+        "url": _s("网页 URL"),
+    }, ["url"]),
+    _fn("youtube_summarize", "获取 YouTube 视频字幕转写（用户发 YouTube 链接让总结时）。"
+        "返回字幕全文（无字幕则返回标题+简介），你据此用中文总结视频内容", {
+        "url": _s("YouTube 视频 URL"),
+    }, ["url"]),
 ]
 
 

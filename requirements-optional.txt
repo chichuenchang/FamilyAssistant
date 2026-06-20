@@ -1,0 +1,4 @@
+# 可选运行时依赖（核心功能 stdlib only；以下仅增强特定 skill）
+# pip install -r requirements-optional.txt
+# yt-dlp — Web_Reach 的 YouTube 字幕转写；未安装时 yt-summary 优雅降级（回退标题+简介或报错），不崩溃。
+yt-dlp
