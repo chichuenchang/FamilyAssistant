@@ -59,6 +59,19 @@ def test_store_file_returns_family_rel(tmp_path, monkeypatch):
     rel = doc_cli._store_file(str(src), "lease", "2026 Lease")
     assert rel.startswith("Family/documents/lease/")
     assert rel.endswith(".pdf")
+    # Long-term docs: filename is <member>_<safe_title><ext> — no date, no doc_type.
+    assert rel == "Family/documents/lease/2026_Lease.pdf"
+
+
+def test_store_file_prefixes_member(tmp_path, monkeypatch):
+    """A member-owned document gets a sanitized <member>_ prefix in its filename."""
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setattr(doc_cli, "ROOT", tmp_path)
+    monkeypatch.setattr(doc_cli, "DOCUMENTS_DIR", tmp_path / "data" / "Family" / "documents")
+    src = tmp_path / "passport.pdf"
+    src.write_bytes(b"pdf")
+    rel = doc_cli._store_file(str(src), "passport", "Renewal", "Alex Lee")
+    assert rel == "Family/documents/passport/Alex_Lee_Renewal.pdf"
 
 
 import doc_db
