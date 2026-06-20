@@ -56,7 +56,7 @@
     "debounce_seconds": 60
   },
   "wechat": {
-    "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。",
+    "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。allowed_commands 是记账/文档/备份命令白名单；备忘(note-*)/日程(cal-*)/联网(web-search,web-read,yt-summary)是 Agent 核心能力，由 agent_core 始终允许，不受本白名单增删影响。",
     "allowed_commands": [
       "add",
       "list",
