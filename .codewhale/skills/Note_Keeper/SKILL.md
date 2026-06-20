@@ -70,7 +70,7 @@ python .codewhale/skills/Note_Keeper/cli.py note-pin --member 爸爸 --id 3 --un
 | `set_pinned(member, note_id, pinned)` | 置顶/取消置顶（仅本人） | `bool` — 是否成功更新 |
 | `pinned_and_recent(member, recent_limit=5)` | 置顶备忘 + 最近 N 条非置顶 | `list[dict]` |
 
-所有函数接受可选 `db_path` 关键字参数（默认使用 config.json 中的 `db_path`）。
+所有函数接受可选 `db_path` 关键字参数（不传时回退旧单库默认；运行时由 CLI 据 `--member` 经 `Agent_Runtime/paths.member_store(member,"notes")` 注入按成员分库路径）。
 
 ## 隐私
 
