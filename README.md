@@ -216,6 +216,10 @@ FamilyAssistant/
 │       │   ├── calendar_sync.py  ← 同步引擎（静默节流刷新/先推后拉/对账）
 │       │   ├── calendar_provider.py ← Google Calendar+Tasks 实现（可按契约换）
 │       │   └── cli.py            ← 日程 CLI 入口
+│       ├── Web_Reach/        ← 只读联网：搜索 / 网页摘要 / YouTube 转写
+│       │   ├── SKILL.md
+│       │   ├── reach.py           ← 搜索/抓取/YouTube 纯逻辑（可注入 fetcher）
+│       │   └── cli.py             ← CLI 入口 + 真实 HTTP 适配器
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
