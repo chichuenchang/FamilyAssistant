@@ -6,6 +6,9 @@ data/
 __pycache__/
 *.pyc
 
+# 备份/迁移快照（config.json.bak、*.premigration.bak 等）——绝不入库
+*.bak
+
 # 注：票据/文档/备忘图等用户数据现归 data/（整体已忽略，见上）。
 # 旧的根级 receipts/ documents/ 目录已随分库重构移除。
 

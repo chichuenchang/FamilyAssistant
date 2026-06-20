@@ -602,6 +602,7 @@ import agent_core
 class TestAgentIntegration:
     def test_backup_commands_route(self):
         assert agent_core._cli_path("backup-now").parts[-2] == "Remote_Backup"
+        assert agent_core._cli_path("backup-reorg").parts[-2] == "Remote_Backup"
         assert agent_core._cli_path("doc-add").parts[-2] == "Document_Keeper"
         assert agent_core._cli_path("add").parts[-2] == "Expense_Tracker"
 

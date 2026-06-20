@@ -128,7 +128,8 @@ ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FAL
 # 子命令 → 所属 skill（未列出的归 Expense_Tracker）
 _DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
                  "doc-update", "doc-ack", "doc-remove"}
-_BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify", "backup-restore"}
+_BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify",
+                    "backup-restore", "backup-reorg"}
 _NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
 _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
                  "cal-sync", "cal-status"}
