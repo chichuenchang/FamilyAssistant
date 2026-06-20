@@ -94,6 +94,7 @@ handler yet, add one following its existing photo-handler pattern.
   `doc-add --file` copies the authoritative file to `Family/documents/<type>/<date>_<type>_<title>.pdf`
   (existing `_store_file` logic, suffix-preserving). Backup picks up `Family/documents/...` via Jim's
   scope.
+  > ⚠ Filename convention changed since this spec: now `<member>_<title><ext>` (no date, no type — type is the dir). See `docs/superpowers/audits/2026-06-19-doc-filename-consistency.md`.
 - The inbox copy lingers exactly like a document-classified inbox **image** does today (`doc-add`
   copies, it does not move) — existing accepted behavior, **not addressed here**. (`image_gc` only
   cleans stale *calendar-item* `source_image` files, not the inbox, so it is unrelated.)

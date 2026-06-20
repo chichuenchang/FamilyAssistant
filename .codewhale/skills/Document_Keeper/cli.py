@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 import sys
-from datetime import date
 from pathlib import Path
 
 # Windows 控制台编码容错
@@ -64,10 +63,11 @@ def _validate_member(name: str) -> str:
     return name
 
 
-def _store_file(src: str, doc_type: str, title: str) -> str:
-    """复制文件到 documents/<doc_type>/，返回相对项目根的路径（正斜杠）。
+def _store_file(src: str, doc_type: str, title: str, member: str = "") -> str:
+    """复制文件到 documents/<doc_type>/，返回相对 data_root 的路径（正斜杠）。
 
-    已在文档目录内的文件不复制，原样返回相对路径。
+    文件名 <成员>_<安全标题><ext>：doc_type 已体现在目录、长期文档不带日期，
+    故均不入名；无成员（家庭共享）省略前缀。已在文档目录内的文件不复制，原样返回。
     """
     p = Path(src)
     abs_p = (p if p.is_absolute() else ROOT / p).resolve()
@@ -77,9 +77,10 @@ def _store_file(src: str, doc_type: str, title: str) -> str:
     if abs_p.is_relative_to(docs_root):
         return _paths.to_rel(abs_p)
     safe_title = re.sub(r'[\\/:*?"<>|\s]+', "_", title).strip("_")[:40] or "untitled"
+    safe_member = re.sub(r'[\\/:*?"<>|\s]+', "_", member).strip("_")
     dest_dir = docs_root / doc_type
     dest_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{date.today().isoformat()}_{doc_type}_{safe_title}"
+    stem = f"{safe_member}_{safe_title}" if safe_member else safe_title
     dest = dest_dir / f"{stem}{abs_p.suffix.lower()}"
     n = 1
     while dest.exists():
@@ -99,13 +100,14 @@ def _fmt_due(d: dict) -> str:
 
 
 def cmd_doc_add(args):
+    member = _validate_member(args.member or "")
     file_rel = ""
     if args.file:
-        file_rel = _store_file(args.file, args.type, args.title)
+        file_rel = _store_file(args.file, args.type, args.title, member)
     doc_id, dup = doc_db.add_document(
         doc_type=args.type,
         title=args.title,
-        member=_validate_member(args.member or ""),
+        member=member,
         issuer=args.issuer or "",
         doc_number=args.number or "",
         issue_date=args.issue_date or "",
