@@ -145,9 +145,29 @@ def run_bot(relogin: bool = False) -> None:
 
     @bot.on_file
     def handle_file(msg):
-        if resolve("wechat", msg.from_user) is None:
+        member = resolve("wechat", msg.from_user)
+        if member is None:
             return
-        msg.reply_text(f"收到文件: {msg.file_name}（暂不支持文件处理）")
+        name = msg.file_name or ""
+        if not name.lower().endswith(".pdf"):
+            msg.reply_text(f"收到文件: {name}（暂不支持文件处理，PDF 可以）")
+            return
+        print(f"[wx] 文件消息 from {msg.from_user}({member}): {name}")
+        _calendar_tick()
+        _image_gc_tick()
+        try:
+            now = datetime.now()
+            ts = now.strftime("%Y%m%d_%H%M%S")
+            pdf_path = member_inbox_dir(member, now) / f"{ts}_wechat.pdf"
+            msg.save(str(pdf_path))
+            _backup_mark_dirty()
+            log.debug("文件 from %s(%s) 保存 → %s", msg.from_user, member, pdf_path)
+            reply = agent.handle_file(str(pdf_path), user=msg.from_user, member=member)
+            log.debug("文件回复 → %s", (reply or "")[:200])
+            msg.reply_text(reply)
+        except Exception as e:
+            log.exception("文件处理出错")
+            msg.reply_text(f"文件处理出错: {e}")
 
     @bot.on_video
     def handle_video(msg):

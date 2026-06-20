@@ -108,6 +108,30 @@ def download_photo(file_id: str, member: str = "") -> Path | None:
         return None
 
 
+def download_document(file_id: str, file_name: str, member: str = "") -> Path | None:
+    """下载 Telegram 文档（PDF）到发送成员 inbox，保留 .pdf 后缀。"""
+    import urllib.request
+    r = _api("getFile", {"file_id": file_id})
+    if not r or not r.get("ok"):
+        return None
+    file_path = r["result"].get("file_path", "")
+    if not file_path:
+        return None
+    url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+    now = datetime.now()
+    ts = now.strftime("%Y%m%d_%H%M%S")
+    suffix = Path(file_name or "").suffix.lower() or ".pdf"
+    staging = member_inbox_dir(member, now) if member else receipt_month_dir(now)
+    dest = staging / f"{ts}_telegram{suffix}"
+    try:
+        dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
+        _backup_mark_dirty()
+        return dest
+    except Exception as e:
+        print(f"[tg] 文档下载失败: {e}", file=sys.stderr)
+        return None
+
+
 def send_message(chat_id: int | str, text: str) -> bool:
     """发消息。超过 4000 字符自动分段。"""
     if len(text) <= 4000:
@@ -202,6 +226,26 @@ def run() -> None:
                 else:
                     reply = "图片下载失败，请重发。"
                 log.debug("图片回复 → %s", reply[:200])
+                send_message(chat_id, reply)
+                offset = max(offset, update_id)
+                continue
+
+            # 文档消息（PDF）→ 下载到 inbox → OCR 归档流程
+            doc = msg.get("document")
+            if doc:
+                name = doc.get("file_name", "") or ""
+                is_pdf = name.lower().endswith(".pdf") or \
+                    doc.get("mime_type") == "application/pdf"
+                if is_pdf:
+                    file_id = doc.get("file_id", "")
+                    dest = download_document(file_id, name, member) if file_id else None
+                    log.debug("文件 from %s(%s) → %s", user_name, member, dest)
+                    if dest:
+                        reply = agent.handle_file(str(dest), user=str(chat_id), member=member)
+                    else:
+                        reply = "文件下载失败，请重发。"
+                else:
+                    reply = f"收到文件 {name}（暂不支持，PDF 可以）"
                 send_message(chat_id, reply)
                 offset = max(offset, update_id)
                 continue
