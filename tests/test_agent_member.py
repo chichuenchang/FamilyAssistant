@@ -52,3 +52,32 @@ def test_system_prompt_omits_member_block_when_registry_empty(monkeypatch):
                         lambda members_path=None: {})
     prompt = agent_core._build_system_prompt()
     assert "## 家庭成员" not in prompt
+
+
+def test_handle_file_returns_empty_without_member(tmp_path):
+    agent = agent_core.Agent()
+    assert agent.handle_file(str(tmp_path / "x.pdf"), user="x", member="") == ""
+
+
+def test_handle_file_ocr_drives_handle(monkeypatch):
+    import ocr
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda path: "CONSENT FORM TEXT")
+    agent = agent_core.Agent()
+    cap = {}
+    monkeypatch.setattr(agent, "handle",
+                        lambda prompt, user="default", member="": cap.update(p=prompt) or "ok")
+    out = agent.handle_file("data/Alex/inbox/2026-06/x.pdf", user="u", member="Alex Lee")
+    assert out == "ok"
+    assert "x.pdf" in cap["p"] and "CONSENT FORM TEXT" in cap["p"]
+
+
+def test_handle_file_fallback_when_ocr_unavailable(monkeypatch):
+    import ocr
+    monkeypatch.setattr(ocr, "is_available", lambda: False)
+    agent = agent_core.Agent()
+    called = {"handle": False}
+    monkeypatch.setattr(agent, "handle",
+                        lambda *a, **k: called.__setitem__("handle", True) or "x")
+    out = agent.handle_file("x.pdf", member="Alex Lee")
+    assert "PDF" in out and called["handle"] is False
