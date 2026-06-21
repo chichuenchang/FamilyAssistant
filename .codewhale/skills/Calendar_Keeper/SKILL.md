@@ -30,9 +30,14 @@
 ## 工作方式
 
 - **静默刷新**：传输层在**已注册成员**的消息到达后调 `calendar_sync.calendar_tick()`：
-  启用 + 距上次刷新 ≥ `refresh_minutes` + provider 就绪 → 拉取未来 `lookahead_days`
+  启用 + 距上次刷新 ≥ `refresh_minutes` + provider 就绪 → 拉取未来 `sync_horizon_days`
   天的活动 + 全部待办进本地缓存。未注册来源永远不会触发。不主动播报，
   Agent 仅在用户问到时按上下文/工具回答。
+  注意：拉取窗口是 `sync_horizon_days`（默认 90，远期事件可见），**不是** `lookahead_days`
+  （后者仅控制上下文注入与 cal-list 默认窗口）。两者分离，避免远期事件被漏拉。
+- **查询前拉取**：用户问日程（cal-list）时，先调 `calendar_sync.sync_for_query(member)`
+  按 `query_refresh_seconds` 短节流主动拉远端，再读本地。捕获 Google 端新加但后台
+  tick 尚未拉到的事件（如 Gmail 自动建日程），避免回答陈旧。本地模式成员跳过。
 - **先推后拉**：本地新增（cal-add）→ 立即尽力推送远端；失败/未配置则标记"待同步"，
   下一轮 tick 自动重试。完成/取消同理（同步完成或删除远端项）。
 - **合并规则**：按远端 uid 合并，远端字段覆盖本地（remote wins）；本地有待推送
@@ -87,7 +92,9 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
 ## 配置（config.json `calendar` 段）
 
 `enabled`（默认 false）/ `lookahead_days`（10，静默刷新与上下文注入的窗口）/
-`refresh_minutes`（15，节流间隔）/ `image_retention_years`（2，来图保留年限）/
+`refresh_minutes`（15，后台 tick 节流间隔）/
+`query_refresh_seconds`（60，查询路径同步节流）/
+`sync_horizon_days`（90，远端拉取窗口，独立于 lookahead_days）/ `image_retention_years`（2，来图保留年限）/
 `image_prune_interval_days`（30，来图清理间隔）。改后重启进程生效。
 
 ## 边界

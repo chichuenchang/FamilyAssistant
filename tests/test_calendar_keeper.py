@@ -2,7 +2,7 @@
 # No real family names, channel ids, or credentials in test data.
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -517,7 +517,8 @@ class TestSyncEngine:
         cal_db.mark_synced(keep, uid="ev-keep", db_path=db)
         gone = _add_event(db, title="远端已删", start="2026-06-15T10:00", end="")
         cal_db.mark_synced(gone, uid="ev-gone", db_path=db)
-        future = _add_event(db, title="窗口外不动", start="2026-07-20T10:00", end="")
+        # 窗口外（sync_horizon_days=90 默认 → 2026-09-10 之外）不参与对账，不动
+        future = _add_event(db, title="窗口外不动", start="2026-12-20T10:00", end="")
         cal_db.mark_synced(future, uid="ev-future", db_path=db)
         tk = _add_task(db, title="远端已完成")
         cal_db.mark_synced(tk, uid="t-done", db_path=db)
@@ -541,6 +542,19 @@ class TestSyncEngine:
         new_rows = [r for r in cal_db.list_upcoming(days=10, today=TODAY, db_path=db)
                     if r["uid"] == "ev-new"]
         assert len(new_rows) == 1 and new_rows[0]["origin"] == "remote"
+
+    def test_refresh_pulls_far_future_event(self, engine):
+        # 远端事件在 lookahead_days(10) 之外但 sync_horizon_days(90) 之内 → 必须拉到
+        fake, db = engine
+        far = (TODAY + timedelta(days=45)).isoformat()
+        fake.events = [{"uid": "ev-far", "title": "远期事件",
+                        "start": f"{far}T10:00", "end": f"{far}T11:00",
+                        "all_day": False, "location": "", "notes": ""}]
+        result = calendar_sync.refresh(db_path=db, today=TODAY)
+        assert result["errors"] == []
+        rows = [r for r in cal_db.list_upcoming(days=60, today=TODAY, db_path=db)
+                if r["uid"] == "ev-far"]
+        assert len(rows) == 1 and rows[0]["origin"] == "remote"
 
     def test_refresh_records_error_and_continues(self, engine):
         fake, db = engine
@@ -618,6 +632,56 @@ class TestPerMemberTick:
         monkeypatch.setattr(calendar_sync, "refresh_domain",
                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
         assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
+        st = calendar_sync._load_state(paths.member_sync_state("MemberA", "schedule"))
+        assert st.get("last_error")
+
+
+class TestSyncForQuery:
+    """查询日程前主动拉远端：捕获 Google 端新加事件（如 Gmail 自动建日程）。"""
+
+    def test_query_pulls_remote_event_then_throttles(self, member_engine):
+        import paths
+        from datetime import datetime as dt
+        fake, tmp = member_engine
+        sdb = str(paths.member_store("MemberA", "schedule"))
+        # 远端有一条本地没有的事件（模拟 Gmail 自动建日程）
+        fake.events = [{"uid": "ev-gmail", "title": "航班 AC123",
+                        "start": "2026-06-13T08:00", "end": "2026-06-13T10:00",
+                        "all_day": False, "location": "", "notes": ""}]
+        assert calendar_sync.sync_for_query(
+            "MemberA", "schedule", now=dt(2026, 6, 12, 9, 0)) is True
+        rows = cal_db.list_upcoming(days=10, today=date(2026, 6, 12), db_path=sdb)
+        assert [r["uid"] for r in rows] == ["ev-gmail"]
+        # 节流窗口内（默认 60s）→ 不再打远端
+        assert calendar_sync.sync_for_query(
+            "MemberA", "schedule", now=dt(2026, 6, 12, 9, 0, 30)) is False
+        # 超过节流 → 再拉
+        assert calendar_sync.sync_for_query(
+            "MemberA", "schedule", now=dt(2026, 6, 12, 9, 2)) is True
+
+    def test_query_local_member_skipped(self, monkeypatch, tmp_path):
+        from datetime import datetime as dt
+        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
+        monkeypatch.setattr(calendar_sync, "CFG",
+                            {"enabled": True, "lookahead_days": 10,
+                             "refresh_minutes": 15, "query_refresh_seconds": 60})
+        assert calendar_sync.sync_for_query(
+            "LocalOnly", now=dt(2026, 6, 12, 9, 0)) is False
+
+    def test_query_disabled_returns_false(self, member_engine, monkeypatch):
+        from datetime import datetime as dt
+        monkeypatch.setattr(calendar_sync, "CFG", {**calendar_sync.CFG, "enabled": False})
+        assert calendar_sync.sync_for_query(
+            "MemberA", now=dt(2026, 6, 12, 9, 0)) is False
+
+    def test_query_never_raises(self, member_engine, monkeypatch):
+        import paths
+        from datetime import datetime as dt
+        monkeypatch.setattr(calendar_sync, "refresh_domain",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        assert calendar_sync.sync_for_query(
+            "MemberA", "schedule", now=dt(2026, 6, 12, 9, 0)) is False
         st = calendar_sync._load_state(paths.member_sync_state("MemberA", "schedule"))
         assert st.get("last_error")
 
