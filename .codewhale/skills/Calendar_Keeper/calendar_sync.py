@@ -43,6 +43,8 @@ _FALLBACK_CFG = {
     "enabled": False,
     "lookahead_days": 10,
     "refresh_minutes": 15,
+    "query_refresh_seconds": 60,   # 查询日程前的同步节流（避免连续查询打爆远端）
+    "sync_horizon_days": 90,       # 远端拉取窗口（独立于 lookahead_days，覆盖远期事件）
 }
 
 _DOMAIN_KIND = {"schedule": "event", "tasks": "task"}
@@ -216,7 +218,10 @@ def refresh(db_path=None, today: date | None = None,
     """单库刷新（活动 + 待办两半），写全局状态。错误收集进返回值，不抛出。"""
     now = now or datetime.now()
     today = today or now.date()
-    horizon = today + timedelta(days=int(CFG.get("lookahead_days", 10)))
+    # 拉取窗口用 sync_horizon_days（远期事件可见），不受 lookahead_days（仅上下文/列表窗口）限制
+    horizon_days = max(int(CFG.get("sync_horizon_days", 90)),
+                       int(CFG.get("lookahead_days", 10)))
+    horizon = today + timedelta(days=horizon_days)
     errors: list[str] = []
 
     pushed, push_errors = push_pending(db_path=db_path, prov=prov)
@@ -246,7 +251,10 @@ def refresh_domain(member: str, domain: str, *, db_path=None, prov=None,
         raise ValueError(f"domain 必须是 {tuple(_DOMAIN_KIND)}")
     now = now or datetime.now()
     today = today or now.date()
-    horizon = today + timedelta(days=int(CFG.get("lookahead_days", 10)))
+    # 拉取窗口用 sync_horizon_days（远期事件可见），不受 lookahead_days（仅上下文/列表窗口）限制
+    horizon_days = max(int(CFG.get("sync_horizon_days", 90)),
+                       int(CFG.get("lookahead_days", 10)))
+    horizon = today + timedelta(days=horizon_days)
     db_path = db_path or str(_paths.member_store(member, domain))
     p = prov if prov is not None else provider_for(member, domain)
     state_path = state_path or _paths.member_sync_state(member, domain)
@@ -295,6 +303,46 @@ def calendar_tick(now: datetime | None = None) -> bool:
                     ran = True
                 except Exception as e:
                     _record_error(state_path, str(e))
+        return ran
+    except Exception:
+        return False
+
+
+def sync_for_query(member: str, domain: str | None = None,
+                   now: datetime | None = None) -> bool:
+    """查询日程前调用：拉远端 → 本地，按短节流（query_refresh_seconds）。
+
+    背景：事件可能在 Google 端被加入（如 Gmail 自动建日程），后台 calendar_tick 按
+    refresh_minutes（默认 15 分）节流，查询路径若只读本地会漏掉这些新事件。故查询前
+    主动同步一次；短节流防止连续查询每次都打远端。本地模式成员/未配置域跳过。永不抛。
+    """
+    try:
+        if not member or not CFG.get("enabled"):
+            return False
+        now = now or datetime.now()
+        throttle = float(CFG.get("query_refresh_seconds", 60))
+        domains = [domain] if domain else ["schedule", "tasks"]
+        ran = False
+        for d in domains:
+            if d not in _DOMAIN_KIND:
+                continue
+            state_path = _paths.member_sync_state(member, d)
+            try:
+                p = provider_for(member, d)
+                if p is None or not p.is_configured():
+                    continue
+                last = _load_state(state_path).get("last_refresh")
+                if last:
+                    try:
+                        if (now - datetime.fromisoformat(last)).total_seconds() < throttle:
+                            continue
+                    except ValueError:
+                        pass
+                refresh_domain(member, d, prov=p, state_path=state_path,
+                               today=now.date(), now=now)
+                ran = True
+            except Exception as e:
+                _record_error(state_path, str(e))
         return ran
     except Exception:
         return False

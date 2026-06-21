@@ -171,6 +171,10 @@ def cmd_cal_add(args):
 
 
 def cmd_cal_list(args):
+    # 查询前先拉远端（节流），避免漏掉 Google 端新加事件（如 Gmail 自动建日程）。
+    if args.member and not _DB_OVERRIDE:
+        domain = {"event": "schedule", "task": "tasks"}.get(args.kind)
+        calendar_sync.sync_for_query(args.member, domain)
     rows = []
     for db in _member_stores(args.member, args.kind):
         rows.extend(cal_db.list_upcoming(
