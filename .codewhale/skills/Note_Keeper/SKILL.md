@@ -11,6 +11,7 @@
 ├── SKILL.md    ← 本文件
 ├── note_db.py  ← SQLite CRUD（notes 表）
 ├── sheet_db.py ← SQLite CRUD（worksheets + worksheet_rows 表）
+├── chart.py    ← 工作表数字 → 图表 PNG（matplotlib，离线）
 ├── cli.py      ← 命令行入口（user / agent / 任意调用方）
 ```
 
@@ -148,12 +149,47 @@ python .../cli.py sheet-delete --member 爸爸 --title 血压
   返回与"缺失"相同的 False/None，不泄露存在性。Agent 层对所有工作表工具强制注入 member，
   LLM 不得跨成员读写。
 
+### 可视化（Chart）
+
+把工作表里的数字画成图表 PNG 发给用户（"show me the visualization of my 2025 test
+scores"）。Agent 先从相关工作表取出对应数字（必要时先 show_worksheet），再调
+`visualize_data` 工具；CLI 端 `chart-render` 渲染。**LLM 给完整 spec，工具只画图**
+（不查表）。
+
+- **离线渲染**：matplotlib（Agg 后端），数据不出本机；CJK 字体回退
+  （Microsoft YaHei/SimHei/...）。**matplotlib 可选**，缺失时 `chart-render` 退出 1 并提示
+  `pip install matplotlib`，Agent 把该提示转告用户（优雅降级）。
+- **图表类型**：line / bar / pie。line/bar 可多 series（带图例）；pie 单 series，
+  values 对应 x_labels。
+- **spec**（LLM → 工具）：
+  ```json
+  {"type":"line","title":"2025 测试成绩","x_label":"月份","y_label":"分数",
+   "x_labels":["1月","2月","3月"],
+   "series":[{"name":"数学","values":[88,92,95]}]}
+  ```
+  校验失败（type 非法 / 标题空 / x_labels 空 / series 空 / values 长度≠x_labels /
+  pie 多 series）→ 退出 1。
+- **存储**：`data/<成员>/charts/<时间戳>_<标题slug>.png`，成员私有。
+  **不入备份**（可再生；backup `_excluded` 命中 `charts/` 目录段）。渲染前按
+  `notes.chart_retention_days`（config，默认 7 天）清理旧图（prune-on-render）。
+- **投递**：`agent.handle()` 仍返回字符串；成功渲染时代码在回复尾部追加哨兵行
+  `\x01IMG:<data相对路径>`（非 LLM 拼接）。`agent_core.split_reply(reply)` 拆出
+  `(文本, [路径])`；各传输层（微信 `reply_image` / Telegram `send_photo` / 测试模式打印）
+  先发图再发文字。路径解析仅限 `data_root` 内、文件存在才发。
+
+CLI：
+```bash
+python .../Note_Keeper/cli.py chart-render --member 爸爸 --spec '{"type":"line","title":"2025 成绩","x_labels":["1月","2月"],"series":[{"name":"数学","values":[88,92]}]}'
+# → 打印 PNG 的 data 相对路径
+```
+
 ## 技能边界
 
 覆盖：
 - ✅ 添加/列出/搜索/删除备忘
 - ✅ 置顶 + 最近备忘自动注入 Agent 上下文
 - ✅ 工作表（kv 事实清单 / table 流水），动态 schema，原地更新，置顶全量注入
+- ✅ 工作表数字可视化（line/bar/pie → PNG，离线渲染，自动发图）
 - ✅ 成员隔离（查询级强制过滤）
 - ✅ 图片来源关联（不移动原始文件）
 

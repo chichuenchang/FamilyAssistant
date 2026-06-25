@@ -52,8 +52,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
 
 import logging
 
-from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
+from agent_core import (Agent, receipt_month_dir, member_inbox_dir, setup_logging,
+                        split_reply as _split_reply)
 from members import resolve
+import paths as _paths
 
 log = logging.getLogger("familyassist.wechat")
 
@@ -69,6 +71,20 @@ from image_gc import image_gc_tick as _image_gc_tick
 
 # 凭据存储路径
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
+
+
+def _send_reply(msg, reply: str) -> None:
+    """拆出图片哨兵：先发图，再发文字。图缺失/失败仅记录，不影响文字。"""
+    text, imgs = _split_reply(reply or "")
+    for rel in imgs:
+        try:
+            ap = _paths.resolve_rel(rel).resolve()
+            if ap.exists() and ap.is_relative_to(_paths.data_root().resolve()):
+                msg.reply_image(str(ap))
+        except Exception:
+            log.exception("发送图片失败（跳过）: %s", rel)
+    if text:
+        msg.reply_text(text)
 
 
 # ── 模式 1: 运行 Bot ────────────────────────────────────────
@@ -107,7 +123,7 @@ def run_bot(relogin: bool = False) -> None:
         try:
             reply = agent.handle(msg.text, user=msg.from_user, member=member)
             log.debug("文字回复 → %s", (reply or "")[:200])
-            msg.reply_text(reply)
+            _send_reply(msg, reply)
         except Exception as e:
             log.exception("文字处理出错")
             msg.reply_text(f"处理出错: {e}")
@@ -131,7 +147,7 @@ def run_bot(relogin: bool = False) -> None:
             log.debug("图片 from %s(%s) 保存 → %s", msg.from_user, member, img_path)
             reply = agent.handle_image(str(img_path), user=msg.from_user, member=member)
             log.debug("图片回复 → %s", (reply or "")[:200])
-            msg.reply_text(reply)
+            _send_reply(msg, reply)
         except Exception as e:
             log.exception("图片处理出错")
             msg.reply_text(f"图片处理出错: {e}")
@@ -164,7 +180,7 @@ def run_bot(relogin: bool = False) -> None:
             log.debug("文件 from %s(%s) 保存 → %s", msg.from_user, member, pdf_path)
             reply = agent.handle_image(str(pdf_path), user=msg.from_user, member=member)
             log.debug("文件回复 → %s", (reply or "")[:200])
-            msg.reply_text(reply)
+            _send_reply(msg, reply)
         except Exception as e:
             log.exception("文件处理出错")
             msg.reply_text(f"文件处理出错: {e}")
@@ -216,7 +232,11 @@ def run_test() -> None:
         if msg.lower() in ("quit", "exit", "q"):
             break
         reply = agent.handle(msg, member="本地测试")
-        print(f"助手> {reply}")
+        text, imgs = _split_reply(reply)
+        for rel in imgs:
+            print(f"助手> [图片] {rel}")
+        if text:
+            print(f"助手> {text}")
         print()
 
 
