@@ -136,6 +136,7 @@ _SHEET_COMMANDS = {"sheet-create", "sheet-list", "sheet-show", "sheet-set",
                    "sheet-unset", "sheet-row-add", "sheet-row-edit",
                    "sheet-row-delete", "sheet-rename", "sheet-pin", "sheet-delete"}
 _CHART_COMMANDS = {"chart-render"}
+_DOC_FILE_COMMANDS = {"doc-file"}
 _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
                  "cal-sync", "cal-status"}
 _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
@@ -144,13 +145,14 @@ _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
 ALLOWED_COMMANDS |= _SHEET_COMMANDS
 ALLOWED_COMMANDS |= _CHART_COMMANDS
+ALLOWED_COMMANDS |= _DOC_FILE_COMMANDS
 ALLOWED_COMMANDS |= _CAL_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
     """子命令 → 所属 skill 的 CLI 路径。"""
-    if cmd in _DOC_COMMANDS:
+    if cmd in _DOC_COMMANDS or cmd in _DOC_FILE_COMMANDS:
         skill = "Document_Keeper"
     elif cmd in _BACKUP_COMMANDS:
         skill = "Remote_Backup"
@@ -262,6 +264,7 @@ def _build_system_prompt() -> str:
 - 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
 - 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet
 - 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
+- 用户说"把我的租约/保单发给我""发我那个文件/那张图"→ send_document（先 list/show 拿 id）或 send_file（data 内相对路径）；文件会自动发给用户
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
 - 用户问"最新新闻/外面在发生什么/帮我查一下X" → web_search；发链接让看/总结文章 → web_read；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
 - 用户闲聊/问候 → 直接友好回复，不用调工具
@@ -436,6 +439,35 @@ def _tool_visualize_data(args):
     return _run_cli("chart-render", args)
 
 
+def _resolve_sendable(path: str, member: str) -> str | None:
+    """送文件闸门：路径须存在、是文件、在 data_root 内，且属家庭共享或本成员目录。
+    通过 → 返回 data 相对路径；否则 None。"""
+    try:
+        p = Path(path)
+        ap = (p if p.is_absolute() else _paths.resolve_rel(str(path))).resolve()
+        root = _paths.data_root().resolve()
+        if not (ap.exists() and ap.is_file() and ap.is_relative_to(root)):
+            return None
+        allowed = [_paths.family_dir().resolve()]
+        if member:
+            allowed.append(_paths.member_dir(member).resolve())
+        if not any(ap.is_relative_to(a) for a in allowed):
+            return None
+        return _paths.to_rel(ap)
+    except (ValueError, OSError):
+        return None
+
+
+def _tool_send_document(args):
+    return _run_cli("doc-file", {"id": args.get("id")})
+
+
+def _tool_send_file(args):
+    member = args.get("member", "")
+    rel = _resolve_sendable(args.get("path", ""), member)
+    return rel if rel else "[错误] 路径不允许或文件不存在"
+
+
 def _target_member(args: dict, sender: str) -> str:
     """日程/待办的目标成员：显式 for-member（须已登记）覆盖，否则归发送者。
 
@@ -548,6 +580,8 @@ _TOOL_MAP = {
     "pin_worksheet": _tool_pin_worksheet,
     "delete_worksheet": _tool_delete_worksheet,
     "visualize_data": _tool_visualize_data,
+    "send_document": _tool_send_document,
+    "send_file": _tool_send_file,
     "add_event": _tool_add_event,
     "add_task": _tool_add_task,
     "list_schedule": _tool_list_schedule,
@@ -848,6 +882,14 @@ TOOL_SCHEMAS = [
                            "line/bar 可多 series；pie 只能一个 series，values 对应 x_labels",
         },
     }, ["spec"]),
+    _fn("send_document", "把已归档的文档原件（租约/保单/证件等）发给用户。"
+        "先用 list_documents/show_document 找到对应文档的 id", {
+        "id": _int("文档 id"),
+    }, ["id"]),
+    _fn("send_file", "把 data 目录内的一个文件发给用户（path 为 data 相对路径）。"
+        "只能发家庭共享文件或你自己的文件", {
+        "path": _s("文件的 data 相对路径"),
+    }, ["path"]),
     _fn("add_event", "添加家庭日程/活动/安排（自动同步到远程日历）", {
         "title": _s("活动标题，如 孩子游泳课"),
         "date": _s("日期 YYYY-MM-DD"),
