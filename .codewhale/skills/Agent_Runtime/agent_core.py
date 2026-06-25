@@ -132,12 +132,16 @@ _DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
 _BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify",
                     "backup-restore", "backup-reorg"}
 _NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
+_SHEET_COMMANDS = {"sheet-create", "sheet-list", "sheet-show", "sheet-set",
+                   "sheet-unset", "sheet-row-add", "sheet-row-edit",
+                   "sheet-row-delete", "sheet-rename", "sheet-pin", "sheet-delete"}
 _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
                  "cal-sync", "cal-status"}
 _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
 
 # 备忘/日程/联网命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
+ALLOWED_COMMANDS |= _SHEET_COMMANDS
 ALLOWED_COMMANDS |= _CAL_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
 
@@ -148,7 +152,7 @@ def _cli_path(cmd: str) -> Path:
         skill = "Document_Keeper"
     elif cmd in _BACKUP_COMMANDS:
         skill = "Remote_Backup"
-    elif cmd in _NOTE_COMMANDS:
+    elif cmd in _NOTE_COMMANDS or cmd in _SHEET_COMMANDS:
         skill = "Note_Keeper"
     elif cmd in _CAL_COMMANDS:
         skill = "Calendar_Keeper"
@@ -254,6 +258,7 @@ def _build_system_prompt() -> str:
 - 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
 - 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
 - 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
+- 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
 - 用户问"最新新闻/外面在发生什么/帮我查一下X" → web_search；发链接让看/总结文章 → web_read；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
 - 用户闲聊/问候 → 直接友好回复，不用调工具
@@ -366,6 +371,37 @@ def _tool_delete_note(args): return _run_cli("note-delete", args)
 def _tool_pin_note(args): return _run_cli("note-pin", args)
 
 
+def _tool_create_worksheet(args): return _run_cli("sheet-create", args)
+def _tool_list_worksheets(args): return _run_cli("sheet-list", args)
+def _tool_show_worksheet(args): return _run_cli("sheet-show", args)
+def _tool_set_worksheet_field(args): return _run_cli("sheet-set", args)
+def _tool_unset_worksheet_field(args): return _run_cli("sheet-unset", args)
+def _tool_delete_worksheet_row(args): return _run_cli("sheet-row-delete", args)
+def _tool_rename_worksheet(args): return _run_cli("sheet-rename", args)
+def _tool_pin_worksheet(args): return _run_cli("sheet-pin", args)
+def _tool_delete_worksheet(args): return _run_cli("sheet-delete", args)
+
+
+def _tool_add_worksheet_row(args):
+    args = dict(args)
+    data = args.pop("data", None)
+    if isinstance(data, (dict, list)):
+        args["data"] = json.dumps(data, ensure_ascii=False)
+    elif data is not None:
+        args["data"] = str(data)
+    return _run_cli("sheet-row-add", args)
+
+
+def _tool_edit_worksheet_row(args):
+    args = dict(args)
+    data = args.pop("data", None)
+    if isinstance(data, (dict, list)):
+        args["data"] = json.dumps(data, ensure_ascii=False)
+    elif data is not None:
+        args["data"] = str(data)
+    return _run_cli("sheet-row-edit", args)
+
+
 def _target_member(args: dict, sender: str) -> str:
     """日程/待办的目标成员：显式 for-member（须已登记）覆盖，否则归发送者。
 
@@ -466,6 +502,17 @@ _TOOL_MAP = {
     "search_notes": _tool_search_notes,
     "delete_note": _tool_delete_note,
     "pin_note": _tool_pin_note,
+    "create_worksheet": _tool_create_worksheet,
+    "list_worksheets": _tool_list_worksheets,
+    "show_worksheet": _tool_show_worksheet,
+    "set_worksheet_field": _tool_set_worksheet_field,
+    "unset_worksheet_field": _tool_unset_worksheet_field,
+    "add_worksheet_row": _tool_add_worksheet_row,
+    "edit_worksheet_row": _tool_edit_worksheet_row,
+    "delete_worksheet_row": _tool_delete_worksheet_row,
+    "rename_worksheet": _tool_rename_worksheet,
+    "pin_worksheet": _tool_pin_worksheet,
+    "delete_worksheet": _tool_delete_worksheet,
     "add_event": _tool_add_event,
     "add_task": _tool_add_task,
     "list_schedule": _tool_list_schedule,
@@ -483,7 +530,11 @@ _MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_ta
                        "add_document", "add_event", "add_task"}
 
 # 备忘工具全部强制注入 member（读写皆是 — 备忘按成员私有，LLM 不得跨成员读写）
-_NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note"}
+_NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note",
+               "create_worksheet", "list_worksheets", "show_worksheet",
+               "set_worksheet_field", "unset_worksheet_field", "add_worksheet_row",
+               "edit_worksheet_row", "delete_worksheet_row", "rename_worksheet",
+               "pin_worksheet", "delete_worksheet"}
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
@@ -508,6 +559,7 @@ _CATS_DESC = json.dumps(_CONFIG.get("categories", {}), ensure_ascii=False)
 _DOC_TYPES = list(_CONFIG.get("doc_types") or ["other"])
 _DOC_STATUSES = ["active", "expired", "archived", "superseded"]
 _CAL_LOOKAHEAD = int((_CONFIG.get("calendar") or {}).get("lookahead_days") or 10)
+_WORKSHEET_PIN_ROW_CAP = int((_CONFIG.get("notes") or {}).get("worksheet_pin_row_cap") or 80)
 
 
 def _fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
@@ -699,6 +751,51 @@ TOOL_SCHEMAS = [
         "id": _int("备忘 id"),
         "unpin": {"type": "boolean", "description": "true=取消置顶"},
     }, ["id"]),
+    _fn("create_worksheet", "创建一张工作表，用于长期跟踪结构化信息。仅当用户明确要求"
+        "\"建个表/做个 worksheet/长期记录这些\"时才用；普通杂事用 save_note。"
+        "kind=kv 是事实清单（字段→值，如房贷利率/到期）；kind=table 是流水记录"
+        "（多行，每行动态列，如血压/体重打卡）", {
+        "title": _s("工作表名（唯一，作为后续引用的句柄）"),
+        "kind": _s("kv=事实清单 / table=流水记录", enum=["kv", "table"]),
+        "pinned": {"type": "boolean", "description": "置顶：每次对话自动带上全表内容"},
+    }, ["title", "kind"]),
+    _fn("list_worksheets", "列出本人的工作表（名称/类型/规模）", {}),
+    _fn("show_worksheet", "显示一张工作表的完整内容", {
+        "title": _s("工作表名"),
+    }, ["title"]),
+    _fn("set_worksheet_field", "在 kv 工作表上设置/覆盖一个字段", {
+        "title": _s("工作表名"),
+        "field": _s("字段名"),
+        "value": _s("字段值"),
+    }, ["title", "field", "value"]),
+    _fn("unset_worksheet_field", "从 kv 工作表删除一个字段", {
+        "title": _s("工作表名"),
+        "field": _s("字段名"),
+    }, ["title", "field"]),
+    _fn("add_worksheet_row", "向 table 工作表追加一行（列名→值，列可动态新增）", {
+        "title": _s("工作表名"),
+        "data": {"type": "object", "description": "一行数据，键=列名 值=单元格值"},
+    }, ["title", "data"]),
+    _fn("edit_worksheet_row", "覆盖 table 工作表的某一行（按行 id）", {
+        "title": _s("工作表名"),
+        "row-id": _int("行 id（见 show_worksheet 的 #号）"),
+        "data": {"type": "object", "description": "整行新数据（覆盖式）"},
+    }, ["title", "row-id", "data"]),
+    _fn("delete_worksheet_row", "删除 table 工作表的某一行（按行 id）", {
+        "title": _s("工作表名"),
+        "row-id": _int("行 id"),
+    }, ["title", "row-id"]),
+    _fn("rename_worksheet", "重命名一张工作表", {
+        "title": _s("当前名"),
+        "new-title": _s("新名"),
+    }, ["title", "new-title"]),
+    _fn("pin_worksheet", "置顶/取消置顶工作表（置顶=每次对话自动带上全表）", {
+        "title": _s("工作表名"),
+        "unpin": {"type": "boolean", "description": "true=取消置顶"},
+    }, ["title"]),
+    _fn("delete_worksheet", "删除整张工作表（含所有行）", {
+        "title": _s("工作表名"),
+    }, ["title"]),
     _fn("add_event", "添加家庭日程/活动/安排（自动同步到远程日历）", {
         "title": _s("活动标题，如 孩子游泳课"),
         "date": _s("日期 YYYY-MM-DD"),
@@ -778,6 +875,45 @@ def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
         return ""
 
 
+def _worksheets_context(member: str, db_path: str | None = None) -> str:
+    """取该成员置顶工作表，整表渲染进 system prompt（选择 B：全量注入）。
+
+    进程内直调 sheet_db。table 超 _WORKSHEET_PIN_ROW_CAP 行截断并提示。
+    任何失败返回空串 —— 工作表注入绝不能拖垮 handle()。
+    """
+    try:
+        import sheet_db
+        kw = {"db_path": db_path} if db_path else {}
+        sheets = sheet_db.pinned_sheets(member, **kw)
+        if not sheets:
+            return ""
+        blocks = []
+        for s in sheets:
+            if s is None:
+                continue
+            lines = [f"### {s['title']}（{s['kind']}）"]
+            if s["kind"] == "kv":
+                for k, v in s["kv_data"].items():
+                    lines.append(f"- {k}: {v}")
+            else:
+                rows = s["rows"]
+                shown = rows[:_WORKSHEET_PIN_ROW_CAP]
+                for row in shown:
+                    cells = "  ".join(f"{k}={v}" for k, v in row["row_data"].items())
+                    lines.append(f"- #{row['id']} {cells}")
+                if len(rows) > _WORKSHEET_PIN_ROW_CAP:
+                    lines.append(f"- …还有 {len(rows) - _WORKSHEET_PIN_ROW_CAP} 行，"
+                                 f"用 show_worksheet 看全部")
+            blocks.append("\n".join(lines))
+        if not blocks:
+            return ""
+        return (f"\n\n## 已存工作表（仅 {member} 可见，置顶项全量带上）\n"
+                + "\n\n".join(blocks))
+    except Exception:
+        _log.exception("工作表上下文注入失败（已跳过）")
+        return ""
+
+
 def _schedule_context(member: str | None = None, db_path: str | None = None,
                       clip: int = 60, max_lines: int = 15) -> str:
     """成员未来 N 天日程 + 待办，拼成 system prompt 附加块（按成员私有，分活动/待办两库）。
@@ -850,7 +986,8 @@ class Agent:
                        f"查询类工具可用 member 参数按成员过滤。")
         msgs = [{"role": "system",
                  "content": self.system_prompt + member_note
-                 + _notes_context(member) + _schedule_context(member)}]
+                 + _notes_context(member) + _worksheets_context(member)
+                 + _schedule_context(member)}]
         user_history = self.history[user]
         msgs.extend(user_history[-self.history_size * 2:])
         msgs.append({"role": "user", "content": text})
