@@ -180,18 +180,61 @@ def send_photo(chat_id: int | str, path: str, caption: str = "") -> bool:
         return False
 
 
+def send_document(chat_id: int | str, path: str, caption: str = "") -> bool:
+    """sendDocument 多部分上传（urllib，无新依赖）。"""
+    import mimetypes, urllib.request, uuid
+    boundary = uuid.uuid4().hex
+    p = Path(path)
+    try:
+        file_bytes = p.read_bytes()
+    except OSError:
+        return False
+    parts = []
+
+    def _field(name, value):
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; "
+                     f'name="{name}"\r\n\r\n{value}\r\n'.encode())
+
+    _field("chat_id", str(chat_id))
+    if caption:
+        _field("caption", caption)
+    parts.append((f"--{boundary}\r\nContent-Disposition: form-data; "
+                  f'name="document"; filename="{p.name}"\r\n'
+                  f"Content-Type: {mimetypes.guess_type(p.name)[0] or 'application/octet-stream'}"
+                  "\r\n\r\n").encode())
+    parts.append(file_bytes)
+    parts.append(f"\r\n--{boundary}--\r\n".encode())
+    body = b"".join(parts)
+    req = urllib.request.Request(f"{BASE}/sendDocument", data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    try:
+        r = json.loads(urllib.request.urlopen(req, timeout=120).read())
+        return bool(r and r.get("ok"))
+    except Exception as e:
+        print(f"[tg] sendDocument 错误: {e}", file=sys.stderr)
+        return False
+
+
 def _send_reply(chat_id, reply: str) -> None:
-    """拆出图片哨兵：先发图，再发文字。图缺失/失败仅记录，不影响文字。"""
+    """拆出图片/文档哨兵：先发图，再发文档，最后发文字。失败仅记录，不影响文字。"""
     from agent_core import split_reply
     import paths as _paths
-    text, imgs = split_reply(reply or "")
+    text, imgs, docs = split_reply(reply or "")
+    root = _paths.data_root().resolve()
     for rel in imgs:
         try:
             ap = _paths.resolve_rel(rel).resolve()
-            if ap.exists() and ap.is_relative_to(_paths.data_root().resolve()):
+            if ap.exists() and ap.is_relative_to(root):
                 send_photo(chat_id, str(ap))
         except Exception as e:
             print(f"[tg] 发图失败 {rel}: {e}", file=sys.stderr)
+    for rel in docs:
+        try:
+            ap = _paths.resolve_rel(rel).resolve()
+            if ap.exists() and ap.is_relative_to(root):
+                send_document(chat_id, str(ap))
+        except Exception as e:
+            print(f"[tg] 发文件失败 {rel}: {e}", file=sys.stderr)
     if text:
         send_message(chat_id, text)
 

@@ -69,6 +69,9 @@ python .codewhale/skills/Document_Keeper/cli.py doc-add --type lease --title "20
 python .codewhale/skills/Document_Keeper/cli.py doc-list --type insurance --keyword 车险
 python .codewhale/skills/Document_Keeper/cli.py doc-show --id 3
 
+# 打印原件 data 相对路径（只读，供发送用）
+python .codewhale/skills/Document_Keeper/cli.py doc-file --id 3
+
 # 到期
 python .codewhale/skills/Document_Keeper/cli.py doc-due
 python .codewhale/skills/Document_Keeper/cli.py doc-due --days 90
@@ -80,6 +83,21 @@ python .codewhale/skills/Document_Keeper/cli.py doc-ack --id 3
 # 删除（仅本机；Agent 白名单外）
 python .codewhale/skills/Document_Keeper/cli.py doc-remove --id 3 --delete-file
 ```
+
+## 发送文件给用户（Agent）
+
+Agent 可把文件发回用户，两个工具（均强制注入成员，LLM 不得冒名）：
+
+- **`send_document(id)`** — 发已归档文档原件（租约/保单/证件）。先 list/show 拿 id；
+  handler 走只读 `doc-file --id` 取其 `file_path`。文档是家庭共享归档，天然受限。
+- **`send_file(path)`** — 发 data 目录内任意文件（path 为 data 相对路径）。
+  `agent_core._resolve_sendable` 进程内把关：路径须存在、是文件、在 `data_root` 内，
+  且属 `data/Family/` 或**发起成员自己的目录**（不可跨成员读他人私有文件）。
+
+投递机制复用图片那套哨兵：成功调用时 `agent_core.handle()` 在回复尾部追加
+`\x01DOC:<data相对路径>` 行；`split_reply` 拆出 `(文本, [图片], [文档])`；各传输层
+`_send_reply` 先发图、再发文档、最后发文字（微信 `reply_file`，Telegram `sendDocument`，
+测试模式打印 `[文件]`）。发送前再次校验路径在 `data_root` 内且存在。
 
 ## 查询模式
 

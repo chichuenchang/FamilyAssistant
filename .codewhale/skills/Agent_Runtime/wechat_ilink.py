@@ -74,15 +74,23 @@ CREDS_FILE = ROOT / "data" / "wechat_creds.json"
 
 
 def _send_reply(msg, reply: str) -> None:
-    """拆出图片哨兵：先发图，再发文字。图缺失/失败仅记录，不影响文字。"""
-    text, imgs = _split_reply(reply or "")
+    """拆出图片/文档哨兵：先发图，再发文档，最后发文字。失败仅记录，不影响文字。"""
+    text, imgs, docs = _split_reply(reply or "")
+    root = _paths.data_root().resolve()
     for rel in imgs:
         try:
             ap = _paths.resolve_rel(rel).resolve()
-            if ap.exists() and ap.is_relative_to(_paths.data_root().resolve()):
+            if ap.exists() and ap.is_relative_to(root):
                 msg.reply_image(str(ap))
         except Exception:
             log.exception("发送图片失败（跳过）: %s", rel)
+    for rel in docs:
+        try:
+            ap = _paths.resolve_rel(rel).resolve()
+            if ap.exists() and ap.is_relative_to(root):
+                msg.reply_file(str(ap))
+        except Exception:
+            log.exception("发送文件失败（跳过）: %s", rel)
     if text:
         msg.reply_text(text)
 
@@ -232,9 +240,11 @@ def run_test() -> None:
         if msg.lower() in ("quit", "exit", "q"):
             break
         reply = agent.handle(msg, member="本地测试")
-        text, imgs = _split_reply(reply)
+        text, imgs, docs = _split_reply(reply)
         for rel in imgs:
             print(f"助手> [图片] {rel}")
+        for rel in docs:
+            print(f"助手> [文件] {rel}")
         if text:
             print(f"助手> {text}")
         print()
