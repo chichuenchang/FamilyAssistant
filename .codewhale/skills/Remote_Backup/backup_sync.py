@@ -77,6 +77,9 @@ _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
                        ".calendar_state.json", ".sync_state.json",
                        ".image_gc_state.json"}
 
+# 永不进备份的目录段（图表可再生，不镜像）
+_HARD_EXCLUDE_DIRS = {"charts"}
+
 
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -95,7 +98,10 @@ def _save_json(path: Path, obj: dict) -> None:
 
 
 def _excluded(rel: str) -> bool:
-    name = rel.rsplit("/", 1)[-1]
+    parts = rel.split("/")
+    if any(seg in _HARD_EXCLUDE_DIRS for seg in parts[:-1]):
+        return True
+    name = parts[-1]
     if name in _HARD_EXCLUDE_NAMES:
         return True
     if "creds" in name:

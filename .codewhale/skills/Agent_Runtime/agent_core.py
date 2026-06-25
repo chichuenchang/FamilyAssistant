@@ -132,23 +132,31 @@ _DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
 _BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify",
                     "backup-restore", "backup-reorg"}
 _NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
+_SHEET_COMMANDS = {"sheet-create", "sheet-list", "sheet-show", "sheet-set",
+                   "sheet-unset", "sheet-row-add", "sheet-row-edit",
+                   "sheet-row-delete", "sheet-rename", "sheet-pin", "sheet-delete"}
+_CHART_COMMANDS = {"chart-render"}
+_DOC_FILE_COMMANDS = {"doc-file"}
 _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
                  "cal-sync", "cal-status"}
 _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
 
 # 备忘/日程/联网命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
+ALLOWED_COMMANDS |= _SHEET_COMMANDS
+ALLOWED_COMMANDS |= _CHART_COMMANDS
+ALLOWED_COMMANDS |= _DOC_FILE_COMMANDS
 ALLOWED_COMMANDS |= _CAL_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
     """子命令 → 所属 skill 的 CLI 路径。"""
-    if cmd in _DOC_COMMANDS:
+    if cmd in _DOC_COMMANDS or cmd in _DOC_FILE_COMMANDS:
         skill = "Document_Keeper"
     elif cmd in _BACKUP_COMMANDS:
         skill = "Remote_Backup"
-    elif cmd in _NOTE_COMMANDS:
+    elif cmd in _NOTE_COMMANDS or cmd in _SHEET_COMMANDS or cmd in _CHART_COMMANDS:
         skill = "Note_Keeper"
     elif cmd in _CAL_COMMANDS:
         skill = "Calendar_Keeper"
@@ -220,6 +228,8 @@ def _build_system_prompt() -> str:
   无重复 → 正常添加。报告里点明每条的处理（已加/已跳过重复/已替换），让用户能纠正或补特殊要求。
 - 用户说"安排/约了/X号要做Y/加个日程/活动"→ add_event（活动必须有日期；有具体时间则给 start/end）
 - 用户说"要做X/记个待办/任务"→ add_task（有截止日给 due）
+- **必须先调工具再回复**：用户的话只要听起来是要加/记一件事——给了日期、时间、"几点去X""X号做Y""帮我加/记/设个提醒/约了/安排"等——你**这一轮就必须立即调用对应写工具**（活动→add_event，待办→add_task），拿到返回结果后再回复。绝不能只用自然语言说"已加上/搞定/记好了"而不调工具；没调工具=这件事根本没做。拿不准是活动还是待办、或缺日期时间，就先调最合适的工具用默认值，或一句话问清后再调——但不要假装已完成
+- **calendar_status 不是凭据**：它只反映已入队的同步条数，不能据此声称某条新日程已存在或已同步——某日程到底有没有，以你 add_event 的返回为准
 - **归属默认发送者**：活动/待办默认进**你（当前成员）**的日历/待办，即使内容关于别的家庭成员
   （如你发 Robin 的活动，默认进你的日历）；从图片建的，原始图也存你名下。仅当用户**明确**说
   "加到 X 的日历/记到 X 的待办"时，才用 for-member 路由到该成员。备忘不跨成员（按成员私有）。
@@ -252,6 +262,9 @@ def _build_system_prompt() -> str:
 - 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
 - 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
 - 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
+- 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet
+- 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
+- 用户说"把我的租约/保单发给我""发我那个文件/那张图"→ send_document（先 list/show 拿 id）或 send_file（data 内相对路径）；文件会自动发给用户
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
 - 用户问"最新新闻/外面在发生什么/帮我查一下X" → web_search；发链接让看/总结文章 → web_read；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
 - 用户闲聊/问候 → 直接友好回复，不用调工具
@@ -293,6 +306,27 @@ def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
         return "[错误] 超时"
     except Exception as e:
         return f"[错误] {e}"
+
+
+IMG_SENTINEL = "\x01IMG:"
+DOC_SENTINEL = "\x01DOC:"
+
+
+def split_reply(reply: str) -> tuple[str, list[str], list[str]]:
+    """剥离 \\x01IMG:/\\x01DOC: 哨兵行，返回 (可见文本, [图片], [文档]) 三元组。"""
+    imgs, docs, keep = [], [], []
+    for line in (reply or "").split("\n"):
+        if line.startswith(IMG_SENTINEL):
+            p = line[len(IMG_SENTINEL):].strip()
+            if p:
+                imgs.append(p)
+        elif line.startswith(DOC_SENTINEL):
+            p = line[len(DOC_SENTINEL):].strip()
+            if p:
+                docs.append(p)
+        else:
+            keep.append(line)
+    return "\n".join(keep).strip(), imgs, docs
 
 
 # ── 工具实现 ────────────────────────────────────────────────
@@ -362,6 +396,76 @@ def _tool_list_notes(args): return _run_cli("note-list", args)
 def _tool_search_notes(args): return _run_cli("note-search", args)
 def _tool_delete_note(args): return _run_cli("note-delete", args)
 def _tool_pin_note(args): return _run_cli("note-pin", args)
+
+
+def _tool_create_worksheet(args): return _run_cli("sheet-create", args)
+def _tool_list_worksheets(args): return _run_cli("sheet-list", args)
+def _tool_show_worksheet(args): return _run_cli("sheet-show", args)
+def _tool_set_worksheet_field(args): return _run_cli("sheet-set", args)
+def _tool_unset_worksheet_field(args): return _run_cli("sheet-unset", args)
+def _tool_delete_worksheet_row(args): return _run_cli("sheet-row-delete", args)
+def _tool_rename_worksheet(args): return _run_cli("sheet-rename", args)
+def _tool_pin_worksheet(args): return _run_cli("sheet-pin", args)
+def _tool_delete_worksheet(args): return _run_cli("sheet-delete", args)
+
+
+def _tool_add_worksheet_row(args):
+    args = dict(args)
+    data = args.pop("data", None)
+    if isinstance(data, (dict, list)):
+        args["data"] = json.dumps(data, ensure_ascii=False)
+    elif data is not None:
+        args["data"] = str(data)
+    return _run_cli("sheet-row-add", args)
+
+
+def _tool_edit_worksheet_row(args):
+    args = dict(args)
+    data = args.pop("data", None)
+    if isinstance(data, (dict, list)):
+        args["data"] = json.dumps(data, ensure_ascii=False)
+    elif data is not None:
+        args["data"] = str(data)
+    return _run_cli("sheet-row-edit", args)
+
+
+def _tool_visualize_data(args):
+    args = dict(args)
+    spec = args.pop("spec", None)
+    if isinstance(spec, (dict, list)):
+        args["spec"] = json.dumps(spec, ensure_ascii=False)
+    elif spec is not None:
+        args["spec"] = str(spec)
+    return _run_cli("chart-render", args)
+
+
+def _resolve_sendable(path: str, member: str) -> str | None:
+    """送文件闸门：路径须存在、是文件、在 data_root 内，且属家庭共享或本成员目录。
+    通过 → 返回 data 相对路径；否则 None。"""
+    try:
+        p = Path(path)
+        ap = (p if p.is_absolute() else _paths.resolve_rel(str(path))).resolve()
+        root = _paths.data_root().resolve()
+        if not (ap.exists() and ap.is_file() and ap.is_relative_to(root)):
+            return None
+        allowed = [_paths.family_dir().resolve()]
+        if member:
+            allowed.append(_paths.member_dir(member).resolve())
+        if not any(ap.is_relative_to(a) for a in allowed):
+            return None
+        return _paths.to_rel(ap)
+    except (ValueError, OSError):
+        return None
+
+
+def _tool_send_document(args):
+    return _run_cli("doc-file", {"id": args.get("id")})
+
+
+def _tool_send_file(args):
+    member = args.get("member", "")
+    rel = _resolve_sendable(args.get("path", ""), member)
+    return rel if rel else "[错误] 路径不允许或文件不存在"
 
 
 def _target_member(args: dict, sender: str) -> str:
@@ -464,6 +568,20 @@ _TOOL_MAP = {
     "search_notes": _tool_search_notes,
     "delete_note": _tool_delete_note,
     "pin_note": _tool_pin_note,
+    "create_worksheet": _tool_create_worksheet,
+    "list_worksheets": _tool_list_worksheets,
+    "show_worksheet": _tool_show_worksheet,
+    "set_worksheet_field": _tool_set_worksheet_field,
+    "unset_worksheet_field": _tool_unset_worksheet_field,
+    "add_worksheet_row": _tool_add_worksheet_row,
+    "edit_worksheet_row": _tool_edit_worksheet_row,
+    "delete_worksheet_row": _tool_delete_worksheet_row,
+    "rename_worksheet": _tool_rename_worksheet,
+    "pin_worksheet": _tool_pin_worksheet,
+    "delete_worksheet": _tool_delete_worksheet,
+    "visualize_data": _tool_visualize_data,
+    "send_document": _tool_send_document,
+    "send_file": _tool_send_file,
     "add_event": _tool_add_event,
     "add_task": _tool_add_task,
     "list_schedule": _tool_list_schedule,
@@ -483,11 +601,22 @@ _MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_ta
 # 备忘工具全部强制注入 member（读写皆是 — 备忘按成员私有，LLM 不得跨成员读写）
 _NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note"}
 
+# 工作表工具同样按成员私有，读写一律强制注入 member（LLM 不得跨成员读写）
+_SHEET_TOOLS = {"create_worksheet", "list_worksheets", "show_worksheet",
+                "set_worksheet_field", "unset_worksheet_field", "add_worksheet_row",
+                "edit_worksheet_row", "delete_worksheet_row", "rename_worksheet",
+                "pin_worksheet", "delete_worksheet", "visualize_data",
+                "send_document", "send_file"}
+
+# 工具按产出附件分类：成功调用时 handle() 收集路径，尾部追加对应哨兵
+_IMAGE_TOOLS = {"visualize_data"}
+_DOC_TOOLS = {"send_document", "send_file"}
+
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
     """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。
     备忘工具（含读/删/置顶）一律强制注入，保证按成员隔离。"""
-    if tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS:
+    if tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS or tool_name in _SHEET_TOOLS:
         targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
         if member:
             targs["member"] = member
@@ -506,6 +635,7 @@ _CATS_DESC = json.dumps(_CONFIG.get("categories", {}), ensure_ascii=False)
 _DOC_TYPES = list(_CONFIG.get("doc_types") or ["other"])
 _DOC_STATUSES = ["active", "expired", "archived", "superseded"]
 _CAL_LOOKAHEAD = int((_CONFIG.get("calendar") or {}).get("lookahead_days") or 10)
+_WORKSHEET_PIN_ROW_CAP = int((_CONFIG.get("notes") or {}).get("worksheet_pin_row_cap") or 80)
 
 
 def _fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
@@ -697,6 +827,69 @@ TOOL_SCHEMAS = [
         "id": _int("备忘 id"),
         "unpin": {"type": "boolean", "description": "true=取消置顶"},
     }, ["id"]),
+    _fn("create_worksheet", "创建一张工作表，用于长期跟踪结构化信息。仅当用户明确要求"
+        "\"建个表/做个 worksheet/长期记录这些\"时才用；普通杂事用 save_note。"
+        "kind=kv 是事实清单（字段→值，如房贷利率/到期）；kind=table 是流水记录"
+        "（多行，每行动态列，如血压/体重打卡）", {
+        "title": _s("工作表名（唯一，作为后续引用的句柄）"),
+        "kind": _s("kv=事实清单 / table=流水记录", enum=["kv", "table"]),
+        "pinned": {"type": "boolean", "description": "置顶：每次对话自动带上全表内容"},
+    }, ["title", "kind"]),
+    _fn("list_worksheets", "列出本人的工作表（名称/类型/规模）", {}),
+    _fn("show_worksheet", "显示一张工作表的完整内容", {
+        "title": _s("工作表名"),
+    }, ["title"]),
+    _fn("set_worksheet_field", "在 kv 工作表上设置/覆盖一个字段", {
+        "title": _s("工作表名"),
+        "field": _s("字段名"),
+        "value": _s("字段值"),
+    }, ["title", "field", "value"]),
+    _fn("unset_worksheet_field", "从 kv 工作表删除一个字段", {
+        "title": _s("工作表名"),
+        "field": _s("字段名"),
+    }, ["title", "field"]),
+    _fn("add_worksheet_row", "向 table 工作表追加一行（列名→值，列可动态新增）", {
+        "title": _s("工作表名"),
+        "data": {"type": "object", "description": "一行数据，键=列名 值=单元格值"},
+    }, ["title", "data"]),
+    _fn("edit_worksheet_row", "覆盖 table 工作表的某一行（按行 id）", {
+        "title": _s("工作表名"),
+        "row-id": _int("行 id（见 show_worksheet 的 #号）"),
+        "data": {"type": "object", "description": "整行新数据（覆盖式）"},
+    }, ["title", "row-id", "data"]),
+    _fn("delete_worksheet_row", "删除 table 工作表的某一行（按行 id）", {
+        "title": _s("工作表名"),
+        "row-id": _int("行 id"),
+    }, ["title", "row-id"]),
+    _fn("rename_worksheet", "重命名一张工作表", {
+        "title": _s("当前名"),
+        "new-title": _s("新名"),
+    }, ["title", "new-title"]),
+    _fn("pin_worksheet", "置顶/取消置顶工作表（置顶=每次对话自动带上全表）", {
+        "title": _s("工作表名"),
+        "unpin": {"type": "boolean", "description": "true=取消置顶"},
+    }, ["title"]),
+    _fn("delete_worksheet", "删除整张工作表（含所有行）", {
+        "title": _s("工作表名"),
+    }, ["title"]),
+    _fn("visualize_data", "把工作表里的数字画成图表（折线/柱状/饼图）并发给用户。"
+        "你先从相关工作表取出对应数字（必要时先 show_worksheet），再调本工具。"
+        "用户说\"画个图/可视化/看看趋势/show me the chart\"时用", {
+        "spec": {
+            "type": "object",
+            "description": "图表规格：type(line/bar/pie), title, 可选 x_label/y_label, "
+                           "x_labels(类别/X轴数组), series(数组，每项 {name, values})。"
+                           "line/bar 可多 series；pie 只能一个 series，values 对应 x_labels",
+        },
+    }, ["spec"]),
+    _fn("send_document", "把已归档的文档原件（租约/保单/证件等）发给用户。"
+        "先用 list_documents/show_document 找到对应文档的 id", {
+        "id": _int("文档 id"),
+    }, ["id"]),
+    _fn("send_file", "把 data 目录内的一个文件发给用户（path 为 data 相对路径）。"
+        "只能发家庭共享文件或你自己的文件", {
+        "path": _s("文件的 data 相对路径"),
+    }, ["path"]),
     _fn("add_event", "添加家庭日程/活动/安排（自动同步到远程日历）", {
         "title": _s("活动标题，如 孩子游泳课"),
         "date": _s("日期 YYYY-MM-DD"),
@@ -776,6 +969,45 @@ def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
         return ""
 
 
+def _worksheets_context(member: str, db_path: str | None = None) -> str:
+    """取该成员置顶工作表，整表渲染进 system prompt（选择 B：全量注入）。
+
+    进程内直调 sheet_db。table 超 _WORKSHEET_PIN_ROW_CAP 行截断并提示。
+    任何失败返回空串 —— 工作表注入绝不能拖垮 handle()。
+    """
+    try:
+        import sheet_db
+        kw = {"db_path": db_path} if db_path else {}
+        sheets = sheet_db.pinned_sheets(member, **kw)
+        if not sheets:
+            return ""
+        blocks = []
+        for s in sheets:
+            if s is None:
+                continue
+            lines = [f"### {s['title']}（{s['kind']}）"]
+            if s["kind"] == "kv":
+                for k, v in s["kv_data"].items():
+                    lines.append(f"- {k}: {v}")
+            else:
+                rows = s["rows"]
+                shown = rows[:_WORKSHEET_PIN_ROW_CAP]
+                for row in shown:
+                    cells = "  ".join(f"{k}={v}" for k, v in row["row_data"].items())
+                    lines.append(f"- #{row['id']} {cells}")
+                if len(rows) > _WORKSHEET_PIN_ROW_CAP:
+                    lines.append(f"- …还有 {len(rows) - _WORKSHEET_PIN_ROW_CAP} 行，"
+                                 f"用 show_worksheet 看全部")
+            blocks.append("\n".join(lines))
+        if not blocks:
+            return ""
+        return (f"\n\n## 已存工作表（仅 {member} 可见，置顶项全量带上）\n"
+                + "\n\n".join(blocks))
+    except Exception:
+        _log.exception("工作表上下文注入失败（已跳过）")
+        return ""
+
+
 def _schedule_context(member: str | None = None, db_path: str | None = None,
                       clip: int = 60, max_lines: int = 15) -> str:
     """成员未来 N 天日程 + 待办，拼成 system prompt 附加块（按成员私有，分活动/待办两库）。
@@ -848,7 +1080,8 @@ class Agent:
                        f"查询类工具可用 member 参数按成员过滤。")
         msgs = [{"role": "system",
                  "content": self.system_prompt + member_note
-                 + _notes_context(member) + _schedule_context(member)}]
+                 + _notes_context(member) + _worksheets_context(member)
+                 + _schedule_context(member)}]
         user_history = self.history[user]
         msgs.extend(user_history[-self.history_size * 2:])
         msgs.append({"role": "user", "content": text})
@@ -856,6 +1089,8 @@ class Agent:
         reply = ""
         tool_log = ""  # 回复里展示的工具调用摘要（按名计数）
         tool_counts: dict[str, int] = {}
+        produced_images: list[str] = []  # 图片工具成功产出的 data 相对路径
+        produced_docs: list[str] = []     # 文档工具成功产出的 data 相对路径
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
         for _ in range(8):
@@ -881,6 +1116,11 @@ class Agent:
                 # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
                 _log.debug("工具 %s(%s) → %s", name, brief, result[:200])
+                if result and not result.startswith("[错误]"):
+                    if name in _IMAGE_TOOLS:
+                        produced_images.append(result.strip())
+                    elif name in _DOC_TOOLS:
+                        produced_docs.append(result.strip())
                 tool_counts[name] = tool_counts.get(name, 0) + 1
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
@@ -893,6 +1133,10 @@ class Agent:
             reply = "（工具已执行，但生成回复失败）" if tool_log else "抱歉，暂时出错了。"
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         self._save_history(user, text, reply)
+        for p in produced_images:
+            final += f"\n{IMG_SENTINEL}{p}"
+        for p in produced_docs:
+            final += f"\n{DOC_SENTINEL}{p}"
         return final
 
     def handle_image(self, image_path: str, user: str = "default", member: str = "") -> str:
