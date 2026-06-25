@@ -302,6 +302,22 @@ def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
         return f"[错误] {e}"
 
 
+IMG_SENTINEL = "\x01IMG:"
+
+
+def split_reply(reply: str) -> tuple[str, list[str]]:
+    """从回复中剥离 \\x01IMG: 哨兵行，返回 (可见文本, [图片 data 相对路径])。"""
+    imgs, keep = [], []
+    for line in (reply or "").split("\n"):
+        if line.startswith(IMG_SENTINEL):
+            p = line[len(IMG_SENTINEL):].strip()
+            if p:
+                imgs.append(p)
+        else:
+            keep.append(line)
+    return "\n".join(keep).strip(), imgs
+
+
 # ── 工具实现 ────────────────────────────────────────────────
 
 def _tool_add_transaction(args): return _run_cli("add", args)
@@ -997,6 +1013,7 @@ class Agent:
         reply = ""
         tool_log = ""  # 回复里展示的工具调用摘要（按名计数）
         tool_counts: dict[str, int] = {}
+        produced_images: list[str] = []  # visualize_data 成功产出的图片 data 相对路径
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
         for _ in range(8):
@@ -1022,6 +1039,8 @@ class Agent:
                 # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
                 _log.debug("工具 %s(%s) → %s", name, brief, result[:200])
+                if name == "visualize_data" and result and not result.startswith("[错误]"):
+                    produced_images.append(result.strip())
                 tool_counts[name] = tool_counts.get(name, 0) + 1
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
@@ -1034,6 +1053,8 @@ class Agent:
             reply = "（工具已执行，但生成回复失败）" if tool_log else "抱歉，暂时出错了。"
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         self._save_history(user, text, reply)
+        for p in produced_images:
+            final += f"\n{IMG_SENTINEL}{p}"
         return final
 
     def handle_image(self, image_path: str, user: str = "default", member: str = "") -> str:
