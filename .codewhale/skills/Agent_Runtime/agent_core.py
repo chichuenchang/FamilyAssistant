@@ -135,6 +135,7 @@ _NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-p
 _SHEET_COMMANDS = {"sheet-create", "sheet-list", "sheet-show", "sheet-set",
                    "sheet-unset", "sheet-row-add", "sheet-row-edit",
                    "sheet-row-delete", "sheet-rename", "sheet-pin", "sheet-delete"}
+_CHART_COMMANDS = {"chart-render"}
 _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
                  "cal-sync", "cal-status"}
 _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
@@ -142,6 +143,7 @@ _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
 # 备忘/日程/联网命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
 ALLOWED_COMMANDS |= _SHEET_COMMANDS
+ALLOWED_COMMANDS |= _CHART_COMMANDS
 ALLOWED_COMMANDS |= _CAL_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
 
@@ -152,7 +154,7 @@ def _cli_path(cmd: str) -> Path:
         skill = "Document_Keeper"
     elif cmd in _BACKUP_COMMANDS:
         skill = "Remote_Backup"
-    elif cmd in _NOTE_COMMANDS or cmd in _SHEET_COMMANDS:
+    elif cmd in _NOTE_COMMANDS or cmd in _SHEET_COMMANDS or cmd in _CHART_COMMANDS:
         skill = "Note_Keeper"
     elif cmd in _CAL_COMMANDS:
         skill = "Calendar_Keeper"
@@ -259,6 +261,7 @@ def _build_system_prompt() -> str:
 - 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
 - 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
 - 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet
+- 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
 - 用户问"最新新闻/外面在发生什么/帮我查一下X" → web_search；发链接让看/总结文章 → web_read；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
 - 用户闲聊/问候 → 直接友好回复，不用调工具
@@ -418,6 +421,16 @@ def _tool_edit_worksheet_row(args):
     return _run_cli("sheet-row-edit", args)
 
 
+def _tool_visualize_data(args):
+    args = dict(args)
+    spec = args.pop("spec", None)
+    if isinstance(spec, (dict, list)):
+        args["spec"] = json.dumps(spec, ensure_ascii=False)
+    elif spec is not None:
+        args["spec"] = str(spec)
+    return _run_cli("chart-render", args)
+
+
 def _target_member(args: dict, sender: str) -> str:
     """日程/待办的目标成员：显式 for-member（须已登记）覆盖，否则归发送者。
 
@@ -529,6 +542,7 @@ _TOOL_MAP = {
     "rename_worksheet": _tool_rename_worksheet,
     "pin_worksheet": _tool_pin_worksheet,
     "delete_worksheet": _tool_delete_worksheet,
+    "visualize_data": _tool_visualize_data,
     "add_event": _tool_add_event,
     "add_task": _tool_add_task,
     "list_schedule": _tool_list_schedule,
@@ -552,7 +566,7 @@ _NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_no
 _SHEET_TOOLS = {"create_worksheet", "list_worksheets", "show_worksheet",
                 "set_worksheet_field", "unset_worksheet_field", "add_worksheet_row",
                 "edit_worksheet_row", "delete_worksheet_row", "rename_worksheet",
-                "pin_worksheet", "delete_worksheet"}
+                "pin_worksheet", "delete_worksheet", "visualize_data"}
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
@@ -814,6 +828,16 @@ TOOL_SCHEMAS = [
     _fn("delete_worksheet", "删除整张工作表（含所有行）", {
         "title": _s("工作表名"),
     }, ["title"]),
+    _fn("visualize_data", "把工作表里的数字画成图表（折线/柱状/饼图）并发给用户。"
+        "你先从相关工作表取出对应数字（必要时先 show_worksheet），再调本工具。"
+        "用户说\"画个图/可视化/看看趋势/show me the chart\"时用", {
+        "spec": {
+            "type": "object",
+            "description": "图表规格：type(line/bar/pie), title, 可选 x_label/y_label, "
+                           "x_labels(类别/X轴数组), series(数组，每项 {name, values})。"
+                           "line/bar 可多 series；pie 只能一个 series，values 对应 x_labels",
+        },
+    }, ["spec"]),
     _fn("add_event", "添加家庭日程/活动/安排（自动同步到远程日历）", {
         "title": _s("活动标题，如 孩子游泳课"),
         "date": _s("日期 YYYY-MM-DD"),
