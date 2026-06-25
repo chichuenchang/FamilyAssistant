@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 
 import note_db
 import sheet_db
+import chart
 import paths as _paths
 
 # 测试钩子：覆盖数据库路径，避免测试碰真实账本
@@ -267,6 +268,27 @@ def cmd_sheet_delete(args):
         sys.exit(1)
 
 
+def _chart_retention_days() -> int:
+    try:
+        cfg = json.loads((Path(__file__).resolve().parents[3] / "config.json")
+                         .read_text(encoding="utf-8"))
+        return int((cfg.get("notes") or {}).get("chart_retention_days") or 7)
+    except Exception:
+        return 7
+
+
+def cmd_chart_render(args):
+    spec = json.loads(args.spec)   # JSONDecodeError -> ValueError -> main() returns 1
+    try:
+        rel = chart.render_chart(spec, member=args.member,
+                                 retention_days=_chart_retention_days())
+    except RuntimeError as e:      # matplotlib 未安装
+        print(f"[错误] {e}（pip install matplotlib）", file=sys.stderr)
+        sys.exit(1)
+    _mark_backup_dirty()           # harmless; charts excluded from backup anyway
+    print(rel)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Family Assistant — Note Keeper CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -348,6 +370,10 @@ def main() -> int:
     p.add_argument("--member", required=True)
     p.add_argument("--title", required=True)
 
+    p = sub.add_parser("chart-render", help="渲染工作表数据为图表 PNG")
+    p.add_argument("--member", required=True)
+    p.add_argument("--spec", required=True, help="JSON 图表规格")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -367,6 +393,7 @@ def main() -> int:
         "sheet-rename": cmd_sheet_rename,
         "sheet-pin": cmd_sheet_pin,
         "sheet-delete": cmd_sheet_delete,
+        "chart-render": cmd_chart_render,
     }
     try:
         dispatch[args.command](args)
