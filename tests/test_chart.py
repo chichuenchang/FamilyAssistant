@@ -128,15 +128,15 @@ def test_cli_chart_bad_json(data_root):
 
 def test_split_reply():
     import agent_core as ac
-    text, imgs = ac.split_reply("hello\n" + ac.IMG_SENTINEL + "Family/charts/a.png")
-    assert text == "hello" and imgs == ["Family/charts/a.png"]
+    text, imgs, docs = ac.split_reply("hello\n" + ac.IMG_SENTINEL + "Family/charts/a.png")
+    assert text == "hello" and imgs == ["Family/charts/a.png"] and docs == []
     # multiple
     r = "line1\nline2\n" + ac.IMG_SENTINEL + "a.png\n" + ac.IMG_SENTINEL + "b.png"
-    text, imgs = ac.split_reply(r)
-    assert text == "line1\nline2" and imgs == ["a.png", "b.png"]
+    text, imgs, docs = ac.split_reply(r)
+    assert text == "line1\nline2" and imgs == ["a.png", "b.png"] and docs == []
     # no image — passthrough
-    text, imgs = ac.split_reply("just text")
-    assert text == "just text" and imgs == []
+    text, imgs, docs = ac.split_reply("just text")
+    assert text == "just text" and imgs == [] and docs == []
 
 
 # ── Task 6: backup excludes charts/ ─────────────────────────
