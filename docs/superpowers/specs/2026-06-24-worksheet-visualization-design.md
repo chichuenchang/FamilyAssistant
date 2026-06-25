@@ -36,7 +36,8 @@ over WeChat / Telegram.
 - New CLI subcommand `chart-render` in Note_Keeper `cli.py`.
 - **matplotlib** added as a dependency (Agg backend, no display). Imported
   **lazily inside `chart.py`** so the rest of Note_Keeper still imports without it.
-  Missing → CLI exits 1 with `[错误] 未安装 matplotlib（pip install matplotlib）`;
+  Missing → `render_chart` raises `RuntimeError("matplotlib 未安装")`; CLI exits 1
+  with `[错误] matplotlib 未安装（pip install matplotlib）`;
   the agent tool relays that message (same pattern as `yt-dlp` in Web_Reach).
 - CJK font fallback configured (`Microsoft YaHei`, `SimHei`, `Arial Unicode MS`,
   `DejaVu Sans`; `axes.unicode_minus=False`) so Chinese titles/labels don't tofu.
@@ -76,7 +77,7 @@ numbers, and passes a full spec object:
 ## chart.py API
 
 ```python
-render_chart(spec: dict, member: str, db_path=None) -> str
+render_chart(spec: dict, member: str, retention_days: int = 7) -> str
     # validate, prune old charts, render PNG, return data-relative path.
     # raises ValueError on bad spec; raises RuntimeError("matplotlib 未安装") if import fails.
 
