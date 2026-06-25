@@ -166,6 +166,14 @@ def cmd_doc_show(args):
         print(f"OCR 摘录: {excerpt}{'…' if len(d['ocr_text']) > 300 else ''}")
 
 
+def cmd_doc_file(args):
+    d = doc_db.get_document(args.id, db_path=_DB_OVERRIDE)
+    if d is None or not d.get("file_path"):
+        print("[错误] 文档无文件", file=sys.stderr)
+        sys.exit(1)
+    print(d["file_path"])
+
+
 def cmd_doc_due(args):
     rows = doc_db.due_documents(days=args.days, db_path=_DB_OVERRIDE)
     if not rows:
@@ -235,6 +243,9 @@ def main():
     p = sub.add_parser("doc-show", help="查看文档详情")
     p.add_argument("--id", type=int, required=True)
 
+    p = sub.add_parser("doc-file", help="打印文档原件的 data 相对路径（用于发送）")
+    p.add_argument("--id", type=int, required=True)
+
     p = sub.add_parser("doc-due", help="即将到期/已过期的文档")
     p.add_argument("--days", type=int, help="查看几天内到期（默认按各文档提前量）")
 
@@ -266,6 +277,7 @@ def main():
         "doc-add": cmd_doc_add,
         "doc-list": cmd_doc_list,
         "doc-show": cmd_doc_show,
+        "doc-file": cmd_doc_file,
         "doc-due": cmd_doc_due,
         "doc-update": cmd_doc_update,
         "doc-ack": cmd_doc_ack,
