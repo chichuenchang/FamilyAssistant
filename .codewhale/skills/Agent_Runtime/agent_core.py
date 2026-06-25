@@ -530,17 +530,19 @@ _MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_ta
                        "add_document", "add_event", "add_task"}
 
 # 备忘工具全部强制注入 member（读写皆是 — 备忘按成员私有，LLM 不得跨成员读写）
-_NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note",
-               "create_worksheet", "list_worksheets", "show_worksheet",
-               "set_worksheet_field", "unset_worksheet_field", "add_worksheet_row",
-               "edit_worksheet_row", "delete_worksheet_row", "rename_worksheet",
-               "pin_worksheet", "delete_worksheet"}
+_NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note"}
+
+# 工作表工具同样按成员私有，读写一律强制注入 member（LLM 不得跨成员读写）
+_SHEET_TOOLS = {"create_worksheet", "list_worksheets", "show_worksheet",
+                "set_worksheet_field", "unset_worksheet_field", "add_worksheet_row",
+                "edit_worksheet_row", "delete_worksheet_row", "rename_worksheet",
+                "pin_worksheet", "delete_worksheet"}
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
     """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。
     备忘工具（含读/删/置顶）一律强制注入，保证按成员隔离。"""
-    if tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS:
+    if tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS or tool_name in _SHEET_TOOLS:
         targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
         if member:
             targs["member"] = member
