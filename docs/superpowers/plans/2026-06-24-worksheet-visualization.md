@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- matplotlib imported **lazily inside `chart.py`**; ImportError → `RuntimeError("matplotlib 未安装")`; CLI maps that to exit 1 + `[错误] 未安装 matplotlib（pip install matplotlib）`.
+- matplotlib imported **lazily inside `chart.py`**; ImportError → `RuntimeError("matplotlib 未安装")`; CLI maps that to exit 1 + `[错误] matplotlib 未安装（pip install matplotlib）`.
 - Use Agg backend: `import matplotlib; matplotlib.use("Agg")` before `pyplot`.
 - CJK fonts: set `matplotlib.rcParams["font.sans-serif"] = ["Microsoft YaHei","SimHei","Arial Unicode MS","DejaVu Sans"]` and `rcParams["axes.unicode_minus"] = False`.
 - Charts dir: `paths.member_dir(member) / "charts"` (NOT a `_DOMAINS` value — do not use `member_store_dir`). Return data-relative path via `paths.to_rel`.

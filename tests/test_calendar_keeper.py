@@ -972,6 +972,15 @@ class TestAgentWiring:
         out2 = agent_core._apply_member("add_task", {"title": "y"}, "MemberA")
         assert out2["member"] == "MemberA"
 
+    def test_member_forced_on_read_and_mutate_tools(self):
+        # 回归：这五个工具历史上不在任何强制集 → member="" → cal-done 命中空库、
+        # cal-delete/cal-list 抛 "需要 --member"，每次都失效。必须强制注入发送者。
+        import agent_core
+        for tool in ("complete_task", "remove_schedule_item", "list_schedule",
+                     "sync_calendar", "calendar_status"):
+            out = agent_core._apply_member(tool, {"member": "假冒", "id": 1}, "MemberA")
+            assert out.get("member") == "MemberA", tool
+
     def test_schedule_context_formats_and_empty(self, cal_db_path):
         import agent_core
         assert agent_core._schedule_context(db_path=cal_db_path) == ""
