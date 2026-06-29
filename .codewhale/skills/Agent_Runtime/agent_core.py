@@ -140,6 +140,7 @@ _DOC_FILE_COMMANDS = {"doc-file"}
 _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
                  "cal-sync", "cal-status"}
 _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
+_ANYSEARCH_COMMANDS = {"any-search", "any-extract", "any-subdomains"}
 
 # 备忘/日程/联网命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
@@ -148,6 +149,7 @@ ALLOWED_COMMANDS |= _CHART_COMMANDS
 ALLOWED_COMMANDS |= _DOC_FILE_COMMANDS
 ALLOWED_COMMANDS |= _CAL_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
+ALLOWED_COMMANDS |= _ANYSEARCH_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
@@ -162,6 +164,8 @@ def _cli_path(cmd: str) -> Path:
         skill = "Calendar_Keeper"
     elif cmd in _REACH_COMMANDS:
         skill = "Web_Reach"
+    elif cmd in _ANYSEARCH_COMMANDS:
+        skill = "Any_Search"
     else:
         skill = "Expense_Tracker"
     return ROOT / ".codewhale" / "skills" / skill / "cli.py"
@@ -266,7 +270,7 @@ def _build_system_prompt() -> str:
 - 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
 - 用户说"把我的租约/保单发给我""发我那个文件/那张图"→ send_document（先 list/show 拿 id）或 send_file（data 内相对路径）；文件会自动发给用户
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
-- 用户问"最新新闻/外面在发生什么/帮我查一下X" → web_search；发链接让看/总结文章 → web_read；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
+- 用户问"最新新闻/外面在发生什么/帮我查一下X" → 优先 anysearch_search（更准，可选 domain 垂直搜索：finance/health/academic/travel/code 等，先 anysearch_subdomains 发现子域）；web_search 为备选。发链接让看/总结文章 → anysearch_extract（备选 web_read）；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
 - 用户闲聊/问候 → 直接友好回复，不用调工具
 - 需要精确信息时（金额、日期）才调工具，闲聊不调
 - 工具执行后会返回结果，你基于结果用自然语言回复
@@ -515,6 +519,9 @@ def _tool_calendar_status(args): return _run_cli("cal-status", args)
 def _tool_web_search(args): return _run_cli("web-search", args)
 def _tool_web_read(args): return _run_cli("web-read", args)
 def _tool_youtube_summarize(args): return _run_cli("yt-summary", args)
+def _tool_anysearch_search(args): return _run_cli("any-search", args)
+def _tool_anysearch_extract(args): return _run_cli("any-extract", args)
+def _tool_anysearch_subdomains(args): return _run_cli("any-subdomains", args)
 
 def _tool_ocr_image(args):
     path = args.get("path", "")
@@ -592,6 +599,9 @@ _TOOL_MAP = {
     "web_search": _tool_web_search,
     "web_read": _tool_web_read,
     "youtube_summarize": _tool_youtube_summarize,
+    "anysearch_search": _tool_anysearch_search,
+    "anysearch_extract": _tool_anysearch_extract,
+    "anysearch_subdomains": _tool_anysearch_subdomains,
 }
 
 # 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
@@ -937,6 +947,27 @@ TOOL_SCHEMAS = [
         "返回字幕全文（无字幕则返回标题+简介），你据此用中文总结视频内容", {
         "url": _s("YouTube 视频 URL"),
     }, ["url"]),
+    _fn("anysearch_search", "高质量实时联网搜索（AnySearch）。比 web_search 更准，"
+        "查最新资讯/事实/股价/学术/健康等首选。需要垂直领域结构化结果时（finance/health/"
+        "academic/travel/code 等），先用 anysearch_subdomains 拿到 sub_domain 再传 domain/sub_domain。"
+        "返回结果原文，你据此用中文总结报告", {
+        "query": _s("搜索关键词/问题"),
+        "domain": _s("垂直领域（可选）", enum=[
+            "general", "resource", "social_media", "finance", "academic", "legal",
+            "health", "business", "security", "ip", "code", "energy",
+            "environment", "agriculture", "travel", "film", "gaming"]),
+        "sub_domain": _s("子域路由键（如 finance.quote），垂直搜索时配 domain；先用 anysearch_subdomains 发现"),
+        "sub_domain_params": _s("子域参数，key=value,key2=value2 或 JSON（schema 见 anysearch_subdomains 输出）"),
+        "max_results": _int("返回结果数 1-10（默认 10）"),
+    }, ["query"]),
+    _fn("anysearch_extract", "抓取并提取一个网页链接的全文（AnySearch，markdown）。"
+        "用户发链接让看/总结、或搜索摘要不够需读全文时用。返回正文，你据此总结", {
+        "url": _s("网页 URL"),
+    }, ["url"]),
+    _fn("anysearch_subdomains", "查某垂直领域的可用子域及参数 schema（垂直 anysearch_search 前的发现步骤）。"
+        "返回 domain/sub_domain/query_format/params_schema 表", {
+        "domains": _s("单个或逗号分隔的多个领域，如 finance 或 finance,health"),
+    }, ["domains"]),
 ]
 
 

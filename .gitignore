@@ -21,6 +21,9 @@ __pycache__/
 **/Calendar_Keeper/*.pickle
 client_secret*.json
 
+# AnySearch API key（仅环境变量或 gitignore 的 .env，绝不入库）
+**/Any_Search/.env
+
 # IDE
 .vscode/
 .idea/
