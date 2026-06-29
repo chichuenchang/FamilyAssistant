@@ -174,7 +174,8 @@ scores"）。Agent 先从相关工作表取出对应数字（必要时先 show_w
   `notes.chart_retention_days`（config，默认 7 天）清理旧图（prune-on-render）。
 - **投递**：`agent.handle()` 仍返回字符串；成功渲染时代码在回复尾部追加哨兵行
   `\x01IMG:<data相对路径>`（非 LLM 拼接）。`agent_core.split_reply(reply)` 拆出
-  `(文本, [路径])`；各传输层（微信 `reply_image` / Telegram `send_photo` / 测试模式打印）
+  三元组 `(文本, [图片路径], [文档路径])`（文档/文件管线复用同一拆分）；各传输层（微信
+  `reply_image` / Telegram `send_photo` / 测试模式打印）
   先发图再发文字。路径解析仅限 `data_root` 内、文件存在才发。
 
 CLI：

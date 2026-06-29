@@ -116,12 +116,13 @@ data-relative via `paths.to_rel`; transports resolve back with `paths.resolve_re
 
 ```python
 IMG_SENTINEL = "\x01IMG:"
-def split_reply(reply: str) -> tuple[str, list[str]]:
-    # returns (visible_text_without_sentinels, [rel_path, ...])
+DOC_SENTINEL = "\x01DOC:"   # 文档/文件管线后续并入，复用同一拆分（见 send-files 设计）
+def split_reply(reply: str) -> tuple[str, list[str], list[str]]:
+    # returns (visible_text_without_sentinels, [img_rel, ...], [doc_rel, ...])
 ```
 
 Transports call `split_reply`, resolve each rel path to absolute via
-`paths.from_rel` / `data_root`, send images first, then the text:
+`paths.resolve_rel` / `data_root`, send images first, then the text:
 
 - **WeChat** (`wechat_ilink.py`): `msg.reply_image(abs_path)` per image, then
   `msg.reply_text(text)` if text non-empty. Applies in `handle_text` and
