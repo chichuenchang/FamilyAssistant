@@ -1,4 +1,5 @@
-# tests/conftest.py — pytest fixtures for Expense_Tracker skill tests.
+# tests/conftest.py — pytest fixtures + skill sys.path for the whole suite
+# (expense/doc/note/cal/backup/ocr/webreach/anysearch/agent), not just Expense_Tracker.
 import sys
 from pathlib import Path
 
