@@ -99,7 +99,10 @@ def _save_json(path: Path, obj: dict) -> None:
 
 def _excluded(rel: str) -> bool:
     parts = rel.split("/")
-    if any(seg in _HARD_EXCLUDE_DIRS for seg in parts[:-1]):
+    dirs = parts[:-1]
+    # 图表目录可再生 → 排除；但 documents/ 下即便用户把 doc_type 命名为 "charts"
+    # 也是不可再生原件，必须留备份（charts 段匹配不带锚点，故显式放行 documents/）。
+    if "documents" not in dirs and any(seg in _HARD_EXCLUDE_DIRS for seg in dirs):
         return True
     name = parts[-1]
     if name in _HARD_EXCLUDE_NAMES:
