@@ -268,15 +268,15 @@ def _build_system_prompt() -> str:
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
-- 用户说"查账""这个月花了多少"→ 调 list_transactions 或 get_summary
+- 用户说"查账""这个月花了多少"→ list_transactions 或 get_summary；要某月汇总→get_monthly；记错要删→delete_transaction
 - 用户说"存了定期""买了理财"→ add_deposit；"我有哪些定期"→ list_deposits
 - 用户说"报税""今年报了多少税"→ add_tax / list_tax
 - 用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）
 - 用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）
 - 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
 - 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
-- 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
-- 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet
+- 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes；删某条→delete_note；置顶/取消置顶→pin_note
+- 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet；列我所有表→list_worksheets；删字段→unset_worksheet_field、删行→delete_worksheet_row、改表名→rename_worksheet、置顶表→pin_worksheet、删整表→delete_worksheet
 - 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
 - 用户说"把我的租约/保单发给我""发我那个文件/那张图"→ send_document（先 list/show 拿 id）或 send_file（data 内相对路径）；文件会自动发给用户
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
