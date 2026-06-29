@@ -398,7 +398,9 @@ def main() -> int:
     try:
         dispatch[args.command](args)
     except ValueError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        # 用 [错误] 前缀（与各 skill 统一）：agent_core 收集器据此判失败，
+        # 否则失败的 visualize_data 会被当成功路径误收为 \x01IMG: 哨兵。
+        print(f"[错误] {e}", file=sys.stderr)
         return 1
     return 0
 
