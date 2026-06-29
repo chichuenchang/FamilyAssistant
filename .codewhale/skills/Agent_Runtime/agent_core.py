@@ -142,12 +142,22 @@ _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
 _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
 _ANYSEARCH_COMMANDS = {"any-search", "any-extract", "any-subdomains"}
 
-# 备忘/日程/联网命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
+# 文档/备份"管理类"里 Agent 真正会用的子集（破坏性的 doc-remove / backup-restore /
+# backup-reorg 仅限本机，永不进 Agent 白名单）。
+_DOC_AGENT_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
+                       "doc-update", "doc-ack"}
+_BACKUP_AGENT_COMMANDS = {"backup-now", "backup-status", "backup-verify"}
+
+# 备忘/工作表/文档/日程/备份/联网命令始终允许（Agent 核心能力，不随 wechat 白名单
+# 配置开关）。否则 config.json 缺失/损坏 → _CONFIG={} → 这些工具非对称失效（返回
+# "命令不允许"），而 schema 与 system prompt 仍无条件暴露它们。
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
 ALLOWED_COMMANDS |= _SHEET_COMMANDS
 ALLOWED_COMMANDS |= _CHART_COMMANDS
 ALLOWED_COMMANDS |= _DOC_FILE_COMMANDS
+ALLOWED_COMMANDS |= _DOC_AGENT_COMMANDS
 ALLOWED_COMMANDS |= _CAL_COMMANDS
+ALLOWED_COMMANDS |= _BACKUP_AGENT_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
 ALLOWED_COMMANDS |= _ANYSEARCH_COMMANDS
 
@@ -258,15 +268,15 @@ def _build_system_prompt() -> str:
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
-- 用户说"查账""这个月花了多少"→ 调 list_transactions 或 get_summary
+- 用户说"查账""这个月花了多少"→ list_transactions 或 get_summary；要某月汇总→get_monthly；记错要删→delete_transaction
 - 用户说"存了定期""买了理财"→ add_deposit；"我有哪些定期"→ list_deposits
 - 用户说"报税""今年报了多少税"→ add_tax / list_tax
 - 用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）
 - 用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）
 - 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
 - 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
-- 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes
-- 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet
+- 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes；删某条→delete_note；置顶/取消置顶→pin_note
+- 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet；列我所有表→list_worksheets；删字段→unset_worksheet_field、删行→delete_worksheet_row、改表名→rename_worksheet、置顶表→pin_worksheet、删整表→delete_worksheet
 - 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
 - 用户说"把我的租约/保单发给我""发我那个文件/那张图"→ send_document（先 list/show 拿 id）或 send_file（data 内相对路径）；文件会自动发给用户
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
@@ -618,6 +628,12 @@ _SHEET_TOOLS = {"create_worksheet", "list_worksheets", "show_worksheet",
                 "pin_worksheet", "delete_worksheet", "visualize_data",
                 "send_document", "send_file"}
 
+# 日程工具按成员私有：完成/取消/查询/同步/状态一律强制注入发送者 member。
+# 不注入则 CLI member="" → 命中空库（cal-done）或 _member_stores 抛错（cal-delete/cal-list），
+# 工具形同失效；且供 member 即读他人私有日历。统一强制锁到发送者，与备忘/工作表一致。
+_CAL_MEMBER_TOOLS = {"complete_task", "remove_schedule_item", "list_schedule",
+                     "sync_calendar", "calendar_status"}
+
 # 工具按产出附件分类：成功调用时 handle() 收集路径，尾部追加对应哨兵
 _IMAGE_TOOLS = {"visualize_data"}
 _DOC_TOOLS = {"send_document", "send_file"}
@@ -625,8 +641,9 @@ _DOC_TOOLS = {"send_document", "send_file"}
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
     """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。
-    备忘工具（含读/删/置顶）一律强制注入，保证按成员隔离。"""
-    if tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS or tool_name in _SHEET_TOOLS:
+    备忘/工作表/日程工具（含读/删/完成/取消）一律强制注入，保证按成员隔离。"""
+    if (tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS
+            or tool_name in _SHEET_TOOLS or tool_name in _CAL_MEMBER_TOOLS):
         targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
         if member:
             targs["member"] = member
@@ -925,7 +942,6 @@ TOOL_SCHEMAS = [
     _fn("list_schedule", "查询未来日程与开放待办（用户问\"接下来有什么安排\"\"待办清单\"）", {
         "days": _int(f"窗口天数（默认 {_CAL_LOOKAHEAD}）"),
         "kind": _s("只看活动或待办", enum=["event", "task"]),
-        "member": _s("按创建成员过滤"),
         "all": {"type": "boolean", "description": "包含已完成/已取消"},
     }),
     _fn("complete_task", "标记一条待办完成（同步到远程）", {

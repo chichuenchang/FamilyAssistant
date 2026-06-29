@@ -52,10 +52,11 @@
   按 provider 契约可换任意日历服务
 - 家人在手机日历上的改动会同步回来：远端是日程的事实源（改名/删除/完成都对账）
 
-### 🌐 联网资讯（Web Reach）
+### 🌐 联网资讯（Web Reach / Any Search）
 - "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
 - 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结
-- **只读公开信息，无需 API key**（搜索走 DuckDuckGo + Jina 阅读器；YouTube 需 `yt-dlp`，缺失时优雅降级）
+- **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取，需环境变量 `ANYSEARCH_API_KEY`；问最新资讯时优先，未配置则回退下面的 Web Reach
+- **Web Reach 只读公开信息，无需 API key**（搜索走 DuckDuckGo + Jina 阅读器；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
 
 ### ☁️ 云盘备份（Remote Backup，可选）
 - 用户数据（账本/票据/文档/配置）单向镜像到云盘，写入后防抖增量同步，本地永远是事实源
@@ -204,10 +205,12 @@ FamilyAssistant/
 │       │   ├── doc_db.py         ← SQLite 数据层
 │       │   ├── cli.py            ← 文档 CLI 入口
 │       │   └── reminder.py       ← 每日到期提醒
-│       ├── Note_Keeper/      ← 个人备忘（按成员私有）
+│       ├── Note_Keeper/      ← 个人备忘 + 工作表 + 图表（按成员私有）
 │       │   ├── SKILL.md
-│       │   ├── note_db.py        ← SQLite 数据层
-│       │   └── cli.py            ← 备忘 CLI 入口
+│       │   ├── note_db.py        ← 备忘 SQLite 数据层
+│       │   ├── sheet_db.py       ← 工作表数据层（kv 事实清单 / table 流水）
+│       │   ├── chart.py          ← 离线图表渲染（matplotlib Agg，可再生不入备份）
+│       │   └── cli.py            ← 备忘 / 工作表 / 图表 CLI 入口
 │       ├── Remote_Backup/    ← 用户数据云盘镜像（可选）
 │       │   ├── SKILL.md
 │       │   ├── backup_sync.py    ← 同步引擎
@@ -225,6 +228,10 @@ FamilyAssistant/
 │       │   ├── SKILL.md
 │       │   ├── reach.py           ← 搜索/抓取/YouTube 纯逻辑（可注入 fetcher）
 │       │   └── cli.py             ← CLI 入口 + 真实 HTTP 适配器
+│       ├── Any_Search/       ← 高质量实时联网搜索（垂直领域 + 全文抽取）
+│       │   ├── .env.example       ← ANYSEARCH_API_KEY 模板
+│       │   ├── anysearch.py       ← 搜索/抽取/子域 纯逻辑（可注入 caller）
+│       │   └── cli.py             ← CLI 入口 + AnySearch API 适配器
 │       └── Agent_Runtime/    ← Agent 大脑 + 远程频道传输层
 │           ├── SKILL.md
 │           ├── agent_core.py     ← 频道无关 Agent 核心（全量上下文）
