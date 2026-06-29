@@ -142,12 +142,22 @@ _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
 _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
 _ANYSEARCH_COMMANDS = {"any-search", "any-extract", "any-subdomains"}
 
-# 备忘/日程/联网命令始终允许（Agent 核心能力，不随 wechat 白名单配置开关）
+# 文档/备份"管理类"里 Agent 真正会用的子集（破坏性的 doc-remove / backup-restore /
+# backup-reorg 仅限本机，永不进 Agent 白名单）。
+_DOC_AGENT_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
+                       "doc-update", "doc-ack"}
+_BACKUP_AGENT_COMMANDS = {"backup-now", "backup-status", "backup-verify"}
+
+# 备忘/工作表/文档/日程/备份/联网命令始终允许（Agent 核心能力，不随 wechat 白名单
+# 配置开关）。否则 config.json 缺失/损坏 → _CONFIG={} → 这些工具非对称失效（返回
+# "命令不允许"），而 schema 与 system prompt 仍无条件暴露它们。
 ALLOWED_COMMANDS |= _NOTE_COMMANDS
 ALLOWED_COMMANDS |= _SHEET_COMMANDS
 ALLOWED_COMMANDS |= _CHART_COMMANDS
 ALLOWED_COMMANDS |= _DOC_FILE_COMMANDS
+ALLOWED_COMMANDS |= _DOC_AGENT_COMMANDS
 ALLOWED_COMMANDS |= _CAL_COMMANDS
+ALLOWED_COMMANDS |= _BACKUP_AGENT_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
 ALLOWED_COMMANDS |= _ANYSEARCH_COMMANDS
 
