@@ -49,6 +49,20 @@ _FALLBACK_CFG = {
 
 _DOMAIN_KIND = {"schedule": "event", "tasks": "task"}
 
+# 校验/对账的新鲜保护窗：updated_at 距今不足此秒数的行免判。
+# Google list API 非严格读写一致——刚推送的行可能短暂缺席远端列表，
+# 无此保护会被误判"远端缺失"甚至被对账环节误取消。
+_VERIFY_FRESH_SECONDS = 60
+
+
+def _is_fresh(updated_at: str, now: datetime) -> bool:
+    """行的 updated_at 在保护窗内 → True（解析失败按不新鲜处理）。"""
+    try:
+        return (now - datetime.fromisoformat(updated_at)).total_seconds() \
+            < _VERIFY_FRESH_SECONDS
+    except (TypeError, ValueError):
+        return False
+
 
 def _load_cfg() -> dict:
     # CALENDAR_CONFIG 环境变量可指向替代 config.json（测试隔离用）
@@ -158,8 +172,14 @@ def push_pending(db_path=None, prov=None, kind: str | None = None):
 
 # ── 拉取 + 对账（后拉），按域分半 ────────────────────────────
 
-def _sync_events(db_path, p, today: date, horizon: date) -> tuple[int, list[str]]:
-    """活动半：拉窗口活动，按 uid 合并（remote wins）；窗口内远端消失 → 本地取消。"""
+def _sync_events(db_path, p, today: date, horizon: date,
+                 now: datetime | None = None) -> tuple[int, list[str]]:
+    """活动半：拉窗口活动，按 uid 合并（remote wins）；窗口内远端消失 → 本地取消。
+
+    新鲜保护：updated_at 在 _VERIFY_FRESH_SECONDS 内的行不参与"远端消失→取消"
+    对账（Google list 读写延迟会让刚推送的行短暂缺席）。
+    """
+    now = now or datetime.now()
     errors: list[str] = []
     n = 0
     try:
@@ -180,7 +200,8 @@ def _sync_events(db_path, p, today: date, horizon: date) -> tuple[int, list[str]
         t_iso, h_iso = today.isoformat(), horizon.isoformat()
         for row in cal_db.synced_active("event", db_path=db_path):
             d = row["start_at"][:10]
-            if d and t_iso <= d <= h_iso and row["uid"] not in seen:
+            if d and t_iso <= d <= h_iso and row["uid"] not in seen \
+                    and not _is_fresh(row["updated_at"], now):
                 cal_db.set_status(row["id"], "cancelled", from_remote=True,
                                   db_path=db_path)
     except Exception as e:
@@ -188,8 +209,12 @@ def _sync_events(db_path, p, today: date, horizon: date) -> tuple[int, list[str]
     return n, errors
 
 
-def _sync_tasks(db_path, p) -> tuple[int, list[str]]:
-    """待办半：全量拉，按 uid 合并；远端完成 → 本地完成，远端消失 → 本地取消。"""
+def _sync_tasks(db_path, p, now: datetime | None = None) -> tuple[int, list[str]]:
+    """待办半：全量拉，按 uid 合并；远端完成 → 本地完成，远端消失 → 本地取消。
+
+    新鲜保护同 _sync_events：刚推送的行免于"远端消失→取消"误判。
+    """
+    now = now or datetime.now()
     errors: list[str] = []
     n = 0
     try:
@@ -203,7 +228,7 @@ def _sync_tasks(db_path, p) -> tuple[int, list[str]]:
             seen.add(t["uid"])
         n = len(seen)
         for row in cal_db.synced_active("task", db_path=db_path):
-            if row["uid"] not in seen:
+            if row["uid"] not in seen and not _is_fresh(row["updated_at"], now):
                 cal_db.set_status(row["id"], "cancelled", from_remote=True,
                                   db_path=db_path)
     except Exception as e:
@@ -227,8 +252,8 @@ def refresh(db_path=None, today: date | None = None,
     pushed, push_errors = push_pending(db_path=db_path, prov=prov)
     errors.extend(push_errors)
     p = prov if prov is not None else provider
-    n_events, e1 = _sync_events(db_path, p, today, horizon)
-    n_tasks, e2 = _sync_tasks(db_path, p)
+    n_events, e1 = _sync_events(db_path, p, today, horizon, now)
+    n_tasks, e2 = _sync_tasks(db_path, p, now)
     errors.extend(e1)
     errors.extend(e2)
 
@@ -264,9 +289,9 @@ def refresh_domain(member: str, domain: str, *, db_path=None, prov=None,
     pushed, push_errors = push_pending(db_path=db_path, prov=p, kind=kind)
     errors.extend(push_errors)
     if domain == "schedule":
-        n, e = _sync_events(db_path, p, today, horizon)
+        n, e = _sync_events(db_path, p, today, horizon, now)
     else:
-        n, e = _sync_tasks(db_path, p)
+        n, e = _sync_tasks(db_path, p, now)
     errors.extend(e)
 
     st = _load_state(state_path)

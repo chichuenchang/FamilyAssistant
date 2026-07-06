@@ -39,6 +39,17 @@ def _add_task(db, title="买蛋糕", due="2026-06-15", member="MemberA", **kw):
                            member=member, db_path=db, **kw)
 
 
+def _age(db, item_id, minutes=5):
+    """把行的 updated_at 拨旧，绕过 60s 新鲜保护（校验/对账测试用）。"""
+    import sqlite3
+    from datetime import datetime
+    old = (datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds")
+    c = sqlite3.connect(db)
+    c.execute("UPDATE schedule_items SET updated_at = ? WHERE id = ?", (old, item_id))
+    c.commit()
+    c.close()
+
+
 class TestCalDb:
     def test_add_and_get_roundtrip(self, cal_db_path):
         iid = _add_event(cal_db_path, location="泳馆", notes="带泳镜")
@@ -532,6 +543,8 @@ class TestSyncEngine:
         cal_db.mark_synced(future, uid="ev-future", db_path=db)
         tk = _add_task(db, title="远端已完成")
         cal_db.mark_synced(tk, uid="t-done", db_path=db)
+        _age(db, gone)      # 新鲜保护豁免对账 → 拨旧，让远端删除生效
+        _age(db, tk)
         fake.events = [
             {"uid": "ev-keep", "title": "保留(改名)", "start": "2026-06-14T10:00",
              "end": "2026-06-14T11:00", "all_day": False, "location": "", "notes": ""},
@@ -581,6 +594,26 @@ class TestSyncEngine:
         st = calendar_sync.status(db_path=db)
         assert st["enabled"] is True and st["configured"] is True
         assert st["pending"] == 1
+
+    def test_reconcile_spares_fresh_rows(self, engine):
+        # Google list 读写有延迟：刚推送成功(updated_at 新鲜)的行在远端列表里
+        # 暂时缺席时，绝不能被对账环节误取消。拨旧后才参与对账。
+        fake, db = engine
+        ev = _add_event(db, title="刚推送", start="2026-06-14T10:00", end="")
+        cal_db.mark_synced(ev, uid="ev-lag", db_path=db)          # fresh
+        tk = _add_task(db, title="刚推送待办")
+        cal_db.mark_synced(tk, uid="t-lag", db_path=db)           # fresh
+        fake.events = []                                          # 远端列表滞后
+        fake.tasks = []
+        result = calendar_sync.refresh(db_path=db, today=TODAY)
+        assert result["errors"] == []
+        assert cal_db.get_item(ev, db_path=db)["status"] == "active"   # 幸存
+        assert cal_db.get_item(tk, db_path=db)["status"] == "active"
+        _age(db, ev)
+        _age(db, tk)
+        calendar_sync.refresh(db_path=db, today=TODAY)
+        assert cal_db.get_item(ev, db_path=db)["status"] == "cancelled"  # 拨旧后正常对账
+        assert cal_db.get_item(tk, db_path=db)["status"] == "cancelled"
 
 
 # ── 按成员 + 域同步（tick 遍历成员） ────────────────────────────
