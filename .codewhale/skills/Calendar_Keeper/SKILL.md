@@ -35,9 +35,13 @@
   Agent 仅在用户问到时按上下文/工具回答。
   注意：拉取窗口是 `sync_horizon_days`（默认 90，远期事件可见），**不是** `lookahead_days`
   （后者仅控制上下文注入与 cal-list 默认窗口）。两者分离，避免远期事件被漏拉。
-- **查询前拉取**：用户问日程（cal-list）时，先调 `calendar_sync.sync_for_query(member)`
-  按 `query_refresh_seconds` 短节流主动拉远端，再读本地。捕获 Google 端新加但后台
-  tick 尚未拉到的事件（如 Gmail 自动建日程），避免回答陈旧。本地模式成员跳过。
+- **每操作校验**：所有 cal-* 命令收尾对该成员相关域做本地↔远端实时核对
+  （`calendar_sync.verify_and_heal`，无节流）：拉远端快照与本地分桶比对
+  （待推送/远端缺失/本地缺失/字段漂移；updated_at 60 秒内的新鲜行豁免，
+  防 Google list 读写延迟误判），不一致即走 `refresh_domain` 自动修复并复检，
+  输出一行"校验"结论。手机上直接划掉的待办、Gmail 自动建的日程都会在下一次
+  操作时被拉平。cal-list 先校验修复再读本地（`sync_for_query` 保留但主路径不再用）。
+  本地模式成员静默跳过，绝不影响主操作。
 - **先推后拉**：本地新增（cal-add）→ 立即尽力推送远端；失败/未配置则标记"待同步"，
   下一轮 tick 自动重试。完成/取消同理（同步完成或删除远端项）。
 - **合并规则**：按远端 uid 合并，远端字段覆盖本地（remote wins）；本地有待推送
@@ -54,8 +58,8 @@
 | `cal-list [--days N] [--kind K] [--member M] [--all]` | 未来 N 天日程 + 开放待办 | ✅ |
 | `cal-done --id N` | 完成待办 | ✅ |
 | `cal-delete --id N` | 取消日程（同步删除远端） | ✅ |
-| `cal-sync` | 立即强制刷新（忽略节流） | ✅ |
-| `cal-status` | 同步状态（启用/配置/上次刷新/待同步/错误） | ✅ |
+| `cal-sync` | 立即强制刷新（忽略节流）+ 校验 | ✅ |
+| `cal-status` | 同步状态 + 本地↔远端实时校验结论 | ✅ |
 
 ```bash
 python .codewhale/skills/Calendar_Keeper/cli.py cal-add --member 爸爸 --kind event \
@@ -93,7 +97,7 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
 
 `enabled`（默认 false）/ `lookahead_days`（10，静默刷新与上下文注入的窗口）/
 `refresh_minutes`（15，后台 tick 节流间隔）/
-`query_refresh_seconds`（60，查询路径同步节流）/
+`query_refresh_seconds`（60，兼容保留——主路径已改为每操作无节流校验）/
 `sync_horizon_days`（90，远端拉取窗口，独立于 lookahead_days）/ `image_retention_years`（2，来图保留年限）/
 `image_prune_interval_days`（30，来图清理间隔）。改后重启进程生效。
 
