@@ -471,6 +471,32 @@ def verify_domain(member: str, domain: str, *, db_path=None, prov=None,
         return {"mode": "error", "error": str(e)}
 
 
+def verify_and_heal(member: str, domain: str, *, db_path=None, prov=None,
+                    now: datetime | None = None) -> dict:
+    """校验；不一致则 refresh_domain（先推后拉+对账，remote wins）后复检。永不抛。
+
+    返回最终 verify_domain 结果 + healed（修复后复检通过才 True）
+    + heal_pushed / heal_synced（未跑修复时为 0）。
+    复检与修复共用同一 prov/db_path；修复刚写入的行 updated_at 新鲜 →
+    复检的新鲜保护自然豁免它们，静态远端快照下也能收敛。
+    """
+    first = verify_domain(member, domain, db_path=db_path, prov=prov, now=now)
+    if first.get("mode") != "remote" or first.get("in_sync"):
+        return {**first, "healed": False, "heal_pushed": 0, "heal_synced": 0}
+    try:
+        healed = refresh_domain(member, domain, db_path=db_path, prov=prov,
+                                now=now)
+    except Exception as e:
+        return {**first, "healed": False, "heal_pushed": 0, "heal_synced": 0,
+                "heal_error": str(e)}
+    second = verify_domain(member, domain, db_path=db_path, prov=prov, now=now)
+    if second.get("mode") != "remote":
+        second = first                       # 复检查询失败 → 报首轮差异
+    return {**second, "healed": bool(second.get("in_sync")),
+            "heal_pushed": healed.get("pushed", 0),
+            "heal_synced": healed.get("synced", 0)}
+
+
 def force_sync(member: str | None = None, domain: str | None = None,
                db_path=None) -> dict | None:
     """cal-sync。给 member → 刷新其启用域（aggregate）；否则单库全局 provider 路径。

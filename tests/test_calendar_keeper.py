@@ -823,6 +823,70 @@ class TestVerifyDomain:
         assert self._v(fake, db)["mode"] == "local"
 
 
+class TestVerifyAndHeal:
+    """不一致 → refresh_domain 修复 → 复检。"""
+
+    def test_heals_remote_only_event(self, member_engine):
+        import paths
+        fake, tmp = member_engine
+        sdb = str(paths.member_store("MemberA", "schedule"))
+        cal_db._connect(db_path=sdb).close()          # 建库
+        fake.events = [{"uid": "ev-gmail", "title": "航班 AC123",
+                        "start": f"{D1}T08:00", "end": f"{D1}T10:00",
+                        "all_day": False, "location": "", "notes": ""}]
+        r = calendar_sync.verify_and_heal("MemberA", "schedule", db_path=sdb)
+        assert r["mode"] == "remote"
+        assert r["healed"] is True and r["in_sync"] is True
+        assert r["heal_synced"] == 1
+        rows = cal_db.list_upcoming(days=3650, today=date.today(), db_path=sdb)
+        assert [x["uid"] for x in rows] == ["ev-gmail"]   # 修复=拉平到本地
+
+    def test_heals_task_done_on_phone(self, member_engine):
+        import paths
+        fake, tmp = member_engine
+        tdb = str(paths.member_store("MemberA", "tasks"))
+        tk = cal_db.add_item(kind="task", title="买蛋糕", start_at=D3,
+                             member="MemberA", db_path=tdb)
+        cal_db.mark_synced(tk, uid="t-1", db_path=tdb)
+        _age(tdb, tk)
+        fake.tasks = [{"uid": "t-1", "title": "买蛋糕", "due": D3,
+                       "notes": "", "done": True}]
+        r = calendar_sync.verify_and_heal("MemberA", "tasks", db_path=tdb)
+        assert r["healed"] is True and r["in_sync"] is True
+        assert cal_db.get_item(tk, db_path=tdb)["status"] == "done"   # 划掉生效
+
+    def test_still_divergent_when_push_keeps_failing(self, member_engine):
+        import paths
+        fake, tmp = member_engine
+        sdb = str(paths.member_store("MemberA", "schedule"))
+        cal_db.add_item(kind="event", title="推不动", start_at=f"{D1}T10:00",
+                        member="MemberA", db_path=sdb)
+        fake.fail_create = True
+        r = calendar_sync.verify_and_heal("MemberA", "schedule", db_path=sdb)
+        assert r["mode"] == "remote"
+        assert r["healed"] is False and r["in_sync"] is False
+        assert len(r["pending"]) == 1
+
+    def test_in_sync_short_circuits_no_heal(self, member_engine, monkeypatch):
+        import paths
+        fake, tmp = member_engine
+        sdb = str(paths.member_store("MemberA", "schedule"))
+        cal_db._connect(db_path=sdb).close()
+        called = []
+        monkeypatch.setattr(calendar_sync, "refresh_domain",
+                            lambda *a, **k: called.append(1) or {"pushed": 0,
+                                                                 "synced": 0,
+                                                                 "errors": []})
+        r = calendar_sync.verify_and_heal("MemberA", "schedule", db_path=sdb)
+        assert r["in_sync"] is True and r["healed"] is False
+        assert called == []                        # 一致 → 不跑修复
+
+    def test_local_mode_passthrough(self, member_engine, monkeypatch):
+        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
+        r = calendar_sync.verify_and_heal("MemberA", "schedule")
+        assert r["mode"] == "local" and r["healed"] is False
+
+
 # ── CLI（subprocess，环境变量全隔离） ───────────────────────────
 
 import os
