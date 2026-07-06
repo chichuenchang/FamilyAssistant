@@ -11,11 +11,16 @@ Calendar Keeper — 同步引擎（远程日历 ↔ 本地缓存），按成员 
                       对启用且 provider 就绪的域按各自节流刷新。单成员/单域失败被隔离，
                       永不抛异常。本地模式成员（无 sync 偏好）一律跳过。
     refresh_domain()  刷新某成员某域：先推后拉 + 对账，写该域状态。
+    verify_domain()   只读校验某成员某域本地↔远端一致性（分桶：待推送/远端缺失/
+                      本地缺失/字段漂移；60s 新鲜行豁免）。永不抛。
+    verify_and_heal() 校验→不一致则 refresh_domain 修复→复检。CLI 每个 cal-* 命令
+                      收尾调用（无节流）。永不抛。
     force_sync()      cal-sync。给 member → 刷新其所有启用域；否则回退单库全局 provider。
     status()          cal-status。给 member+domain → 该域状态；否则单库全局视图。
 
 兼容路径（测试与简单场景）：refresh()/push_pending()/status() 在不给 member 时走
 "单库 + 模块全局 provider"，provider 模块全局默认 = calendar_provider，可注入/monkeypatch。
+sync_for_query() 保留兼容（cal-list 主路径已改为 verify_and_heal）。
 
 状态文件（不入备份、不入 git）。测试钩子：CALENDAR_STATE_DIR（全局状态目录）、
 CALENDAR_CONFIG（替代 config.json）、DATA_ROOT（数据根，经 paths）。
@@ -43,7 +48,7 @@ _FALLBACK_CFG = {
     "enabled": False,
     "lookahead_days": 10,
     "refresh_minutes": 15,
-    "query_refresh_seconds": 60,   # 查询日程前的同步节流（避免连续查询打爆远端）
+    "query_refresh_seconds": 60,   # sync_for_query 节流（兼容保留；主路径=每操作校验，无节流）
     "sync_horizon_days": 90,       # 远端拉取窗口（独立于 lookahead_days，覆盖远期事件）
 }
 
@@ -335,11 +340,11 @@ def calendar_tick(now: datetime | None = None) -> bool:
 
 def sync_for_query(member: str, domain: str | None = None,
                    now: datetime | None = None) -> bool:
-    """查询日程前调用：拉远端 → 本地，按短节流（query_refresh_seconds）。
+    """拉远端 → 本地，按短节流（query_refresh_seconds）。兼容保留。
 
-    背景：事件可能在 Google 端被加入（如 Gmail 自动建日程），后台 calendar_tick 按
-    refresh_minutes（默认 15 分）节流，查询路径若只读本地会漏掉这些新事件。故查询前
-    主动同步一次；短节流防止连续查询每次都打远端。本地模式成员/未配置域跳过。永不抛。
+    历史：曾是 cal-list 的查询前拉取；现 cal-list 主路径改走 verify_and_heal
+    （每操作无节流校验），本函数仅测试/外部调用方使用。
+    本地模式成员/未配置域跳过。永不抛。
     """
     try:
         if not member or not CFG.get("enabled"):

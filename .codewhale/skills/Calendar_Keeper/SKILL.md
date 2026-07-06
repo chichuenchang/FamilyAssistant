@@ -11,7 +11,7 @@
 .codewhale/skills/Calendar_Keeper/
 ├── SKILL.md             ← 本文件
 ├── cal_db.py            ← 存储层（schedule_items 表；每成员每域各一个 .db）
-├── calendar_sync.py     ← 同步引擎：按(成员,域)先推后拉、对账、状态；calendar_tick 遍历成员
+├── calendar_sync.py     ← 同步引擎：按(成员,域)先推后拉、对账、状态、每操作校验（verify_and_heal）；calendar_tick 遍历成员
 ├── calendar_provider.py ← Google Calendar + Tasks 实现（契约见文件头注释，可换）
 ├── providers.py         ← provider 注册表：(domain, name) → 实现（google_calendar/google_tasks）
 ├── image_gc.py          ← 陈旧来图清理：删 N 年前活动/待办的 source_image（节流，传输层调）
@@ -32,7 +32,7 @@
 - **静默刷新**：传输层在**已注册成员**的消息到达后调 `calendar_sync.calendar_tick()`：
   启用 + 距上次刷新 ≥ `refresh_minutes` + provider 就绪 → 拉取未来 `sync_horizon_days`
   天的活动 + 全部待办进本地缓存。未注册来源永远不会触发。不主动播报，
-  Agent 仅在用户问到时按上下文/工具回答。
+  Agent 仅在用户问到时回答（查询必须走 cal-list，自带实时校验；注入上下文仅作话题参考）。
   注意：拉取窗口是 `sync_horizon_days`（默认 90，远期事件可见），**不是** `lookahead_days`
   （后者仅控制上下文注入与 cal-list 默认窗口）。两者分离，避免远期事件被漏拉。
 - **每操作校验**：所有 cal-* 命令收尾对该成员相关域做本地↔远端实时核对
@@ -106,4 +106,4 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
 - ❌ 编辑日程（取消 + 重建即可）
 - ❌ 邀请/参与人、单成员内多日历（按成员私有日历已支持）
 - ❌ 主动提醒推送（Document_Keeper 负责主动提醒；日程只答不播）
-- ❌ webhook 推送通道（只在成员消息到达时节流拉取）
+- ❌ webhook 推送通道（拉取只发生在成员消息 tick 与每次日程操作的校验，无远端主动推送）
