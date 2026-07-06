@@ -1297,6 +1297,20 @@ class TestAgentWiring:
             out = agent_core._apply_member(tool, {"member": "假冒", "id": 1}, "MemberA")
             assert out.get("member") == "MemberA", tool
 
+    def test_prompt_forces_tool_on_schedule_query(self):
+        import agent_core
+        p = agent_core._build_system_prompt()
+        assert "必须调 list_schedule" in p          # 查询必须过工具（远端核对）
+        assert "校验" in p                          # verdict 转告规则
+        assert "calendar_status 不是凭据" not in p   # 旧拐杖已退役
+
+    def test_calendar_tool_descs_mention_verify(self):
+        import agent_core
+        descs = {t["function"]["name"]: t["function"]["description"]
+                 for t in agent_core.TOOL_SCHEMAS}
+        assert "核对" in descs["calendar_status"]
+        assert "核对" in descs["list_schedule"]
+
     def test_schedule_context_formats_and_empty(self, cal_db_path):
         import agent_core
         assert agent_core._schedule_context(db_path=cal_db_path) == ""
