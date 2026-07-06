@@ -729,6 +729,100 @@ class TestSyncForQuery:
         assert st.get("last_error")
 
 
+class TestVerifyDomain:
+    """只读校验：查本地+远端，分桶报告差异。永不抛。"""
+
+    def _v(self, fake, db, domain="schedule", **kw):
+        return calendar_sync.verify_domain("MemberA", domain,
+                                           db_path=db, prov=fake, **kw)
+
+    def test_in_sync_event(self, engine):
+        # 日期用 D1（明天）：verify 窗口按真实 now 计算，死日期会滑出窗口
+        fake, db = engine
+        ev = _add_event(db, title="游泳课", start=f"{D1}T10:00",
+                        end=f"{D1}T11:00")
+        cal_db.mark_synced(ev, uid="ev-1", db_path=db)
+        _age(db, ev)
+        fake.events = [{"uid": "ev-1", "title": "游泳课",
+                        "start": f"{D1}T10:00", "end": f"{D1}T11:00",
+                        "all_day": False, "location": "", "notes": ""}]
+        r = self._v(fake, db)
+        assert r["mode"] == "remote" and r["in_sync"] is True
+        assert r["local_total"] == 1 and r["remote_total"] == 1
+
+    def test_pending_bucket(self, engine):
+        fake, db = engine
+        _add_event(db, title="没推出去")            # synced=0
+        r = self._v(fake, db)
+        assert r["in_sync"] is False
+        assert len(r["pending"]) == 1 and "没推出去" in r["pending"][0]
+
+    def test_local_only_aged_vs_fresh(self, engine):
+        fake, db = engine
+        ev = _add_event(db, title="远端缺失", start=f"{D1}T10:00", end="")
+        cal_db.mark_synced(ev, uid="ev-x", db_path=db)
+        fake.events = []
+        assert self._v(fake, db)["in_sync"] is True       # fresh → 豁免
+        _age(db, ev)
+        r = self._v(fake, db)
+        assert r["in_sync"] is False
+        assert len(r["local_only"]) == 1 and "远端缺失" in r["local_only"][0]
+
+    def test_remote_only_bucket(self, engine):
+        fake, db = engine
+        fake.events = [{"uid": "ev-gmail", "title": "航班 AC123",
+                        "start": "2026-06-14T08:00", "end": "2026-06-14T10:00",
+                        "all_day": False, "location": "", "notes": ""}]
+        r = self._v(fake, db)
+        assert r["in_sync"] is False
+        assert len(r["remote_only"]) == 1 and "航班" in r["remote_only"][0]
+
+    def test_drift_event_title(self, engine):
+        fake, db = engine
+        ev = _add_event(db, title="旧名", start=f"{D1}T10:00",
+                        end=f"{D1}T11:00")
+        cal_db.mark_synced(ev, uid="ev-1", db_path=db)
+        _age(db, ev)
+        fake.events = [{"uid": "ev-1", "title": "新名",
+                        "start": f"{D1}T10:00", "end": f"{D1}T11:00",
+                        "all_day": False, "location": "", "notes": ""}]
+        r = self._v(fake, db)
+        assert r["in_sync"] is False and len(r["drift"]) == 1
+
+    def test_drift_task_done_on_phone(self, engine):
+        # 手机上直接划掉待办：本地 active + 远端 done → drift
+        fake, db = engine
+        tk = _add_task(db, title="买蛋糕", due="2026-06-15")
+        cal_db.mark_synced(tk, uid="t-1", db_path=db)
+        _age(db, tk)
+        fake.tasks = [{"uid": "t-1", "title": "买蛋糕", "due": "2026-06-15",
+                       "notes": "", "done": True}]
+        r = self._v(fake, db, domain="tasks")
+        assert r["in_sync"] is False and len(r["drift"]) == 1
+
+    def test_event_outside_window_ignored(self, engine):
+        fake, db = engine
+        far = _add_event(db, title="远期", start="2099-01-01T10:00", end="")
+        cal_db.mark_synced(far, uid="ev-far", db_path=db)
+        _age(db, far)
+        fake.events = []
+        assert self._v(fake, db)["in_sync"] is True   # 窗口外不参与校验
+
+    def test_provider_error_mode(self, engine):
+        fake, db = engine
+        fake.fail_list = True
+        r = self._v(fake, db)
+        assert r["mode"] == "error" and "network down" in r["error"]
+
+    def test_local_mode_and_unconfigured(self, engine, monkeypatch):
+        fake, db = engine
+        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
+        assert calendar_sync.verify_domain("MemberA", "schedule",
+                                           db_path=db)["mode"] == "local"
+        fake.configured = False
+        assert self._v(fake, db)["mode"] == "local"
+
+
 # ── CLI（subprocess，环境变量全隔离） ───────────────────────────
 
 import os

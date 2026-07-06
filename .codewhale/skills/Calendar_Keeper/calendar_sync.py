@@ -373,6 +373,104 @@ def sync_for_query(member: str, domain: str | None = None,
         return False
 
 
+# ── 校验（每操作本地↔远端一致性核对） ────────────────────────────
+
+def _norm(v) -> str:
+    return (v or "").strip()
+
+
+def _fields_differ(kind: str, row: dict, remote: dict) -> bool:
+    """本地行 vs 远端条目核心字段是否漂移。
+
+    待办：synced_active 只给 active 行 → 远端 done 即漂移（用户在手机上划掉），
+    修复时 remote-wins 会把本地也置 done。
+    活动 end 为空时远端曾默认 +1h → 首次校验判漂移，一轮修复即收敛，属预期。
+    """
+    if kind == "event":
+        return (_norm(row["title"]) != _norm(remote.get("title"))
+                or _norm(row["start_at"]) != _norm(remote.get("start"))
+                or _norm(row["end_at"]) != _norm(remote.get("end"))
+                or int(row["all_day"] or 0) != int(bool(remote.get("all_day")))
+                or _norm(row["location"]) != _norm(remote.get("location"))
+                or _norm(row["notes"]) != _norm(remote.get("notes")))
+    return (bool(remote.get("done"))
+            or _norm(row["title"]) != _norm(remote.get("title"))
+            or _norm(row["start_at"]) != _norm(remote.get("due"))
+            or _norm(row["notes"]) != _norm(remote.get("notes")))
+
+
+def verify_domain(member: str, domain: str, *, db_path=None, prov=None,
+                  now: datetime | None = None) -> dict:
+    """只读校验某成员某域：查本地 + 查远端，分桶报告差异。永不抛。
+
+    返回：
+        {"mode": "local"}                          未配置/本地模式（调用方静默跳过）
+        {"mode": "error", "error": str}            远端查询失败
+        {"mode": "remote", "in_sync": bool,
+         "pending": [...], "local_only": [...],    待推送 / 远端缺失
+         "remote_only": [...], "drift": [...],     本地缺失 / 字段漂移
+         "local_total": n, "remote_total": n}
+    桶元素为人类可读短句（"#12 游泳课"），CLI 直接拼 verdict。
+    新鲜保护（_VERIFY_FRESH_SECONDS）豁免 local_only/drift 判定；
+    pending 不豁免——推送失败必须立刻可见。
+    """
+    try:
+        if domain not in _DOMAIN_KIND:
+            raise ValueError(f"domain 必须是 {tuple(_DOMAIN_KIND)}")
+        p = prov if prov is not None else provider_for(member, domain)
+        try:
+            if p is None or not p.is_configured():
+                return {"mode": "local"}
+        except Exception:
+            return {"mode": "local"}
+        now = now or datetime.now()
+        today = now.date()
+        kind = _DOMAIN_KIND[domain]
+        db_path = db_path or str(_paths.member_store(member, domain))
+
+        if kind == "event":
+            horizon_days = max(int(CFG.get("sync_horizon_days", 90)),
+                               int(CFG.get("lookahead_days", 10)))
+            horizon = today + timedelta(days=horizon_days)
+            time_min = datetime.combine(today, dtime.min).astimezone() \
+                .isoformat(timespec="seconds")
+            time_max = datetime.combine(horizon, dtime(23, 59, 59)).astimezone() \
+                .isoformat(timespec="seconds")
+            remote = {e["uid"]: e for e in p.list_events(time_min, time_max)}
+        else:
+            remote = {t["uid"]: t for t in p.list_tasks()}
+
+        local_uids = cal_db.uids(kind, db_path=db_path)
+        pend = [f"#{r['id']} {r['title'][:20]}"
+                for r in cal_db.pending(db_path=db_path) if r["kind"] == kind]
+
+        local_only: list[str] = []
+        drift: list[str] = []
+        t_iso = today.isoformat()
+        for row in cal_db.synced_active(kind, db_path=db_path):
+            if kind == "event":
+                d = row["start_at"][:10]
+                if not d or not (t_iso <= d <= horizon.isoformat()):
+                    continue                      # 窗口外不参与（拉取也拉不到）
+            if _is_fresh(row["updated_at"], now):
+                continue                          # 读写延迟保护
+            r = remote.get(row["uid"])
+            if r is None:
+                local_only.append(f"#{row['id']} {row['title'][:20]}")
+            elif _fields_differ(kind, row, r):
+                drift.append(f"#{row['id']} {row['title'][:20]}")
+
+        remote_only = [_norm(remote[u].get("title"))[:20] or "(无标题)"
+                       for u in remote if u not in local_uids]
+        in_sync = not (pend or local_only or remote_only or drift)
+        return {"mode": "remote", "in_sync": in_sync, "pending": pend,
+                "local_only": local_only, "remote_only": remote_only,
+                "drift": drift, "local_total": len(local_uids),
+                "remote_total": len(remote)}
+    except Exception as e:
+        return {"mode": "error", "error": str(e)}
+
+
 def force_sync(member: str | None = None, domain: str | None = None,
                db_path=None) -> dict | None:
     """cal-sync。给 member → 刷新其启用域（aggregate）；否则单库全局 provider 路径。
