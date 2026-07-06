@@ -214,6 +214,16 @@ class TestCalDb:
         rows = cal_db.synced_active("event", db_path=cal_db_path)
         assert [r["id"] for r in rows] == [a]
 
+    def test_uids_returns_all_statuses_any_synced(self, cal_db_path):
+        a = _add_event(cal_db_path)                      # synced=0, active
+        cal_db.mark_synced(a, uid="e-1", db_path=cal_db_path)
+        b = _add_task(cal_db_path)
+        cal_db.mark_synced(b, uid="t-1", db_path=cal_db_path)
+        cal_db.set_status(b, "done", db_path=cal_db_path)   # done + pending push
+        _add_event(cal_db_path, title="无uid")               # uid='' → excluded
+        assert cal_db.uids("event", db_path=cal_db_path) == {"e-1"}
+        assert cal_db.uids("task", db_path=cal_db_path) == {"t-1"}
+
 
 # ── Google provider（HTTP 全部打桩，零网络） ─────────────────────
 

@@ -287,3 +287,13 @@ def synced_active(kind: str, db_path: Optional[str] = None) -> list[dict]:
         (kind,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def uids(kind: str, db_path: Optional[str] = None) -> set[str]:
+    """该 kind 全部非空 uid（不限状态/synced）——校验判定"远端条目本地是否认识"用。"""
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT uid FROM schedule_items WHERE kind = ? AND uid != ''",
+        (kind,)).fetchall()
+    conn.close()
+    return {r["uid"] for r in rows}
