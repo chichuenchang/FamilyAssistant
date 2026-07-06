@@ -96,6 +96,48 @@ def _sync_suffix(item_id: int, db_path: str) -> str:
     return "已同步到日历" if item and item["synced"] == 1 else "待同步"
 
 
+_DOMAIN_LABEL = {"schedule": "活动", "tasks": "待办"}
+
+
+def _verify_lines(member: str, domains: list[str]) -> list[str]:
+    """每操作校验：查本地+远端并对账，返回 verdict 行。绝不抛、绝不影响主操作。
+
+    覆盖库（测试）/无成员 → 空。本地模式域 → 无行（不打扰未配置用户）。
+    """
+    if _DB_OVERRIDE or not member:
+        return []
+    lines: list[str] = []
+    for d in domains:
+        label = _DOMAIN_LABEL[d]
+        try:
+            r = calendar_sync.verify_and_heal(member, d)
+        except Exception as e:                    # verify_and_heal 永不抛，双保险
+            lines.append(f"校验失败（{label}）: {e}")
+            continue
+        if r.get("mode") == "local":
+            continue
+        if r.get("mode") == "error":
+            lines.append(f"校验失败（{label}）: {r.get('error')}")
+        elif r.get("healed"):
+            lines.append(f"校验: 发现不一致，已自动修复"
+                         f"（推送{r['heal_pushed']}/拉取{r['heal_synced']}）（{label}）")
+        elif r.get("in_sync"):
+            lines.append(f"校验: 本地=远端一致（{label}）")
+        else:
+            parts = []
+            for key, word in (("pending", "待推送"), ("local_only", "远端缺失"),
+                              ("remote_only", "本地缺失"), ("drift", "字段不一致")):
+                if r.get(key):
+                    parts.append(f"{word}{len(r[key])}（{r[key][0]}）")
+            lines.append(f"⚠ 校验: 本地≠远端（{label}）— " + "、".join(parts))
+    return lines
+
+
+def _print_verify(member: str, domains: list[str]) -> None:
+    for line in _verify_lines(member, domains):
+        print(line)
+
+
 _WEEKDAYS = "一二三四五六日"
 
 
@@ -168,13 +210,15 @@ def cmd_cal_add(args):
     _push_quietly(db, args.member, args.kind)
     tag = "活动" if args.kind == "event" else "待办"
     print(f"已添加{tag} #{item_id}（{_sync_suffix(item_id, db)}）")
+    _print_verify(args.member, ["schedule" if args.kind == "event" else "tasks"])
 
 
 def cmd_cal_list(args):
-    # 查询前先拉远端（节流），避免漏掉 Google 端新加事件（如 Gmail 自动建日程）。
-    if args.member and not _DB_OVERRIDE:
-        domain = {"event": "schedule", "task": "tasks"}.get(args.kind)
-        calendar_sync.sync_for_query(args.member, domain)
+    # 查询前先校验+修复（无节流）：捕获远端新加事件与手机上划掉的待办，
+    # 列表读的是修复后的本地。verdict 行列在清单之后。
+    domains = {"event": ["schedule"], "task": ["tasks"]}.get(
+        args.kind, ["schedule", "tasks"])
+    verify = _verify_lines(args.member or "", domains)
     rows = []
     for db in _member_stores(args.member, args.kind):
         rows.extend(cal_db.list_upcoming(
@@ -187,9 +231,11 @@ def cmd_cal_list(args):
     rows.sort(key=lambda r: (r["start_at"] == "", r["start_at"], r["id"]))
     if not rows:
         print("（无日程）")
-        return
-    for r in rows:
-        print(_fmt_item(r))
+    else:
+        for r in rows:
+            print(_fmt_item(r))
+    for line in verify:
+        print(line)
 
 
 def cmd_cal_done(args):
@@ -205,6 +251,7 @@ def cmd_cal_done(args):
     _mark_backup_dirty()
     _push_quietly(db, args.member, "task")
     print(f"已完成待办 #{args.id}（{_sync_suffix(args.id, db)}）")
+    _print_verify(args.member, ["tasks"])
 
 
 def cmd_cal_delete(args):
@@ -221,6 +268,8 @@ def cmd_cal_delete(args):
     _mark_backup_dirty()
     _push_quietly(db, args.member, item["kind"])
     print(f"已取消日程 #{args.id}「{item['title']}」（{_sync_suffix(args.id, db)}）")
+    _print_verify(args.member,
+                  ["schedule" if item["kind"] == "event" else "tasks"])
 
 
 def cmd_cal_sync(args):
@@ -240,6 +289,7 @@ def cmd_cal_sync(args):
     print(f"已刷新：推送 {pushed} 条，同步 {synced} 项")
     for e in result["errors"]:
         print(f"  ⚠ {e}")
+    _print_verify(member, ["schedule", "tasks"])
 
 
 def cmd_cal_status(args):
@@ -253,6 +303,7 @@ def cmd_cal_status(args):
             if st["last_error"]:
                 line += f"，上次错误 {st['last_error']}"
             print(line)
+        _print_verify(member, ["schedule", "tasks"])
         return
     st = calendar_sync.status(db_path=_DB_OVERRIDE)
     print(f"日历同步: {'已启用' if st['enabled'] else '未启用（config.json calendar.enabled）'}")

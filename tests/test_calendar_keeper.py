@@ -987,6 +987,12 @@ class TestCli:
         assert cal_db.get_item(1, db_path=cal_db_path)["source_image"] == \
             "MemberA/schedule/2026-06/x.jpg"
 
+    def test_override_mode_prints_no_verify(self, cal_db_path, tmp_path):
+        # CAL_DB_PATH 覆盖（测试模式）绝不打远端、绝不出校验行
+        r = _cli(["cal-add", "--member", "MemberA", "--kind", "task",
+                  "--title", "x"], cal_db_path, tmp_path)
+        assert r.returncode == 0 and "校验" not in r.stdout
+
 
 class TestSourceImageRelocate:
     """add_event/add_task 把暂存来图搬进该成员对应域目录，并记 source_image。"""
@@ -1141,6 +1147,115 @@ class TestCliPerMember:
         out = _cli_member(["cal-list", "--member", "Alex Lee"], data_root, tmp_path)
         assert out.returncode == 0, out.stderr
         assert "游泳课" in out.stdout and "买蛋糕" in out.stdout
+
+
+# ── CLI 校验尾行（in-process：subprocess 打不了桩） ──────────────
+
+
+def _load_calkeeper_cli():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("calkeeper_cli", str(_CLI))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture
+def cli_verify(monkeypatch, tmp_path):
+    """in-process CLI + fake provider（subprocess 打不了桩）。"""
+    monkeypatch.delenv("CAL_DB_PATH", raising=False)
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv("CALENDAR_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("BACKUP_STATE_DIR", str(tmp_path))
+    mod = _load_calkeeper_cli()
+    monkeypatch.setattr(mod, "_DB_OVERRIDE", None)
+    fake = FakeProvider()
+    monkeypatch.setattr(calendar_sync, "provider_for",
+                        lambda m, d: fake if m == "MemberA" else None)
+    return mod, fake
+
+
+def _ns(**kw):
+    import argparse
+    base = {"member": "MemberA", "kind": "event", "title": "X", "date": None,
+            "start": None, "end": None, "all_day": False, "location": None,
+            "notes": None, "source_image": None, "days": 10, "all": False,
+            "id": 1}
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+class TestCliVerify:
+    def test_add_in_sync_verdict(self, cli_verify, capsys):
+        mod, fake = cli_verify
+        mod.cmd_cal_add(_ns(title="游泳课", date=D1, start="14:00", end="15:00"))
+        out = capsys.readouterr().out
+        assert "已添加" in out
+        assert "校验: 本地=远端一致（活动）" in out   # 刚推送→新鲜豁免→一致
+
+    def test_list_heals_remote_task_done_and_orders_output(self, cli_verify, capsys):
+        # 手机上划掉的待办：cal-list 先修复再列 → 列表不再含它，verdict 说已修复
+        import paths
+        mod, fake = cli_verify
+        tdb = str(paths.member_store("MemberA", "tasks"))
+        tk = cal_db.add_item(kind="task", title="买蛋糕", start_at=D3,
+                             member="MemberA", db_path=tdb)
+        cal_db.mark_synced(tk, uid="t-1", db_path=tdb)
+        _age(tdb, tk)
+        fake.tasks = [{"uid": "t-1", "title": "买蛋糕", "due": D3,
+                       "notes": "", "done": True}]
+        mod.cmd_cal_list(_ns(kind="task"))
+        out = capsys.readouterr().out
+        assert "已自动修复" in out
+        assert "买蛋糕" not in out.split("校验")[0]   # 修复后已 done，不在开放列表
+        assert cal_db.get_item(tk, db_path=tdb)["status"] == "done"
+
+    def test_add_push_failure_still_divergent(self, cli_verify, capsys):
+        mod, fake = cli_verify
+        fake.fail_create = True
+        mod.cmd_cal_add(_ns(title="推不动", date=D1))
+        out = capsys.readouterr().out
+        assert "已添加" in out                       # 主操作不受影响
+        assert "⚠ 校验: 本地≠远端（活动）" in out and "待推送1" in out
+
+    def test_verify_error_line(self, cli_verify, capsys):
+        mod, fake = cli_verify
+        fake.events = []
+        fake.fail_list = True
+        mod.cmd_cal_add(_ns(title="X", date=D1))
+        out = capsys.readouterr().out
+        assert "已添加" in out and "校验失败（活动）" in out
+
+    def test_local_member_no_verdict(self, cli_verify, capsys):
+        mod, fake = cli_verify
+        mod.cmd_cal_add(_ns(member="Robin", title="本地", date=D1))
+        out = capsys.readouterr().out
+        assert "已添加" in out and "校验" not in out
+
+    def test_done_and_delete_verify_their_domain(self, cli_verify, capsys):
+        import paths
+        mod, fake = cli_verify
+        tdb = str(paths.member_store("MemberA", "tasks"))
+        tk = cal_db.add_item(kind="task", title="T", member="MemberA", db_path=tdb)
+        cal_db.mark_synced(tk, uid="t-1", db_path=tdb)
+        fake.tasks = [{"uid": "t-1", "title": "T", "due": "", "notes": "",
+                       "done": False}]
+        mod.cmd_cal_done(_ns(id=tk))
+        out = capsys.readouterr().out
+        assert "已完成待办" in out and "（待办）" in out and "校验" in out
+
+    def test_status_appends_verify(self, cli_verify, capsys):
+        mod, fake = cli_verify
+        mod.cmd_cal_status(_ns())
+        out = capsys.readouterr().out
+        assert "日历同步（MemberA）" in out
+        assert out.count("校验") >= 2               # 活动+待办各一行
+
+    def test_sync_appends_verify(self, cli_verify, capsys):
+        mod, fake = cli_verify
+        mod.cmd_cal_sync(_ns())
+        out = capsys.readouterr().out
+        assert "已刷新" in out and "校验" in out
 
 
 # ── Agent 接线（agent_core） ────────────────────────────────────
