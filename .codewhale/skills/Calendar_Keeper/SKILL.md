@@ -56,10 +56,10 @@
 |------|------|-----------|
 | `cal-add --member M --kind event\|task --title T [--date D] [--start HH:MM] [--end HH:MM] [--all-day] [--location L] [--notes N] [--source-image PATH]` | 新增（活动必须有日期；待办 --date=截止日可省；--source-image 关联原始来图） | ✅ |
 | `cal-list [--days N] [--kind K] [--member M] [--all]` | 未来 N 天日程 + 开放待办 | ✅ |
-| `cal-done --id N` | 完成待办 | ✅ |
-| `cal-delete --id N` | 取消日程（同步删除远端） | ✅ |
-| `cal-sync` | 立即强制刷新（忽略节流）+ 校验 | ✅ |
-| `cal-status` | 同步状态 + 本地↔远端实时校验结论 | ✅ |
+| `cal-done --member M --id N` | 完成待办（--member 定位成员分库，无 CAL_DB_PATH 覆盖时必填） | ✅ |
+| `cal-delete --member M --id N` | 取消日程（同步删除远端；--member 同上必填） | ✅ |
+| `cal-sync [--member M]` | 立即强制刷新（忽略节流）+ 校验（--member 刷该成员活动+待办；不给则单库全局视图） | ✅ |
+| `cal-status [--member M]` | 同步状态 + 本地↔远端实时校验结论（--member 查该成员；不给则单库全局） | ✅ |
 
 ```bash
 python .codewhale/skills/Calendar_Keeper/cli.py cal-add --member 爸爸 --kind event \
