@@ -2,3 +2,5 @@
 # pip install -r requirements-optional.txt
 # yt-dlp — Web_Reach 的 YouTube 字幕转写；未安装时 yt-summary 优雅降级（回退标题+简介或报错），不崩溃。
 yt-dlp
+# matplotlib — Note_Keeper 的工作表数据可视化（chart-render / visualize_data）；未安装时优雅降级（chart-render 退出并提示 pip install matplotlib）。
+matplotlib
