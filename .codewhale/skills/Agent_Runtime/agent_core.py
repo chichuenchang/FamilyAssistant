@@ -1242,7 +1242,10 @@ class Agent:
             # DeepSeek V4 是推理模型，reasoning 占用 completion 预算，
             # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
             # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足。
-            "temperature": 0.3, "max_tokens": 10000,
+            # reasoning_effort=max 默认开满推理档（thinking 本就默认 enabled）；
+            # max 档推理更长，max_tokens 相应调高避免被截断成空 content。
+            "reasoning_effort": os.environ.get("DEEPSEEK_REASONING_EFFORT", "max"),
+            "temperature": 0.3, "max_tokens": 32000,
         }).encode("utf-8")
         req = urllib.request.Request(
             f"{base_url}/v1/chat/completions", data=body,
