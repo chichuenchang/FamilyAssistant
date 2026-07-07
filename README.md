@@ -57,7 +57,7 @@
 ### 🌐 联网资讯（Web Reach / Any Search）
 - "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
 - 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结
-- **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取，需环境变量 `ANYSEARCH_API_KEY`；问最新资讯时优先，未配置则回退下面的 Web Reach
+- **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取；`ANYSEARCH_API_KEY` 可选（未配置走匿名访问，限额较低仍可用）；问最新资讯时优先 Any Search，下面的 Web Reach 作兜底
 - **Web Reach 只读公开信息，无需 API key**（搜索走 DuckDuckGo + Jina 阅读器；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
 
 ### ☁️ 云盘备份（Remote Backup，可选）
@@ -231,6 +231,7 @@ FamilyAssistant/
 │       │   ├── reach.py           ← 搜索/抓取/YouTube 纯逻辑（可注入 fetcher）
 │       │   └── cli.py             ← CLI 入口 + 真实 HTTP 适配器
 │       ├── Any_Search/       ← 高质量实时联网搜索（垂直领域 + 全文抽取）
+│       │   ├── SKILL.md
 │       │   ├── .env.example       ← ANYSEARCH_API_KEY 模板
 │       │   ├── anysearch.py       ← 搜索/抽取/子域 纯逻辑（可注入 caller）
 │       │   └── cli.py             ← CLI 入口 + AnySearch API 适配器
