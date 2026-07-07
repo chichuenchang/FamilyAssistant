@@ -66,7 +66,8 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
 | `backup`（enabled/debounce_seconds） | `Remote_Backup/backup_sync.py`（CFG，读一次）。每成员 provider/cred_prefix/remote_root/scopes 在 `data/members.json` 的 backup 块 |
-| `calendar`（enabled/lookahead_days/refresh_minutes/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG）；`image_gc.py`（来图清理参数）；`agent_core`（_CAL_LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
+| `calendar`（enabled/lookahead_days/refresh_minutes/sync_horizon_days/query_refresh_seconds/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG，含 sync_horizon_days 拉取窗口、query_refresh_seconds 后台节流）；`image_gc.py`（来图清理参数）；`agent_core`（_CAL_LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
+| `notes`（chart_retention_days/worksheet_pin_row_cap） | `Note_Keeper/cli.py`（chart_retention_days，prune-on-render）；`agent_core`（_WORKSHEET_PIN_ROW_CAP，置顶 table 工作表注入行上限） |
 | ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
 
