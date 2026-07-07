@@ -305,6 +305,14 @@ class TestPerMemberStore:
         r = _run_cli("note-list", "--member", "Alex Lee", env=env)
         assert "wifi pw abcd" in r.stdout
 
+    def test_empty_member_rejected_no_phantom_store(self, tmp_path):
+        # 空 --member + 无覆盖 → 报错，不落 data/member 幽灵库
+        env = {"DATA_ROOT": str(tmp_path / "data")}
+        r = _run_cli("note-add", "--member", "", "--content", "x", env=env)
+        assert r.returncode == 1
+        assert "需要 --member" in r.stderr
+        assert not (tmp_path / "data" / "member").exists()
+
     def test_members_have_separate_stores(self, tmp_path):
         env = {"DATA_ROOT": str(tmp_path / "data")}
         _run_cli("note-add", "--member", "Alex Lee",

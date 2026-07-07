@@ -47,6 +47,17 @@ import paths as _paths
 _DB_OVERRIDE = os.environ.get("CAL_DB_PATH") or None
 
 
+def _validate_member(member: str, *, required: bool) -> str:
+    """按成员私有日历：非覆盖模式下 required 时 member 必填非空，否则空名 slug
+    成 'member' 幽灵库。覆盖库（测试）放行。（不校验登记与否——注册表非 DATA_ROOT
+    隔离，且运行时归属由 agent_core 注入已解析成员名。）"""
+    if _DB_OVERRIDE:
+        return member
+    if required and not member:
+        raise ValueError("按成员私有日历，需要 --member")
+    return member
+
+
 def _store_for(member: str, kind: str) -> str:
     """事件→data/<成员>/schedule/schedule.db，待办→.../tasks/tasks.db。覆盖时返回覆盖库。"""
     if _DB_OVERRIDE:
@@ -182,6 +193,7 @@ def _fmt_item(item: dict) -> str:
 
 
 def cmd_cal_add(args):
+    _validate_member(args.member, required=True)
     if args.kind == "event" and not args.date:
         print("错误: 活动必须带 --date", file=sys.stderr)
         sys.exit(1)
@@ -217,6 +229,7 @@ def cmd_cal_add(args):
 
 
 def cmd_cal_list(args):
+    _validate_member(args.member or "", required=False)
     # 查询前先校验+修复（无节流）：捕获远端新加事件与手机上划掉的待办，
     # 列表读的是修复后的本地。verdict 行列在清单之后。
     domains = {"event": ["schedule"], "task": ["tasks"]}.get(
@@ -242,6 +255,7 @@ def cmd_cal_list(args):
 
 
 def cmd_cal_done(args):
+    _validate_member(args.member, required=True)
     db = _DB_OVERRIDE or str(_paths.member_store(args.member, "tasks"))
     item = cal_db.get_item(args.id, db_path=db)
     if item is None:
@@ -258,6 +272,7 @@ def cmd_cal_done(args):
 
 
 def cmd_cal_delete(args):
+    _validate_member(args.member, required=True)
     db = item = None
     for cand in _member_stores(args.member):    # 活动/待办分库，逐库找 id
         found = cal_db.get_item(args.id, db_path=cand)
@@ -276,7 +291,7 @@ def cmd_cal_delete(args):
 
 
 def cmd_cal_sync(args):
-    member = getattr(args, "member", "") or ""
+    member = _validate_member(getattr(args, "member", "") or "", required=False)
     if member and not _DB_OVERRIDE:
         result = calendar_sync.force_sync(member=member)
     else:
@@ -296,7 +311,7 @@ def cmd_cal_sync(args):
 
 
 def cmd_cal_status(args):
-    member = getattr(args, "member", "") or ""
+    member = _validate_member(getattr(args, "member", "") or "", required=False)
     if member and not _DB_OVERRIDE:
         print(f"日历同步（{member}）: {'已启用' if calendar_sync.CFG.get('enabled') else '未启用'}")
         for d, label in (("schedule", "活动"), ("tasks", "待办")):

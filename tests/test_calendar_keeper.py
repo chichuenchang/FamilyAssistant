@@ -1148,6 +1148,14 @@ class TestCliPerMember:
         assert out.returncode == 0, out.stderr
         assert "游泳课" in out.stdout and "买蛋糕" in out.stdout
 
+    def test_empty_member_rejected_no_phantom_store(self, tmp_path):
+        # 无 --member（默认空）+ 无覆盖 → 报错，不落 data/member 幽灵库
+        data_root = tmp_path / "data"
+        r = _cli_member(["cal-done", "--id", "1"], data_root, tmp_path)
+        assert r.returncode == 1, r.stdout
+        assert "需要 --member" in r.stderr
+        assert not (data_root / "member").exists()
+
 
 # ── CLI 校验尾行（in-process：subprocess 打不了桩） ──────────────
 
