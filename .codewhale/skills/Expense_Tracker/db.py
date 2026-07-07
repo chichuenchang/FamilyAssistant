@@ -15,7 +15,8 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 models
 # 分类/币种/基准的值全部来自 config.json，由 models 统一读取（单一事实来源）。
 from models import (
-    SCHEMA, TRANSACTION_TYPES, BASE_CURRENCY, SUPPORTED_CURRENCIES, CATEGORIES, DB_PATH,
+    SCHEMA, TRANSACTION_TYPES, TAX_COUNTRIES, BASE_CURRENCY, SUPPORTED_CURRENCIES,
+    CATEGORIES, DB_PATH,
 )
 # DB_PATH 经 models = paths.family_ledger()（data/Family/ledger.db）。
 
@@ -478,6 +479,8 @@ def add_tax_filing(
     db_path: Optional[str] = None,
 ) -> int:
     """添加一条报税记录。data 为灵活 JSON。"""
+    if country not in TAX_COUNTRIES:
+        raise ValueError(f"报税国家须是 {'/'.join(TAX_COUNTRIES)} 之一，收到 '{country}'")
     conn = get_db(db_path)
     cur = conn.execute(
         """INSERT INTO tax_filings (year, country, filing_date, data, receipt_path, member, notes)

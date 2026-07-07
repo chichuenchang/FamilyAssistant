@@ -559,6 +559,14 @@ def test_add_tax_filing_roundtrip(db):
     assert ca[0]["country"] == "CA"
 
 
+def test_add_tax_filing_rejects_unknown_country(db):
+    """报税国家限 TAX_COUNTRIES（US/CA）；其余报错不写库。"""
+    import pytest
+    with pytest.raises(ValueError):
+        dbm.add_tax_filing(year=2025, country="XX", data={}, db_path=db)
+    assert dbm.get_tax_filings(db_path=db) == []
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # 19. set_exchange_rate + get_latest_rate roundtrip
 # ═══════════════════════════════════════════════════════════════════════
