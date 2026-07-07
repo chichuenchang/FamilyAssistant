@@ -186,7 +186,7 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 
 ## 分类 & 币种校验（单一事实来源）
 
-`config.json` 的 `categories` / `supported_currencies` / `base_currency` 是合法值的**唯一来源**。`models.py` 在导入时读取一次 config.json，暴露为 `CATEGORIES` / `SUPPORTED_CURRENCIES` / `BASE_CURRENCY` 常量；`db.py` 只从 `models` 取值（薄封装 `get_categories` / `get_supported_currencies` / `get_base_currency`），不再各自读配置。config.json 缺失/损坏时用 `models.py` 内的应急回退值（每类型仅 `其他` + USD）。
+`config.json` 的 `categories` / `supported_currencies` / `base_currency` 是合法值的**唯一来源**。`models.py` 在导入时读取一次 config.json，暴露为 `CATEGORIES` / `SUPPORTED_CURRENCIES` / `BASE_CURRENCY` 常量；`db.py` 只从 `models` 取值（薄封装 `get_categories` / `get_supported_currencies` / `get_base_currency`），不再各自读配置。config.json 缺失/损坏时用 `models.py` 内的应急回退值（分类每类型仅 `其他`；币种 USD/CNY/CAD；基准 USD）。
 
 - 数据流：`config.json` → `models`（读一次）→ `db` 取值 → `cli` 校验。改值只改 config.json，**改后重启进程生效**（导入期读取，非每次调用）。
 - `add` / `deposit-add` 写入前校验币种；`add` 还校验分类（按交易类型）。非法值报错并退出码 `1`，不写库。
