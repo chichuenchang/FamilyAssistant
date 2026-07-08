@@ -32,6 +32,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -665,6 +666,11 @@ _DOC_STATUSES = ["active", "expired", "archived", "superseded"]
 _CAL_LOOKAHEAD = int((_CONFIG.get("calendar") or {}).get("lookahead_days") or 10)
 _WORKSHEET_PIN_ROW_CAP = int((_CONFIG.get("notes") or {}).get("worksheet_pin_row_cap") or 80)
 
+# Agent 上下文管理旋钮（config.json "agent" 块；键缺失用默认值，显式 0 = 关闭该机制）
+_AGENT_CFG = _CONFIG.get("agent") or {}
+_CTX_MAX_TOKENS = int(_AGENT_CFG.get("context_max_tokens", 30000) or 0)
+_IDLE_CLEAR_HOURS = float(_AGENT_CFG.get("idle_clear_hours", 4) or 0)
+
 
 def _fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
     return {"type": "function", "function": {
@@ -1099,13 +1105,38 @@ def _schedule_context(member: str | None = None, db_path: str | None = None,
 
 # ── Agent ───────────────────────────────────────────────────
 
-class Agent:
-    """频道无关的全量上下文智能助手。每条消息带完整项目文档 + 对话历史调 DeepSeek。"""
+def _estimate_tokens(text: str) -> int:
+    """粗估文本 token 数：CJK ≈ 1 token/字，ASCII ≈ 4 字符/token。
 
-    def __init__(self, history_size: int = 20):
+    宁可略高估（裁剪触发更早），不追求精确——只用于历史预算，不用于计费。"""
+    if not text:
+        return 0
+    ascii_n = sum(1 for c in text if ord(c) < 128)
+    return (len(text) - ascii_n) + (ascii_n + 3) // 4
+
+
+class Agent:
+    """频道无关的全量上下文智能助手。每条消息带完整项目文档 + 对话历史调 DeepSeek。
+
+    上下文自动管理（旋钮在 config.json "agent" 块，构造参数可覆盖，0=关闭）：
+    - context_max_tokens: 对话历史 token 预算。超出时从最旧的一问一答开始成对丢弃，
+      保留最近上下文——老话题不再挤占预算，Agent 保持聚焦。
+    - idle_clear_hours: 某用户闲置超过 N 小时后，下一条消息前自动清空其对话历史
+      （隔了半天多半是新话题，旧上下文只会干扰）。
+    - 用户随时可发 /clear（或"清除上下文"）手动清空。
+    """
+
+    def __init__(self, history_size: int = 20,
+                 context_max_tokens: int | None = None,
+                 idle_clear_hours: float | None = None):
         self.system_prompt = _build_system_prompt()
         self.history_size = history_size
+        self.context_max_tokens = int(
+            _CTX_MAX_TOKENS if context_max_tokens is None else context_max_tokens)
+        hours = _IDLE_CLEAR_HOURS if idle_clear_hours is None else idle_clear_hours
+        self.idle_clear_seconds = float(hours) * 3600
         self.history: dict[str, list[dict]] = defaultdict(list)
+        self._last_active: dict[str, float] = {}
 
     def handle(self, text: str, user: str = "default", member: str = "") -> str:
         # 防御纵深：传输层闸门漏掉的未注册来源，这里二次拦截，不碰 LLM
@@ -1114,6 +1145,16 @@ class Agent:
         text = text.strip()
         if not text:
             return "收到空消息。"
+
+        # 闲置自动清空：距该用户上次消息超过 idle_clear_hours → 旧话题上下文作废
+        now = time.time()
+        last = self._last_active.get(user)
+        if (last is not None and self.idle_clear_seconds > 0
+                and now - last >= self.idle_clear_seconds and user in self.history):
+            self.history.pop(user, None)
+            _log.debug("用户 %s 闲置 %.1f 小时，自动清除对话上下文",
+                       user, (now - last) / 3600)
+        self._last_active[user] = now
 
         # 频道无关命令：清除本用户对话上下文（不经 LLM，零 token）
         if text.lower() in ("/clear", "清除上下文", "清空上下文", "清空记忆"):
@@ -1271,7 +1312,18 @@ class Agent:
         h.append({"role": "user", "content": user_msg})
         h.append({"role": "assistant", "content": assistant_msg})
         if len(h) > self.history_size * 2:
-            self.history[user] = h[-self.history_size * 2:]
+            h = self.history[user] = h[-self.history_size * 2:]
+        # token 预算裁剪：超出 context_max_tokens 时从最旧的一问一答成对丢弃，
+        # 至少保留最近一轮（哪怕它单独超预算）。
+        if self.context_max_tokens > 0:
+            trimmed = 0
+            while (len(h) > 2 and sum(_estimate_tokens(m.get("content") or "")
+                                      for m in h) > self.context_max_tokens):
+                del h[:2]
+                trimmed += 2
+            if trimmed:
+                _log.debug("用户 %s 对话历史超 %d token 预算，丢弃最旧 %d 条",
+                           user, self.context_max_tokens, trimmed)
 
 
 # ── 测试入口 ────────────────────────────────────────────────

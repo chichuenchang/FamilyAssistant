@@ -43,6 +43,11 @@
     "other"
   ],
   "reminder_lead_days": 30,
+  "agent": {
+    "_comment": "Agent 对话上下文管理旋钮。context_max_tokens=每用户对话历史 token 预算（粗估：CJK≈1 token/字，ASCII≈4字符/token），超出从最旧一问一答成对丢弃保聚焦；idle_clear_hours=用户闲置超过 N 小时后下一条消息前自动清空其对话历史（旧话题不干扰新话题）。任一设 0 = 关闭该机制。用户也可随时发 /clear 手动清空。",
+    "context_max_tokens": 30000,
+    "idle_clear_hours": 4
+  },
   "notes": {
     "_comment": "备忘/工作表/图表旋钮。chart_retention_days=chart-render 渲染前清理多少天前的旧图表（prune-on-render）；worksheet_pin_row_cap=置顶 table 工作表注入上下文时最多渲染行数，超出显示 '…还有 M 行'。",
     "chart_retention_days": 7,
