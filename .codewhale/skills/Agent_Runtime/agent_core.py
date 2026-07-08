@@ -184,7 +184,7 @@ def _cli_path(cmd: str) -> Path:
 
 # ── system prompt ───────────────────────────────────────────
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
     """组装 system prompt：身份 + config 提取的事实 + 行为准则。
 
     工具定义走 API tools 参数。FamilyAssistant.md 是开发文档（文件路径、
@@ -209,6 +209,11 @@ def _build_system_prompt() -> str:
             "\n- 票据/合同/证件等文档或对话里出现上述别名/法定名时，视为对应成员"
             "（用于文档标题、按成员查询过滤、理解\"这是谁的\"）。"
             "\n- 写入类操作的归属永远是发消息的成员（代码强制），别名不改变归属。")
+
+    idle_hours = (_IDLE_CLEAR_HOURS if idle_clear_hours is None
+                  else float(idle_clear_hours))
+    idle_note = (f"；用户闲置超过 {idle_hours:g} 小时后也会自动清空"
+                 if idle_hours > 0 else "")
 
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 
@@ -261,6 +266,10 @@ def _build_system_prompt() -> str:
 - backup_status 显示未启用/未配置时：告知备份是可选功能，需要在电脑上按
   Remote_Backup/SKILL.md 完成 Google Drive 授权并启用；不要反复推销
 - 数据恢复（backup-restore）只能在电脑上手动执行，你调不到
+
+## 对话上下文
+- 用户随时可发 /clear（或"清除上下文"）清空与你的对话上下文{idle_note}
+- 被问"你能不能清除上下文/记忆"时，如实说明上述机制，不要说做不到
 
 ## 回复风格
 - 简洁、易读是第一优先级：先给结论/结果，能一句话说清就不写三句
@@ -1129,7 +1138,7 @@ class Agent:
     def __init__(self, history_size: int = 20,
                  context_max_tokens: int | None = None,
                  idle_clear_hours: float | None = None):
-        self.system_prompt = _build_system_prompt()
+        self.system_prompt = _build_system_prompt(idle_clear_hours)
         self.history_size = history_size
         self.context_max_tokens = int(
             _CTX_MAX_TOKENS if context_max_tokens is None else context_max_tokens)
