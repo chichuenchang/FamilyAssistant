@@ -40,7 +40,8 @@ ROOT = Path(__file__).resolve().parents[3]
 _DB_OVERRIDE = os.environ.get("DOC_KEEPER_DB") or None
 
 # 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）
-_BACKUP_WRITE_COMMANDS = {"doc-add", "doc-update", "doc-ack", "doc-remove"}
+_BACKUP_WRITE_COMMANDS = {"doc-add", "doc-update", "doc-ack", "doc-remove",
+                          "profile-set", "profile-unset"}
 
 
 def _mark_backup_dirty() -> None:
@@ -212,6 +213,48 @@ def cmd_doc_remove(args):
     print(f"{'已删除' if ok else '未找到'} 文档 #{args.id}{extra}")
 
 
+def _validate_profile_member(name: str) -> str:
+    """profile 目标成员：登记成员显示名或字面 Family。DOC_KEEPER_DB 覆盖（测试）放行。"""
+    name = (name or "").strip()
+    if _DB_OVERRIDE or name == "Family":
+        return name
+    if name not in members_registry.member_names():
+        print(f"[错误] 成员未登记: {name}（家庭层面请用 Family）")
+        sys.exit(1)
+    return name
+
+
+def cmd_profile_set(args):
+    name = _validate_profile_member(args.member_name)
+    try:
+        doc_db.set_profile(name, args.field, args.value, db_path=_DB_OVERRIDE)
+    except ValueError as e:
+        print(f"[错误] {e}")
+        sys.exit(1)
+    print(f"✅ {name}.{args.field} = {args.value}")
+
+
+def cmd_profile_unset(args):
+    name = _validate_profile_member(args.member_name)
+    if not doc_db.unset_profile(name, args.field, db_path=_DB_OVERRIDE):
+        print(f"[错误] 不存在: {name}.{args.field}")
+        sys.exit(1)
+    print(f"已删除 {name}.{args.field}")
+
+
+def cmd_profile_list(args):
+    rows = doc_db.list_profiles(args.member_name or None, db_path=_DB_OVERRIDE)
+    if not rows:
+        print("没有成员资料。")
+        return
+    cur = None
+    for r in rows:
+        if r["member"] != cur:
+            cur = r["member"]
+            print(f"【{cur}】")
+        print(f"  {r['field']}: {r['value']}")
+
+
 def main():
     doc_db.init_db(db_path=_DB_OVERRIDE)
 
@@ -271,6 +314,18 @@ def main():
     p.add_argument("--id", type=int, required=True)
     p.add_argument("--delete-file", action="store_true", help="同时删除原始文件")
 
+    p = sub.add_parser("profile-set", help="写/改一条家庭成员资料（家庭共享）")
+    p.add_argument("--member-name", required=True, help="登记成员显示名或 Family")
+    p.add_argument("--field", required=True)
+    p.add_argument("--value", required=True)
+
+    p = sub.add_parser("profile-unset", help="删一条家庭成员资料")
+    p.add_argument("--member-name", required=True)
+    p.add_argument("--field", required=True)
+
+    p = sub.add_parser("profile-list", help="列家庭成员资料")
+    p.add_argument("--member-name", default="")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -282,6 +337,9 @@ def main():
         "doc-update": cmd_doc_update,
         "doc-ack": cmd_doc_ack,
         "doc-remove": cmd_doc_remove,
+        "profile-set": cmd_profile_set,
+        "profile-unset": cmd_profile_unset,
+        "profile-list": cmd_profile_list,
     }
     try:
         dispatch[args.command](args)

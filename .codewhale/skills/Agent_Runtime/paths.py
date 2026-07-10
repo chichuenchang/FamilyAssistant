@@ -8,7 +8,8 @@ Family Assistant — 磁盘布局解析（数据落盘位置的单一事实来�
     data/<成员目录>/notes/notes.db         成员备忘 + notes/YYYY-MM/ 图片，私有
     data/<成员目录>/inbox/YYYY-MM/          来图暂存（按发送成员归属）
     data/<成员目录>/forms/                  填表会话 JSON 与填好的 PDF，私有
-    data/Family/ledger.db                   家庭账本（收支/定期/划转/报税/汇率/文档）
+    data/Family/ledger.db                   家庭账本（收支/定期/划转/报税/汇率，纯财务）
+    data/Family/documents.db                家庭文档库（documents + profiles，家庭共享）
     data/Family/receipts/YYYY-MM/           票据图片
     data/Family/documents/<doc_type>/       长期文档（家庭与成员）
 
@@ -64,6 +65,11 @@ def family_dir() -> Path:
 def family_ledger() -> Path:
     """家庭账本 DB（收支/定期/划转/报税/汇率/文档）。"""
     return family_dir() / "ledger.db"
+
+
+def family_documents_db() -> Path:
+    """家庭文档库（documents + profiles 表，家庭共享）。"""
+    return family_dir() / "documents.db"
 
 
 def family_receipts_dir(dt: date | None = None) -> Path:

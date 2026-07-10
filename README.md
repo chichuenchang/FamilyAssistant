@@ -23,6 +23,7 @@
 - OCR 全文索引，关键词检索（"我们有哪些保险"）
 - **到期跟踪 + 每日主动提醒**：到期前 Bot 每天推送（如 "租约 20 天后到期 — 提前60天通知房东"），`doc-ack` 确认后不再重复
 - 重复检测（证件编号 / 文件哈希）
+- **家庭成员资料**：法定名/生日/电话/住址/证件卡号等长期事实存家庭共享库（documents.db），全家每次对话自动带上——填表建议、"爸爸生日几号"随口即答；对话里提到即自动更新
 
 ### 📋 PDF 表格代填（Form Filler）
 - 微信/Telegram 发一份 PDF 表格说"帮我填"→ Bot 识别字段，**一条消息问一个空**，答完自动生成填好的 PDF 发回
@@ -253,7 +254,7 @@ FamilyAssistant/
 ├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）
 ├── FamilyAssistant.md    ← 开发者总览（架构 / config 键表 / 运行方式）
 ├── data/                 ← 全部用户数据（git 不跟踪）
-│   ├── Family/           ← 家庭共享：ledger.db、receipts/、documents/
+│   ├── Family/           ← 家庭共享：ledger.db（财务）、documents.db（文档+成员资料）、receipts/、documents/
 │   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）

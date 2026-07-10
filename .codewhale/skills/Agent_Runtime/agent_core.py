@@ -150,6 +150,7 @@ _FORM_COMMANDS = {"form-scan", "form-define", "form-next", "form-set",
 _DOC_AGENT_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
                        "doc-update", "doc-ack"}
 _BACKUP_AGENT_COMMANDS = {"backup-now", "backup-status", "backup-verify"}
+_PROFILE_COMMANDS = {"profile-set", "profile-unset", "profile-list"}
 
 # 备忘/工作表/文档/日程/备份/联网命令始终允许（Agent 核心能力，不随 wechat 白名单
 # 配置开关）。否则 config.json 缺失/损坏 → _CONFIG={} → 这些工具非对称失效（返回
@@ -164,11 +165,12 @@ ALLOWED_COMMANDS |= _BACKUP_AGENT_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
 ALLOWED_COMMANDS |= _ANYSEARCH_COMMANDS
 ALLOWED_COMMANDS |= _FORM_COMMANDS
+ALLOWED_COMMANDS |= _PROFILE_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
     """子命令 → 所属 skill 的 CLI 路径。"""
-    if cmd in _DOC_COMMANDS or cmd in _DOC_FILE_COMMANDS:
+    if cmd in _DOC_COMMANDS or cmd in _DOC_FILE_COMMANDS or cmd in _PROFILE_COMMANDS:
         skill = "Document_Keeper"
     elif cmd in _BACKUP_COMMANDS:
         skill = "Remote_Backup"
@@ -291,6 +293,8 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 - 用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）
 - 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
 - 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
+- 用户提供长期个人事实（法定名/生日/电话/邮箱/住址/证件卡号等）→ set_profile_field 存到家庭成员资料（member-name 填事实属于谁，家庭层面如住址用 Family），不要存成备忘；这类信息全家共享
+- 填 PDF 表格时建议值优先取自"家庭成员资料"块（仍然逐字段问用户确认）
 - 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes；删某条→delete_note；置顶/取消置顶→pin_note
 - 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet；列我所有表→list_worksheets；删字段→unset_worksheet_field、删行→delete_worksheet_row、改表名→rename_worksheet、置顶表→pin_worksheet、删整表→delete_worksheet
 - 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
@@ -385,6 +389,8 @@ def _tool_show_document(args): return _run_cli("doc-show", args)
 def _tool_due_documents(args): return _run_cli("doc-due", args)
 def _tool_update_document(args): return _run_cli("doc-update", args)
 def _tool_ack_document(args): return _run_cli("doc-ack", args)
+def _tool_set_profile_field(args): return _run_cli("profile-set", args)
+def _tool_remove_profile_field(args): return _run_cli("profile-unset", args)
 def _tool_backup_now(args): return _run_cli("backup-now", args)
 def _tool_backup_status(args): return _run_cli("backup-status", args)
 def _tool_backup_verify(args): return _run_cli("backup-verify", args)
@@ -651,6 +657,8 @@ _TOOL_MAP = {
     "anysearch_search": _tool_anysearch_search,
     "anysearch_extract": _tool_anysearch_extract,
     "anysearch_subdomains": _tool_anysearch_subdomains,
+    "set_profile_field": _tool_set_profile_field,
+    "remove_profile_field": _tool_remove_profile_field,
     "fill_form_scan": _tool_fill_form_scan,
     "fill_form_define_fields": _tool_fill_form_define,
     "fill_form_next": _tool_fill_form_next,
@@ -1064,6 +1072,16 @@ TOOL_SCHEMAS = [
         "session": _s("会话 id"),
     }, ["session"]),
     _fn("fill_form_list", "列出我的填表会话（恢复中断的填表用）。", {}),
+    _fn("set_profile_field", "写/改一条家庭成员资料（法定名/生日/电话/邮箱/住址/证件卡号等"
+        "长期个人事实，全家共享，全家可见可改）。用户提供这类信息时随手存这里，别存备忘。", {
+        "member-name": _s("这条事实属于谁：登记成员显示名；家庭层面（住址等）用 Family"),
+        "field": _s("字段名，如 生日 / 电话 / LAP卡号"),
+        "value": _s("值"),
+    }, ["member-name", "field", "value"]),
+    _fn("remove_profile_field", "删一条家庭成员资料。", {
+        "member-name": _s("成员显示名或 Family"),
+        "field": _s("字段名"),
+    }, ["member-name", "field"]),
     _fn("fill_form_cancel", "取消一个填表会话。", {
         "session": _s("会话 id"),
     }, ["session"]),
@@ -1073,6 +1091,7 @@ TOOL_SCHEMAS = [
 # ── 备忘上下文注入 ──────────────────────────────────────────
 
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Note_Keeper"))
+sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
 
 
@@ -1099,6 +1118,26 @@ def _notes_context(member: str, recent_limit: int = 5, clip: int = 100,
                 f"完整内容用 search_notes 查）\n" + "\n".join(lines))
     except Exception:
         _log.exception("备忘上下文注入失败（已跳过）")
+        return ""
+
+
+def _profiles_context(db_path: str | None = None) -> str:
+    """家庭成员资料块（家庭共享，注入所有成员对话）。失败/为空返回空串。"""
+    try:
+        import doc_db as _doc_db
+        rows = _doc_db.list_profiles(db_path=db_path)
+        if not rows:
+            return ""
+        lines, cur = [], None
+        for r in rows:
+            if r["member"] != cur:
+                cur = r["member"]
+                lines.append(f"【{cur}】")
+            lines.append(f"  {r['field']}: {r['value']}")
+        return ("\n\n## 家庭成员资料（全家共享，可用 set_profile_field 更新）\n"
+                + "\n".join(lines))
+    except Exception:
+        _log.exception("成员资料上下文注入失败（已跳过）")
         return ""
 
 
@@ -1249,6 +1288,7 @@ class Agent:
                        f"查询类工具可用 member 参数按成员过滤。")
         msgs = [{"role": "system",
                  "content": self.system_prompt + member_note
+                 + _profiles_context()
                  + _notes_context(member) + _worksheets_context(member)
                  + _schedule_context(member)}]
         user_history = self.history[user]
