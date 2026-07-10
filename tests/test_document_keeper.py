@@ -18,9 +18,9 @@ def test_doc_models_fallback_on_missing_config(tmp_path):
     assert doc_models._load_config_from(tmp_path / "nope.json") == {}
 
 
-def test_default_db_is_family_ledger():
-    """Documents share the Family ledger; files live under data/Family/documents."""
-    assert doc_models.DB_PATH.as_posix().endswith("data/Family/ledger.db")
+def test_default_db_is_family_documents_db():
+    """Documents live in their own family-shared DB; files under data/Family/documents."""
+    assert doc_models.DB_PATH.as_posix().endswith("data/Family/documents.db")
     assert doc_models.DOCUMENTS_DIR.as_posix().endswith("data/Family/documents")
 
 

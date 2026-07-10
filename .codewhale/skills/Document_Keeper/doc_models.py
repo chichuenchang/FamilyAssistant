@@ -45,7 +45,7 @@ import sys as _sys
 _sys.path.insert(0, str(_ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
 import paths as _paths
 
-DB_PATH = _paths.family_ledger()                   # data/Family/ledger.db
+DB_PATH = _paths.family_documents_db()             # data/Family/documents.db
 DOCUMENTS_DIR = _paths.family_dir() / "documents"  # data/Family/documents
 
 # ---------- SQL DDL ----------
@@ -76,4 +76,14 @@ CREATE INDEX IF NOT EXISTS idx_doc_type   ON documents(doc_type);
 CREATE INDEX IF NOT EXISTS idx_doc_expiry ON documents(expiry_date);
 CREATE INDEX IF NOT EXISTS idx_doc_member ON documents(member);
 CREATE INDEX IF NOT EXISTS idx_doc_status ON documents(status);
+
+CREATE TABLE IF NOT EXISTS profiles (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    member     TEXT NOT NULL,
+    field      TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(member, field)
+);
+CREATE INDEX IF NOT EXISTS idx_profiles_member ON profiles(member);
 """
