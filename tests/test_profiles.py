@@ -59,3 +59,53 @@ class TestProfilesCRUD:
         for m, f, v in [("", "x", "1"), ("A", "", "1"), ("A", "x", "")]:
             with pytest.raises(ValueError):
                 doc_db.set_profile(m, f, v, db_path=pdb)
+
+
+import os
+import subprocess
+import sys as _sys
+from pathlib import Path as _Path
+
+_DOC_CLI = str(_Path(__file__).resolve().parent.parent
+               / ".codewhale" / "skills" / "Document_Keeper" / "cli.py")
+
+
+def _run_cli(*args, db):
+    env = {**os.environ, "DOC_KEEPER_DB": db}
+    return subprocess.run([_sys.executable, _DOC_CLI, *args],
+                          capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=env)
+
+
+class TestProfileCLI:
+    def test_set_list_unset_roundtrip(self, tmp_path):
+        db = str(tmp_path / "documents.db")
+        r = _run_cli("profile-set", "--member-name", "Family",
+                     "--field", "住址", "--value", "309-10530 56 Ave NW", db=db)
+        assert r.returncode == 0 and "✅" in r.stdout
+        r = _run_cli("profile-list", db=db)
+        assert "【Family】" in r.stdout and "住址: 309-10530 56 Ave NW" in r.stdout
+        r = _run_cli("profile-unset", "--member-name", "Family",
+                     "--field", "住址", db=db)
+        assert "已删除" in r.stdout
+        r = _run_cli("profile-list", db=db)
+        assert "没有成员资料" in r.stdout
+
+    def test_unset_missing_errors(self, tmp_path):
+        db = str(tmp_path / "documents.db")
+        r = _run_cli("profile-unset", "--member-name", "Family",
+                     "--field", "无", db=db)
+        assert r.returncode == 1 and "[错误]" in r.stdout
+
+
+def test_cli_member_validation_without_override(tmp_path):
+    # 无 DOC_KEEPER_DB → 校验生效。未登记名字必须报错（DATA_ROOT 指向 tmp 不落真库）。
+    env = {**os.environ, "DATA_ROOT": str(tmp_path / "data")}
+    env.pop("DOC_KEEPER_DB", None)
+    r = subprocess.run([_sys.executable, _DOC_CLI, "profile-set",
+                        "--member-name", "Nobody_XYZ", "--field", "x",
+                        "--value", "1"],
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", env=env)
+    assert r.returncode == 1
+    assert "成员未登记" in r.stdout
