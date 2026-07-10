@@ -69,3 +69,8 @@ def test_notes_image_dir_created(env):
     from datetime import date
     d = paths.member_notes_image_dir("Alex Lee", date(2026, 6, 1))
     assert d.exists() and d.as_posix().endswith("data/Alex/notes/2026-06")
+
+
+def test_member_forms_dir_created(env):
+    d = paths.member_forms_dir("Alex Lee")
+    assert d.is_dir() and d.as_posix().endswith("data/Alex/forms")

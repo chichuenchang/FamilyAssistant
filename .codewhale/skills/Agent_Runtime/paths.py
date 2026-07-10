@@ -7,6 +7,7 @@ Family Assistant — 磁盘布局解析（数据落盘位置的单一事实来�
     data/<成员目录>/tasks/tasks.db         成员待办（tasks），私有
     data/<成员目录>/notes/notes.db         成员备忘 + notes/YYYY-MM/ 图片，私有
     data/<成员目录>/inbox/YYYY-MM/          来图暂存（按发送成员归属）
+    data/<成员目录>/forms/                  填表会话 JSON 与填好的 PDF，私有
     data/Family/ledger.db                   家庭账本（收支/定期/划转/报税/汇率/文档）
     data/Family/receipts/YYYY-MM/           票据图片
     data/Family/documents/<doc_type>/       长期文档（家庭与成员）
@@ -107,6 +108,13 @@ def member_sync_state(member: str, domain: str) -> Path:
 def member_inbox_dir(member: str, dt: date | None = None) -> Path:
     """来图暂存 data/<成员>/inbox/YYYY-MM/，不存在则创建。"""
     d = member_dir(member) / "inbox" / (dt or date.today()).strftime("%Y-%m")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def member_forms_dir(member: str) -> Path:
+    """填表会话与产出 data/<成员>/forms/，不存在则创建。"""
+    d = member_dir(member) / "forms"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
