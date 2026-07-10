@@ -51,17 +51,59 @@ def get_db(db_path: Optional[str] = None) -> sqlite3.Connection:
     """获取数据库连接，自动启用 WAL 和 foreign keys，并确保 documents 表存在。
 
     幂等建表（CREATE ... IF NOT EXISTS）放在连接处：reminder 每轮轮询都读
-    documents，但账本在首次 doc-add 前从未 init_db，会 "no such table"。
-    在所有读写经过的唯一入口建表，虚拟账本上的读取返回空而非崩溃。
+    documents，但库在首次 doc-add 前从未 init_db，会 "no such table"。
+    在所有读写经过的唯一入口建表，虚拟库上的读取返回空而非崩溃。
+
+    默认路径连接同时兜底做一次账本迁移（documents 表历史上住在
+    ledger.db，2026-07 起搬到 documents.db）；显式 db_path（测试）跳过。
+    路径实时经 paths 解析（尊重运行中设置的 DATA_ROOT，测试依赖此点）。
     """
-    path = db_path or str(DB_PATH)
+    path = db_path or str(_paths.family_documents_db())
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    if db_path is None:
+        try:
+            _migrate_from_ledger(conn, str(_paths.family_ledger()))
+        except Exception:
+            conn.close()
+            raise
     return conn
+
+
+def _migrate_from_ledger(conn: sqlite3.Connection, ledger_path: str) -> int:
+    """把历史 documents 行从账本搬进本库。幂等：本库已有行或账本无表则不动。
+
+    先拷贝后改名：拷贝在本库单事务内；账本表改名 documents_legacy 作保险
+    （改名失败下次也不会重搬——本库已有行）。返回搬运行数。
+    """
+    cur = conn.execute("SELECT COUNT(*) FROM documents")
+    if cur.fetchone()[0] > 0 or not os.path.exists(ledger_path):
+        return 0
+    src = sqlite3.connect(ledger_path)
+    src.row_factory = sqlite3.Row
+    try:
+        has = src.execute("SELECT name FROM sqlite_master "
+                          "WHERE type='table' AND name='documents'").fetchone()
+        if not has:
+            return 0
+        rows = src.execute("SELECT * FROM documents ORDER BY id").fetchall()
+        if not rows:
+            return 0
+        cols = rows[0].keys()
+        placeholders = ",".join("?" for _ in cols)
+        with conn:                                  # 单事务，失败自动回滚
+            conn.executemany(
+                f"INSERT INTO documents ({','.join(cols)}) VALUES ({placeholders})",
+                [tuple(r) for r in rows])
+        src.execute("ALTER TABLE documents RENAME TO documents_legacy")
+        src.commit()
+        return len(rows)
+    finally:
+        src.close()
 
 
 def init_db(db_path: Optional[str] = None) -> None:
