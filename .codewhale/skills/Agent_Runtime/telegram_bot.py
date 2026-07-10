@@ -40,6 +40,7 @@ import logging
 
 from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
 from members import resolve
+import paths as _paths
 
 log = logging.getLogger("familyassist.telegram")
 
@@ -56,8 +57,8 @@ from image_gc import image_gc_tick as _image_gc_tick
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
 
-# 上次处理的 update_id（避免重复）
-OFFSET_FILE = ROOT / "data" / ".telegram_offset"
+# 上次处理的 update_id（避免重复）；跟随 data_root，备份硬排除该文件名
+OFFSET_FILE = _paths.data_root() / ".telegram_offset"
 
 
 def _load_offset() -> int:
@@ -218,7 +219,6 @@ def send_document(chat_id: int | str, path: str, caption: str = "") -> bool:
 def _send_reply(chat_id, reply: str) -> None:
     """拆出图片/文档哨兵：先发图，再发文档，最后发文字。失败仅记录，不影响文字。"""
     from agent_core import split_reply
-    import paths as _paths
     text, imgs, docs = split_reply(reply or "")
     root = _paths.data_root().resolve()
     for rel in imgs:

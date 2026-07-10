@@ -2,7 +2,7 @@
 """Web_Reach CLI — 只读联网读取/搜索/YouTube 总结。
 
 子命令:
-  web-search --query "..."   联网搜索最新资讯（Jina s.jina.ai，无需 key）
+  web-search --query "..."   联网搜索最新资讯（DuckDuckGo 结果页经 Jina r.jina.ai 读取，无需 key）
   web-read   --url "..."     抓取并清洗单个网页正文（Jina r.jina.ai）
   yt-summary --url "..."     YouTube 取字幕转文字（无字幕回退标题+简介）
 

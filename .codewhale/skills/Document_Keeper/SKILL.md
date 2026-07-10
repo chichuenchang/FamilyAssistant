@@ -17,7 +17,7 @@
 
 数据模块名带 `doc_` 前缀（不叫 models/db）：Expense_Tracker 已在共享进程占用这两个模块名。
 
-文件存档在 `data/Family/documents/<类型>/`，数据库共用家庭账本 `data/Family/ledger.db`（路径经 `Agent_Runtime/paths`）。行内 `file_path` 记 data 相对路径（`Family/documents/...`）。文档为家庭共享（含成员个人证件，统一归家庭目录）。
+文件存档在 `data/Family/documents/<类型>/`，数据库共用家庭账本 `data/Family/ledger.db`（路径经 `Agent_Runtime/paths`；测试用 `DOC_KEEPER_DB` 环境变量覆盖）。行内 `file_path` 记 data 相对路径（`Family/documents/...`）。文档为家庭共享（含成员个人证件，统一归家庭目录）。
 
 ## 数据模型
 
@@ -35,7 +35,7 @@
 | action_note | TEXT | 到期要做什么（如 提前60天通知房东） |
 | remind_days | INTEGER | 该文档提醒提前量；空用 config `reminder_lead_days` |
 | acknowledged | INTEGER | 提醒已确认（到期日变更自动清零） |
-| file_path | TEXT | 原始文件相对路径 `documents/<类型>/...` |
+| file_path | TEXT | 原始文件 data_root 相对路径 `Family/documents/<类型>/...` |
 | ocr_text | TEXT | OCR 全文（关键词检索用） |
 | data | TEXT(JSON) | 灵活字段（含 file_sha256 重复检测哈希） |
 | status | TEXT | active / expired / archived / superseded |

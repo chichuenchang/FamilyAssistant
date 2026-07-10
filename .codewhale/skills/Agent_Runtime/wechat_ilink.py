@@ -69,8 +69,8 @@ sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
 from calendar_sync import calendar_tick as _calendar_tick
 from image_gc import image_gc_tick as _image_gc_tick
 
-# 凭据存储路径
-CREDS_FILE = ROOT / "data" / "wechat_creds.json"
+# 凭据存储路径（跟随 data_root；备份硬排除任何含 "creds" 的文件名）
+CREDS_FILE = _paths.data_root() / "wechat_creds.json"
 
 
 def _with_quote(text: str, quoted_title) -> str:

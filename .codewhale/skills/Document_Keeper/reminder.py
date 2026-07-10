@@ -20,9 +20,11 @@ sys.path.insert(0, str(HERE))                                   # 同目录 doc_
 sys.path.insert(0, str(HERE.parent / "Agent_Runtime"))          # 成员注册表
 
 import doc_db
+import paths as _paths
 from members import load_members
 
-STATE_FILE = ROOT / "data" / ".doc_reminder_state"
+# 跟随 data_root；备份硬排除该文件名
+STATE_FILE = _paths.data_root() / ".doc_reminder_state"
 
 
 def due_message(db_path: str | None = None) -> str | None:

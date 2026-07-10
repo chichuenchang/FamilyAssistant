@@ -2,7 +2,7 @@
 """Any_Search CLI — 实时联网搜索/抓取（AnySearch JSON-RPC API）。
 
 子命令:
-  any-search    --query "..."     联网搜索（通用，或带 --domain/--sub-domain 做垂直搜索）
+  any-search    --query "..."     联网搜索（通用，或带 --domain/--sub_domain 做垂直搜索）
   any-extract   --url "..."       抓取并提取单个网页全文（markdown）
   any-subdomains --domains "a,b"  列出垂直领域可用子域及参数（垂直搜索前的发现步骤）
 

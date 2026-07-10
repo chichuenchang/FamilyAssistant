@@ -89,7 +89,7 @@ CFG = _load_cfg()
 
 def _global_state_file() -> Path:
     """兼容老路径的全局状态文件（无 member 的 refresh/status 用）。"""
-    return Path(os.environ.get("CALENDAR_STATE_DIR") or (ROOT / "data")) \
+    return Path(os.environ.get("CALENDAR_STATE_DIR") or _paths.data_root()) \
         / ".calendar_state.json"
 
 

@@ -13,12 +13,7 @@ import json
 import os
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
-
-# 兜底单库默认（仅未传 db_path 时）；运行时按成员注入 db_path。
-_ROOT = Path(__file__).resolve().parents[3]
-DB_PATH = _ROOT / "data" / "ledger.db"
 
 _KINDS = ("kv", "table")
 
@@ -52,7 +47,11 @@ def _now() -> str:
 
 
 def _connect(db_path: Optional[str] = None) -> sqlite3.Connection:
-    path = db_path or str(DB_PATH)
+    # db_path 必传（工作表与备忘同库，经 paths.member_store(member,"notes") 解析）；
+    # 历史上兜底旧单库 data/ledger.db，会静默建错库，故改为显式报错。
+    if not db_path:
+        raise ValueError("需要 db_path（工作表按成员分库，经 paths.member_store 解析）")
+    path = str(db_path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row

@@ -110,7 +110,7 @@ def setup_logging(debug: bool = True) -> logging.Logger:
     sh.setFormatter(fmt)
     logger.addHandler(sh)
     if debug:
-        log_dir = ROOT / "data"
+        log_dir = _paths.data_root()
         log_dir.mkdir(parents=True, exist_ok=True)
         fh = logging.FileHandler(log_dir / "bot_debug.log", encoding="utf-8")
         fh.setFormatter(fmt)
@@ -1009,7 +1009,8 @@ sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Note_Keeper"))
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
 
 
-def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
+def _notes_context(member: str, recent_limit: int = 5, clip: int = 100,
+                   db_path: str | None = None) -> str:
     """取该成员置顶 + 最近备忘，拼成 system prompt 附加块。
 
     进程内直调 note_db（每条消息都要取，subprocess 太重）。
@@ -1017,7 +1018,9 @@ def _notes_context(member: str, recent_limit: int = 5, clip: int = 100) -> str:
     """
     try:
         import note_db
-        notes = note_db.pinned_and_recent(member, recent_limit=recent_limit)
+        notes = note_db.pinned_and_recent(
+            member, recent_limit=recent_limit,
+            db_path=db_path or str(_paths.member_store(member, "notes")))
         if not notes:
             return ""
         lines = []
@@ -1040,8 +1043,9 @@ def _worksheets_context(member: str, db_path: str | None = None) -> str:
     """
     try:
         import sheet_db
-        kw = {"db_path": db_path} if db_path else {}
-        sheets = sheet_db.pinned_sheets(member, **kw)
+        sheets = sheet_db.pinned_sheets(
+            member,
+            db_path=db_path or str(_paths.member_store(member, "notes")))
         if not sheets:
             return ""
         blocks = []

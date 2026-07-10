@@ -1,6 +1,10 @@
 # 可选运行时依赖（核心功能 stdlib only；以下仅增强特定 skill）
 # pip install -r requirements-optional.txt
+# weixin-ilink — Agent_Runtime 的微信频道（wechat_ilink.py --mode run 扫码登录 + 长轮询）；未安装时仅微信频道不可用。
+weixin-ilink[qr]
 # yt-dlp — Web_Reach 的 YouTube 字幕转写；未安装时 yt-summary 优雅降级（回退标题+简介或报错），不崩溃。
 yt-dlp
 # matplotlib — Note_Keeper 的工作表数据可视化（chart-render / visualize_data）；未安装时优雅降级（chart-render 退出并提示 pip install matplotlib）。
 matplotlib
+# numpy — chart.py 直接 import（matplotlib 本身也依赖它，这里显式声明）。
+numpy

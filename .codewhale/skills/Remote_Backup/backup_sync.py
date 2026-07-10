@@ -34,6 +34,7 @@ import backup_provider
 
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
 import members as _members
+import paths as _paths
 
 _FALLBACK_CFG = {"enabled": False, "debounce_seconds": 60}
 
@@ -58,7 +59,18 @@ CFG = _load_cfg()
 
 
 def _data_dirname() -> str:
-    """data_root 目录名（config.data_root，缺省 data）。备份 rel 的 <data>/ 段。"""
+    """data_root 目录名（备份 rel 的 <data>/ 段）。
+
+    与 paths.data_root() 同源：DATA_ROOT 环境变量优先（在 ROOT 下时取相对段；
+    指到 ROOT 外——测试 tmp——则退回 config），否则 BACKUP_CONFIG/config.json
+    的 data_root，缺省 data。备份镜像按 ROOT 相对布局，故只取目录段。
+    """
+    env = os.environ.get("DATA_ROOT")
+    if env:
+        try:
+            return Path(env).resolve().relative_to(ROOT).as_posix()
+        except (ValueError, OSError):
+            pass
     try:
         raw = json.loads(_cfg_path().read_text(encoding="utf-8"))
         return raw.get("data_root") or "data"
@@ -68,7 +80,7 @@ def _data_dirname() -> str:
 
 _DATA_DIRNAME = _data_dirname()
 
-_STATE_DIR = Path(os.environ.get("BACKUP_STATE_DIR") or (ROOT / "data"))
+_STATE_DIR = Path(os.environ.get("BACKUP_STATE_DIR") or _paths.data_root())
 STATE_FILE = _STATE_DIR / ".backup_state.json"
 
 # 永不进备份的路径（即使用户把 data 整个加进 include）

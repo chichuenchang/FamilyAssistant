@@ -81,9 +81,9 @@ def _validate_member(name: str) -> str:
 
 
 def _store_receipt(src: str, when: str, label: str) -> str:
-    """复制票据到 receipts/YYYY-MM/，返回相对项目根的路径（正斜杠）。
+    """复制票据到 receipts/YYYY-MM/，返回 data_root 相对路径（正斜杠，如 Family/receipts/...）。
 
-    - 已在票据目录内的文件不复制，原样返回相对路径（如频道存入的入站照片）。
+    - 已在票据目录内的文件不复制，原样返回相对路径。
     - 否则归档为 receipts/YYYY-MM/YYYY-MM-DD_<label>.ext（月份/日期取 when，无效则今天）。
     - 同名冲突追加 _1/_2…。文件不存在抛 ValueError（main 捕获，干净报错退出）。
     """

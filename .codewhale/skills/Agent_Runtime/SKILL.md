@@ -8,11 +8,13 @@
 
 ```
 .codewhale/skills/Agent_Runtime/
-├── SKILL.md          ← 本文件
-├── agent_core.py     ← 频道无关 Agent（共用大脑）
-├── members.py        ← 成员注册表（频道 id → 成员名；存 git 忽略的 data/members.json）
-├── wechat_ilink.py   ← 微信传输层
-└── telegram_bot.py   ← Telegram 传输层
+├── SKILL.md            ← 本文件
+├── agent_core.py       ← 频道无关 Agent（共用大脑）
+├── members.py          ← 成员注册表（频道 id → 成员名；存 git 忽略的 data/members.json）
+├── paths.py            ← 磁盘布局解析（数据落盘位置的单一事实来源）
+├── migrate_storage.py  ← 旧单库/旧目录 → 按成员分库的一次性迁移
+├── wechat_ilink.py     ← 微信传输层
+└── telegram_bot.py     ← Telegram 传输层
 ```
 
 所有远程频道共用同一个大脑 —— 本目录 `agent_core.py` 里的 `Agent`。无论消息从微信还是 Telegram 进来，Agent 行为、指令、工具完全一致。频道只负责"收消息 → 转交 Agent → 回消息"，不含任何业务逻辑。业务逻辑（记账/查账）在 `.codewhale/skills/Expense_Tracker/cli.py`（Agent 经 subprocess 调用），OCR 在 `.codewhale/skills/OCR/ocr.py`（Agent 经 `sys.path` import）。
@@ -95,6 +97,7 @@ if __name__ == "__main__":
 - 用频道内唯一 id 作 `user`（隔离对话历史），解析出的成员名作 `member` 传给 `agent.handle(text, user, member)` / `agent.handle_image(path, user, member)`（图片或 PDF）。
 - 图片或 PDF 文件消息：先存到发送成员的 inbox `data/<成员>/inbox/YYYY-MM/`（用 `agent_core.member_inbox_dir(member)`），再调 `agent.handle_image(path, user, member)`——**PDF 与图片同一入口**，`ocr_image` 对两者一视同仁（PDF 走腾讯 IsPdf 逐页）。OCR 后 LLM 分类，agent 搬到对应位置（备忘→成员 notes，票据→Family/receipts，文档→Family/documents）。非 PDF 文件仍回复"暂不支持"。
 - 长回复需分段的频道（如 Telegram 4096 字限制）自行在传输层切分（见 `telegram_bot.py:send_message`）。
+- 引用/回复消息（频道支持时，如微信 `ref_msg`）：传输层把被引用内容以 `[引用: <摘要>]\n` 前置进正文再交 Agent（见 `wechat_ilink.py:_with_quote`），引用媒体只有摘要占位（如 `[图片]`）。
 - 不在传输层写任何记账/查账逻辑 —— 全部交给 Agent。
 
 ## 安全
@@ -116,6 +119,7 @@ if __name__ == "__main__":
 | `TELEGRAM_BOT_TOKEN` | Telegram 频道 | Telegram 时必需 |
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 图片 OCR（见 [OCR Skill](../OCR/SKILL.md)） | 收图片时 |
 | `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` / `GDRIVE_REFRESH_TOKEN` | 云盘备份（`backup_tick` 在传输层轮询里跑，见 [Remote Backup](../Remote_Backup/SKILL.md)） | backup.enabled 时 |
+| `DATA_ROOT` | 数据根目录覆盖（优先于 config `data_root`；测试隔离用，见 `paths.py`） | ❌ |
 
 ## 依赖
 

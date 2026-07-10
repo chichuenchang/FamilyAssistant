@@ -128,12 +128,13 @@
 
 ### 票据存储约定
 
-- **入站频道照片**：传输层存为 `receipts/YYYY-MM/YYYYMMDD_HHMMSS_<频道>.jpg`（如 `_wechat` / `_telegram`）。
-- **`--receipt` 附带的票据**：`add` / `deposit-add` / `tax-add` 自动归档到 `receipts/YYYY-MM/`，
+- **入站频道照片**：传输层先存发送成员 inbox `data/<成员>/inbox/YYYY-MM/<ts>_<频道>.jpg`
+  （如 `_wechat` / `_telegram`；成员为空的兜底才落 `receipts/`）。
+- **`--receipt` 附带的票据**：`add` / `deposit-add` / `tax-add` 自动归档到 `Family/receipts/YYYY-MM/`，
   命名 `YYYY-MM-DD_<label>.ext`（label：交易 `类型_描述`、定期 `deposit_银行`、报税 `tax_年_国`），
   月份/日期取交易/起存/申报日期，无效则取今天；同名冲突追加 `_1`/`_2`。
-  已在 `receipts/` 目录内的文件（如上面的入站照片）原样保留、不再复制。
-- 路径相对项目根目录，存入数据库 `receipt_path`（正斜杠）。
+  已在 `receipts/` 目录内的文件原样保留、不再复制。
+- 路径存 data_root 相对（正斜杠，如 `Family/receipts/...`），入库 `receipt_path`。
 - 重要票据 `notes` 标记 `[重要票据]`。
 
 ## CLI 命令参考

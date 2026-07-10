@@ -2,7 +2,18 @@
 
 Scope: three parallel sweeps — (A) README/FamilyAssistant.md vs repo, (B) all nine
 SKILL.md vs their CLIs, (C) config.json / env vars / requirements / paths discipline.
-Key findings spot-verified by hand. Test suite: 474 passing at audit time.
+Key findings spot-verified by hand. Test suite: 470 passing at audit time.
+
+**Status: all findings fixed same day** (commit "fix: resolve consistency audit
+findings"). During the fix a live bug surfaced beyond the audit text:
+`agent_core._notes_context` / `_worksheets_context` called note_db/sheet_db without
+db_path, so pinned-notes/worksheets context injection silently read the stray legacy
+`data/ledger.db` (empty tables) instead of the member store — pinned items never
+reached the LLM. Fixed by resolving `paths.member_store(member, "notes")`; the legacy
+`DB_PATH = data/ledger.db` defaults were removed entirely (db_path now required,
+raises ValueError). The stray `data/ledger.db` itself (pre-migration leftover; all 26
+schedule items verified present in member stores; last touched 2026-06-20) was left
+on disk — safe to delete manually. Regression tests: `tests/test_path_discipline.py`.
 
 ## Confirmed doc-vs-code mismatches
 

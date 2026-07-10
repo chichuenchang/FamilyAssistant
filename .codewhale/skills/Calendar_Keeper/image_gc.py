@@ -44,7 +44,7 @@ def _cfg() -> dict:
 
 
 def _state_file() -> Path:
-    return Path(os.environ.get("IMAGE_GC_STATE_DIR") or (ROOT / "data")) \
+    return Path(os.environ.get("IMAGE_GC_STATE_DIR") or _paths.data_root()) \
         / ".image_gc_state.json"
 
 

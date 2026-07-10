@@ -244,6 +244,7 @@ FamilyAssistant/
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）
+├── FamilyAssistant.md    ← 开发者总览（架构 / config 键表 / 运行方式）
 ├── data/                 ← 全部用户数据（git 不跟踪）
 │   ├── Family/           ← 家庭共享：ledger.db、receipts/、documents/
 │   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/
@@ -251,7 +252,7 @@ FamilyAssistant/
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档
 ├── requirements-dev.txt  ← 开发依赖（pytest）
-└── requirements-optional.txt ← 可选增强依赖（yt-dlp、matplotlib；缺失则相关功能优雅降级）
+└── requirements-optional.txt ← 可选增强依赖（weixin-ilink、yt-dlp、matplotlib；缺失则相关功能优雅降级）
 ```
 
 ## 技术栈

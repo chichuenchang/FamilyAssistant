@@ -29,7 +29,27 @@ from pathlib import Path
 
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
-MEMBERS_PATH = ROOT / "data" / "members.json"
+
+
+def _default_members_path() -> Path:
+    """members.json 位置：data_root/members.json。
+
+    data_root 规则与 paths.data_root() 一致（DATA_ROOT 环境变量优先，
+    再 config.data_root，回退 data/）；paths.py import 本模块，
+    规则在此内联以免循环 import。仅 import 时求值一次（测试改后需 reload）。
+    """
+    env = os.environ.get("DATA_ROOT")
+    if env:
+        return Path(env) / "members.json"
+    try:
+        droot = json.loads((ROOT / "config.json").read_text(encoding="utf-8")) \
+                    .get("data_root") or "data"
+    except Exception:
+        droot = "data"
+    return ROOT / droot / "members.json"
+
+
+MEMBERS_PATH = _default_members_path()
 
 CHANNELS = ("telegram", "wechat")
 

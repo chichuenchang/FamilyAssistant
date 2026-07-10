@@ -10,7 +10,7 @@
 ├── SKILL.md            ← 本文件
 ├── backup_sync.py      ← 同步引擎（真实实现）：按成员镜像、脏标记、防抖、恢复
 ├── backup_provider.py  ← Google Drive provider 类（drive.file 最小权限；凭据前缀化）
-├── cli.py              ← backup-now / backup-status / backup-verify / backup-restore
+├── cli.py              ← backup-now / backup-status / backup-verify / backup-restore / backup-reorg
 └── ../Agent_Runtime/
     └── members.py      ← backup_pref()：每成员 backup 块解析
 ```
@@ -29,6 +29,8 @@
 - **全局防抖时钟** `data/.backup_state.json` 一份（共享）；**每成员独立清单与状态**
   `data/<Member>/.backup_manifest.json` + `.backup_state.json`。
 - 凭据类文件硬排除，永不上传。
+- 测试隔离环境变量（生产不用设）：`BACKUP_CONFIG`（替代 config.json）、
+  `BACKUP_STATE_DIR`（防抖时钟目录，缺省 data_root）、`BACKUP_MEMBERS`（替代 members.json）。
 
 ## CLI
 

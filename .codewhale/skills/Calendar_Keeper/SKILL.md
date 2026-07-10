@@ -55,7 +55,7 @@
 | 命令 | 行为 | Agent 可调 |
 |------|------|-----------|
 | `cal-add --member M --kind event\|task --title T [--date D] [--start HH:MM] [--end HH:MM] [--all-day] [--location L] [--notes N] [--source-image PATH]` | 新增（活动必须有日期；待办 --date=截止日可省；--source-image 关联原始来图） | ✅ |
-| `cal-list [--days N] [--kind K] [--member M] [--all]` | 未来 N 天日程 + 开放待办 | ✅ |
+| `cal-list --member M [--days N] [--kind K] [--all]` | 未来 N 天日程 + 开放待办（--member 定位成员分库，无 CAL_DB_PATH 覆盖时必填） | ✅ |
 | `cal-done --member M --id N` | 完成待办（--member 定位成员分库，无 CAL_DB_PATH 覆盖时必填） | ✅ |
 | `cal-delete --member M --id N` | 取消日程（同步删除远端；--member 同上必填） | ✅ |
 | `cal-sync [--member M]` | 立即强制刷新（忽略节流）+ 校验（--member 刷该成员活动+待办；不给则单库全局视图） | ✅ |
@@ -64,7 +64,7 @@
 ```bash
 python .codewhale/skills/Calendar_Keeper/cli.py cal-add --member 爸爸 --kind event \
     --title "游泳课" --date 2026-06-20 --start 14:00 --end 15:00 --location 泳馆
-python .codewhale/skills/Calendar_Keeper/cli.py cal-list
+python .codewhale/skills/Calendar_Keeper/cli.py cal-list --member 爸爸
 ```
 
 ## 用户开启远程同步（当前 provider = Google Calendar + Google Tasks）
@@ -77,6 +77,10 @@ python .codewhale/skills/Calendar_Keeper/cli.py cal-list
    （与备份的 refresh token 互不影响，scope 不同需各自授权。）
 4. （可选）非主日历：`setx GCAL_CALENDAR_ID "..."`（日历 id 形如邮箱，属隐私
    → 环境变量，不进 config.json）。
+
+> 测试隔离环境变量（生产不用设）：`CAL_DB_PATH`（单库覆盖，绝不打远端）、
+> `CALENDAR_CONFIG`（替代 config.json）、`CALENDAR_STATE_DIR` / `IMAGE_GC_STATE_DIR`
+> （全局状态文件目录，缺省 data_root）。
 5. 在 `data/members.json` 给该成员加 `sync` 块（成员私有文件，凭据不入此处）：
    `"sync": {"schedule": {"provider":"google_calendar","enabled":true}, "tasks": {"provider":"google_tasks","enabled":true}}`。
    无 `sync` 块 = 本地模式（不推不拉）。
