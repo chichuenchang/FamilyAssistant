@@ -58,6 +58,12 @@ ANYSEARCH_DIR = (
 )
 sys.path.insert(0, str(ANYSEARCH_DIR))
 
+FORM_DIR = (
+    Path(__file__).resolve().parent.parent
+    / ".codewhale" / "skills" / "Form_Filler"
+)
+sys.path.insert(0, str(FORM_DIR))
+
 import pytest
 import db as dbm  # the fixture below is named ``db`` — alias avoids shadowing
 
