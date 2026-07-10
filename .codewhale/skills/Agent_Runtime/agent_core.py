@@ -142,6 +142,8 @@ _CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
                  "cal-sync", "cal-status"}
 _REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
 _ANYSEARCH_COMMANDS = {"any-search", "any-extract", "any-subdomains"}
+_FORM_COMMANDS = {"form-scan", "form-define", "form-next", "form-set",
+                  "form-render", "form-list", "form-cancel"}
 
 # 文档/备份"管理类"里 Agent 真正会用的子集（破坏性的 doc-remove / backup-restore /
 # backup-reorg 仅限本机，永不进 Agent 白名单）。
@@ -161,6 +163,7 @@ ALLOWED_COMMANDS |= _CAL_COMMANDS
 ALLOWED_COMMANDS |= _BACKUP_AGENT_COMMANDS
 ALLOWED_COMMANDS |= _REACH_COMMANDS
 ALLOWED_COMMANDS |= _ANYSEARCH_COMMANDS
+ALLOWED_COMMANDS |= _FORM_COMMANDS
 
 
 def _cli_path(cmd: str) -> Path:
@@ -177,6 +180,8 @@ def _cli_path(cmd: str) -> Path:
         skill = "Web_Reach"
     elif cmd in _ANYSEARCH_COMMANDS:
         skill = "Any_Search"
+    elif cmd in _FORM_COMMANDS:
+        skill = "Form_Filler"
     else:
         skill = "Expense_Tracker"
     return ROOT / ".codewhale" / "skills" / skill / "cli.py"
@@ -290,6 +295,7 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 - 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet；列我所有表→list_worksheets；删字段→unset_worksheet_field、删行→delete_worksheet_row、改表名→rename_worksheet、置顶表→pin_worksheet、删整表→delete_worksheet
 - 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
 - 用户说"把我的租约/保单发给我""发我那个文件/那张图"→ send_document（先 list/show 拿 id）或 send_file（data 内相对路径）；文件会自动发给用户
+- 填 PDF 表格：用户发来表格并要求填写 → fill_form_scan（file 传保存路径）。平面/扫描表先按 OCR 布局推断字段（fill_form_define_fields）。之后进入逐字段问答：每次 fill_form_next 取一个字段，一条消息只问一个字段——即使你从成员注册表/备忘/文档里知道答案，也必须问，把已知值作为建议给出（"回复'对'或给出正确值"）。绝不擅自替用户填任何值，绝不编造。用户答一个记一个（fill_form_set_answer；用户说"跳过/留空"传空字符串）。全部答完（或用户说"剩下都留空"时把余下字段逐个置空）再 fill_form_render，PDF 会自动发给用户。中断的填表用 fill_form_list 恢复
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
 - 用户问"最新新闻/外面在发生什么/帮我查一下X" → 优先 anysearch_search（更准，可选 domain 垂直搜索：finance/health/academic/travel/code 等，先 anysearch_subdomains 发现子域）；web_search 为备选。发链接让看/总结文章 → anysearch_extract（备选 web_read）；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
 - 用户闲聊/问候 → 直接友好回复，不用调工具
@@ -301,6 +307,10 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 
 
 # ── CLI 执行器 ──────────────────────────────────────────────
+
+# 个别命令超时加长：form-scan 平面表要逐页渲染+OCR，form-render 要重组 PDF。
+_CLI_TIMEOUTS = {"form-scan": 120, "form-render": 120}
+
 
 def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
     """执行 CLI 命令并返回 stdout。"""
@@ -324,7 +334,7 @@ def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
         result = subprocess.run(
             [sys.executable, str(cli_path)] + cli_args,
             capture_output=True, text=True, cwd=str(ROOT),
-            timeout=30, encoding="utf-8", errors="replace",
+            timeout=_CLI_TIMEOUTS.get(cmd, 30), encoding="utf-8", errors="replace",
         )
         return result.stdout.strip() or result.stderr.strip()
     except subprocess.TimeoutExpired:
@@ -544,6 +554,24 @@ def _tool_anysearch_search(args): return _run_cli("any-search", args)
 def _tool_anysearch_extract(args): return _run_cli("any-extract", args)
 def _tool_anysearch_subdomains(args): return _run_cli("any-subdomains", args)
 
+
+def _tool_fill_form_scan(args): return _run_cli("form-scan", args)
+
+
+def _tool_fill_form_define(args):
+    args = dict(args)
+    fields = args.get("fields")
+    if isinstance(fields, (list, dict)):
+        args["fields"] = json.dumps(fields, ensure_ascii=False)
+    return _run_cli("form-define", args)
+
+
+def _tool_fill_form_next(args): return _run_cli("form-next", args)
+def _tool_fill_form_set(args): return _run_cli("form-set", args)
+def _tool_fill_form_render(args): return _run_cli("form-render", args)
+def _tool_fill_form_list(args): return _run_cli("form-list", args)
+def _tool_fill_form_cancel(args): return _run_cli("form-cancel", args)
+
 def _tool_ocr_image(args):
     path = args.get("path", "")
     # 安全：path 来自 LLM（间接来自用户消息），只允许数据根 data/ 内的文件
@@ -623,6 +651,13 @@ _TOOL_MAP = {
     "anysearch_search": _tool_anysearch_search,
     "anysearch_extract": _tool_anysearch_extract,
     "anysearch_subdomains": _tool_anysearch_subdomains,
+    "fill_form_scan": _tool_fill_form_scan,
+    "fill_form_define_fields": _tool_fill_form_define,
+    "fill_form_next": _tool_fill_form_next,
+    "fill_form_set_answer": _tool_fill_form_set,
+    "fill_form_render": _tool_fill_form_render,
+    "fill_form_list": _tool_fill_form_list,
+    "fill_form_cancel": _tool_fill_form_cancel,
 }
 
 # 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
@@ -645,16 +680,22 @@ _SHEET_TOOLS = {"create_worksheet", "list_worksheets", "show_worksheet",
 _CAL_MEMBER_TOOLS = {"complete_task", "remove_schedule_item", "list_schedule",
                      "sync_calendar", "calendar_status"}
 
+# 填表工具按成员私有（会话在 data/<成员>/forms/），一律强制注入发送者 member
+_FORM_TOOLS = {"fill_form_scan", "fill_form_define_fields", "fill_form_next",
+               "fill_form_set_answer", "fill_form_render", "fill_form_list",
+               "fill_form_cancel"}
+
 # 工具按产出附件分类：成功调用时 handle() 收集路径，尾部追加对应哨兵
 _IMAGE_TOOLS = {"visualize_data"}
-_DOC_TOOLS = {"send_document", "send_file"}
+_DOC_TOOLS = {"send_document", "send_file", "fill_form_render"}
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
     """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。
     备忘/工作表/日程工具（含读/删/完成/取消）一律强制注入，保证按成员隔离。"""
     if (tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS
-            or tool_name in _SHEET_TOOLS or tool_name in _CAL_MEMBER_TOOLS):
+            or tool_name in _SHEET_TOOLS or tool_name in _CAL_MEMBER_TOOLS
+            or tool_name in _FORM_TOOLS):
         targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
         if member:
             targs["member"] = member
@@ -1000,6 +1041,32 @@ TOOL_SCHEMAS = [
         "返回 domain/sub_domain/query_format/params_schema 表", {
         "domains": _s("单个或逗号分隔的多个领域，如 finance 或 finance,health"),
     }, ["domains"]),
+    _fn("fill_form_scan", "识别 PDF 表格的可填字段并创建填表会话（用户要求填表时用）。"
+        "可填写 PDF 直接列出字段；平面/扫描 PDF 返回逐页 OCR 文本+坐标，"
+        "需再调 fill_form_define_fields 提交你推断的字段。", {
+        "file": _s("PDF 路径（用户发来的保存路径，data 内）"),
+    }, ["file"]),
+    _fn("fill_form_define_fields", "平面表专用：把你从 OCR 布局推断出的待填字段提交给会话。"
+        "anchor 是填写区域（标签右侧或下方的空白处），页面像素坐标。", {
+        "session": _s("会话 id"),
+        "fields": _s('JSON 数组: [{"name","label","type":"text|checkbox|choice",'
+                     '"options":[],"page":0,"anchor":{"x","y","w","h"}}]'),
+    }, ["session", "fields"]),
+    _fn("fill_form_next", "取会话中下一个未回答字段（问用户前调它）。", {
+        "session": _s("会话 id"),
+    }, ["session"]),
+    _fn("fill_form_set_answer", "记录用户对某字段的回答。留空传空字符串。", {
+        "session": _s("会话 id"),
+        "field": _s("字段 name"),
+        "value": _s("用户给的值；checkbox 用 on/off；留空传 \"\""),
+    }, ["session", "field", "value"]),
+    _fn("fill_form_render", "所有字段回答完后生成填好的 PDF 并自动发给用户。", {
+        "session": _s("会话 id"),
+    }, ["session"]),
+    _fn("fill_form_list", "列出我的填表会话（恢复中断的填表用）。", {}),
+    _fn("fill_form_cancel", "取消一个填表会话。", {
+        "session": _s("会话 id"),
+    }, ["session"]),
 ]
 
 
@@ -1222,7 +1289,8 @@ class Agent:
                     if name in _IMAGE_TOOLS:
                         produced_images.append(result.strip())
                     elif name in _DOC_TOOLS:
-                        produced_docs.append(result.strip())
+                        # form-render 第一行是路径，后续可能有"警告:"行——哨兵只取首行
+                        produced_docs.append(result.strip().splitlines()[0])
                 tool_counts[name] = tool_counts.get(name, 0) + 1
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
@@ -1253,7 +1321,7 @@ class Agent:
         if ocr_text:
             prompt = (
                 f"用户发来一份材料（图片或 PDF），已保存为 {image_path}，OCR结果:\n{ocr_text}\n"
-                f"判断内容，按五种情况处理：\n"
+                f"判断内容，按六种情况处理：\n"
                 f"1) 单张消费票据：提取金额/日期/类别，调 add_transaction 记一笔。\n"
                 f"2) 银行/信用卡/支付App流水或账单（多行消费，PDF 多页账单常见）：逐笔记账，每条明细调一次"
                 f" add_transaction（可在一条回复里并发多次调用）。**重点：记的是每一笔交易明细，绝不要把账单总额、"
@@ -1270,12 +1338,14 @@ class Agent:
                 f"两者都把上面的保存路径传给 source-image，留存原始材料（日后可定期清理）。"
                 f"默认进你（发送者）的日历/待办，即使活动关于别的成员；仅用户明确说加到某成员时"
                 f"才传 for-member。\n"
-                f"5) 其他有信息价值的材料（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
+                f"5) 用户此前或随图说明想要**填写**这份表格（如\"帮我填这个表\"）："
+                f"不要归档，改调 fill_form_scan（file 传上面的保存路径）进入填表流程。\n"
+                f"6) 其他有信息价值的材料（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
                 f"content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
                 f"source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。\n"
                 f"注意：开出去的发票/报价单/还没付的账单 = 没有实际现金流，绝不要直接记成收入或支出；"
                 f"可建 add_task 跟进收款（带 source-image），别记成 income/expense。\n"
-                f"信息不完整就先问用户。记完简要汇报记了什么。"
+                f"信息不完整就先问用户。拿不准是归档还是填表时问用户。记完简要汇报记了什么。"
             )
             return self.handle(prompt, user=user, member=member)
         return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"

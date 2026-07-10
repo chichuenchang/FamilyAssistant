@@ -8,3 +8,9 @@ yt-dlp
 matplotlib
 # numpy — chart.py 直接 import（matplotlib 本身也依赖它，这里显式声明）。
 numpy
+# pypdf — Form_Filler 的可填写 PDF（AcroForm）读字段/填值；未安装时 form-scan 提示安装。
+pypdf
+# pypdfium2 — Form_Filler 的平面/扫描 PDF 逐页渲染；未安装时平面表填写不可用（可填写 PDF 不受影响）。
+pypdfium2
+# Pillow — Form_Filler 平面表盖字 + 重组 PDF（与 pypdfium2 配套）。
+Pillow
