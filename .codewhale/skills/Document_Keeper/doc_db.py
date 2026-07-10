@@ -367,3 +367,53 @@ def due_documents(
             out.append(d)
     out.sort(key=lambda d: (d["acknowledged"], d["days_left"]))
     return out
+
+
+# ---------- 家庭成员资料（profiles，家庭共享） ----------
+
+def set_profile(member: str, field: str, value: str,
+                db_path: Optional[str] = None) -> None:
+    """写/改一条成员资料（member+field 唯一，upsert）。空参数拒绝。"""
+    member = (member or "").strip()
+    field = (field or "").strip()
+    value = (str(value) if value is not None else "").strip()
+    if not (member and field and value):
+        raise ValueError("member/field/value 均不能为空")
+    conn = get_db(db_path)
+    with conn:
+        conn.execute(
+            "INSERT INTO profiles (member, field, value, updated_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(member, field) DO UPDATE SET "
+            "value=excluded.value, updated_at=excluded.updated_at",
+            (member, field, value, date.today().isoformat()))
+    conn.close()
+
+
+def unset_profile(member: str, field: str,
+                  db_path: Optional[str] = None) -> bool:
+    """删一条成员资料。返回是否真的删了。"""
+    conn = get_db(db_path)
+    with conn:
+        cur = conn.execute(
+            "DELETE FROM profiles WHERE member = ? AND field = ?",
+            (member, field))
+    conn.close()
+    return cur.rowcount > 0
+
+
+def list_profiles(member: Optional[str] = None,
+                  db_path: Optional[str] = None) -> list:
+    """列资料（全部或单成员），按 (member, field) 排序。"""
+    conn = get_db(db_path)
+    if member:
+        cur = conn.execute(
+            "SELECT member, field, value, updated_at FROM profiles "
+            "WHERE member = ? ORDER BY member, field", (member,))
+    else:
+        cur = conn.execute(
+            "SELECT member, field, value, updated_at FROM profiles "
+            "ORDER BY member, field")
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return rows
