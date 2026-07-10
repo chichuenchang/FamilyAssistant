@@ -221,6 +221,12 @@ FamilyAssistant/
 │       │   ├── sheet_db.py       ← 工作表数据层（kv 事实清单 / table 流水）
 │       │   ├── chart.py          ← 离线图表渲染（matplotlib Agg，可再生不入备份）
 │       │   └── cli.py            ← 备忘 / 工作表 / 图表 CLI 入口
+│       ├── Form_Filler/      ← PDF 表格代填（会话落盘，一字段一问）
+│       │   ├── SKILL.md
+│       │   ├── form_session.py   ← 填表会话 JSON 存储
+│       │   ├── form_fill.py      ← AcroForm 读字段/填值（pypdf）
+│       │   ├── form_overlay.py   ← 平面/扫描 PDF 渲染+盖字（pypdfium2+Pillow）
+│       │   └── cli.py            ← 填表 CLI 入口
 │       ├── Remote_Backup/    ← 用户数据云盘镜像（可选）
 │       │   ├── SKILL.md
 │       │   ├── backup_sync.py    ← 同步引擎
@@ -255,12 +261,12 @@ FamilyAssistant/
 ├── FamilyAssistant.md    ← 开发者总览（架构 / config 键表 / 运行方式）
 ├── data/                 ← 全部用户数据（git 不跟踪）
 │   ├── Family/           ← 家庭共享：ledger.db（财务）、documents.db（文档+成员资料）、receipts/、documents/
-│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/
+│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/、forms/（填表会话）
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档
 ├── requirements-dev.txt  ← 开发依赖（pytest）
-└── requirements-optional.txt ← 可选增强依赖（weixin-ilink、yt-dlp、matplotlib；缺失则相关功能优雅降级）
+└── requirements-optional.txt ← 可选增强依赖（weixin-ilink、yt-dlp、matplotlib、pypdf、pypdfium2、Pillow；缺失则相关功能优雅降级）
 ```
 
 ## 技术栈

@@ -36,7 +36,7 @@ from doc_models import DOC_TYPES, DOC_STATUSES, DOCUMENTS_DIR, REMINDER_LEAD_DAY
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# 测试钩子：覆盖数据库路径，避免测试碰真实账本
+# 测试钩子：覆盖数据库路径，避免测试碰真实文档库
 _DB_OVERRIDE = os.environ.get("DOC_KEEPER_DB") or None
 
 # 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）

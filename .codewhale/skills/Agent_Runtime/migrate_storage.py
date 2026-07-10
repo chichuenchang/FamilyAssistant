@@ -2,7 +2,8 @@
 Family Assistant — 一次性存储迁移：单库 data/ledger.db → 分库布局。
 
 把旧的单一 ledger.db 拆成：
-    data/Family/ledger.db               收支/定期/划转/报税/汇率/文档（家庭共享，当前多为空）
+    data/Family/ledger.db               收支/定期/划转/报税/汇率（家庭共享，当前多为空；
+                                        文档表随后由 doc_db 再迁去 data/Family/documents.db）
     data/<owner>/notes/notes.db         备忘按 member 分库（图片搬进该成员 notes/YYYY-MM/）
     data/<owner>/schedule/schedule.db   活动（kind=event）
     data/<owner>/tasks/tasks.db         待办（kind=task）

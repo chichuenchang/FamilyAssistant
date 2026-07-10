@@ -68,7 +68,7 @@
     "debounce_seconds": 60
   },
   "wechat": {
-    "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。allowed_commands 只是记账族命令白名单——增删仅影响记账族。备忘(note-*)/工作表(sheet-*)/图表(chart-render)/日程(cal-*)/文档(doc-*)/备份(backup-*)/联网(web-*/any-*) 是 Agent 核心能力，由 agent_core 恒定并入放行，不受本白名单增删影响（下面列 doc-*/backup-* 仅为可读性，删掉照样可用）。敏感命令（成员增删、doc-remove、backup-restore/reorg）既不在此也不并入，Agent 调不到。",
+    "_comment": "微信通道配置。基于 weixin-ilink SDK，扫码登录。allowed_commands 只是记账族命令白名单——增删仅影响记账族。备忘(note-*)/工作表(sheet-*)/图表(chart-render)/日程(cal-*)/文档(doc-*)/成员资料(profile-*)/填表(form-*)/备份(backup-*)/联网(web-*/any-*) 是 Agent 核心能力，由 agent_core 恒定并入放行，不受本白名单增删影响（下面列 doc-*/backup-* 仅为可读性，删掉照样可用）。敏感命令（成员增删、doc-remove、backup-restore/reorg）既不在此也不并入，Agent 调不到。",
     "allowed_commands": [
       "add",
       "list",
