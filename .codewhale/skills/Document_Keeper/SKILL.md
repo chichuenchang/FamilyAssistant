@@ -10,14 +10,30 @@
 .codewhale/skills/Document_Keeper/
 ├── SKILL.md       ← 本文件
 ├── doc_models.py  ← 数据模型 / SCHEMA / 文档类型（读 config.json）
-├── doc_db.py      ← SQLite CRUD & 到期查询（documents 表，建在 data/Family/ledger.db）
+├── doc_db.py      ← SQLite CRUD & 到期查询（documents + profiles 表，建在 data/Family/documents.db）
 ├── cli.py         ← 命令行入口（user / agent / 任意调用方）
 └── reminder.py    ← 每日到期提醒（传输层轮询时调用，按频道按日去重）
 ```
 
 数据模块名带 `doc_` 前缀（不叫 models/db）：Expense_Tracker 已在共享进程占用这两个模块名。
 
-文件存档在 `data/Family/documents/<类型>/`，数据库共用家庭账本 `data/Family/ledger.db`（路径经 `Agent_Runtime/paths`；测试用 `DOC_KEEPER_DB` 环境变量覆盖）。行内 `file_path` 记 data 相对路径（`Family/documents/...`）。文档为家庭共享（含成员个人证件，统一归家庭目录）。
+文件存档在 `data/Family/documents/<类型>/`，数据库为独立家庭文档库 `data/Family/documents.db`（路径经 `Agent_Runtime/paths.family_documents_db()`；测试用 `DOC_KEEPER_DB` 环境变量覆盖）。行内 `file_path` 记 data 相对路径（`Family/documents/...`）。文档为家庭共享（含成员个人证件，统一归家庭目录）。
+
+历史迁移：documents 表 2026-07 前住在家庭账本 `ledger.db`；首次以默认路径连接 documents.db 时自动搬家，账本里的旧表改名 `documents_legacy` 留作保险（确认无误后可手动删除）。
+
+## 家庭成员资料（profiles 表）
+
+长期个人事实（法定名/生日/电话/邮箱/住址/证件卡号等），家庭共享（全家可见可改），注入每个成员的每次对话（Agent 填表建议、称呼、查询都用它）。`member` 为登记成员显示名，家庭层面事实（住址等）用字面 `Family`。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INTEGER | 主键 |
+| member | TEXT | 成员显示名或 Family |
+| field | TEXT | 字段名（member+field 唯一，upsert） |
+| value | TEXT | 值 |
+| updated_at | TEXT | 最后更新日期 |
+
+CLI：`profile-set --member-name <名> --field <字段> --value <值>` / `profile-unset --member-name <名> --field <字段>` / `profile-list [--member-name <名>]`。member-name 须为登记成员或 Family（`DOC_KEEPER_DB` 测试覆盖时放行）。
 
 ## 数据模型
 
