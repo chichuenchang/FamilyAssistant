@@ -61,10 +61,11 @@ def _load_font(px: int):
 
 
 def stamp(pages: list, fields: list, out_pdf: str) -> list:
-    """把已答字段画到页面图上（就地改图），输出多页 PDF。返回警告（截断等）。
+    """把已答字段画到页面图（内存副本，不改源图，可反复重渲染），输出多页 PDF。
+    返回警告（截断等）。
 
-    checkbox：on 画 ✓，off 不画。文本：先按锚高取字号，放不下逐级缩到
-    MIN_FONT_PX，仍放不下则截断加 …。
+    checkbox：on 画 X（✓ 在部分字体缺字形，X 全字体可靠），off 不画。
+    文本：先按锚高取字号，放不下逐级缩到 MIN_FONT_PX，仍放不下则截断加 …。
     """
     from PIL import Image, ImageDraw
     warnings = []
@@ -80,7 +81,7 @@ def stamp(pages: list, fields: list, out_pdf: str) -> list:
             if f["type"] == "checkbox":
                 if f["value"] != "on":
                     continue
-                text = "✓"
+                text = "X"
             else:
                 text = str(f["value"])
             a = f["anchor"]
@@ -95,7 +96,6 @@ def stamp(pages: list, fields: list, out_pdf: str) -> list:
                 text += "…"
                 warnings.append(f"{f['name']}: 值过长已截断")
             draw.text((a["x"], a["y"]), text, font=font, fill=(0, 0, 0))
-        img.save(pg["image"])
         images.append(img)
     images[0].save(out_pdf, "PDF", save_all=True, append_images=images[1:],
                    resolution=72 * RENDER_SCALE)

@@ -56,10 +56,13 @@ def test_stamp_draws_text_and_outputs_pdf(tmp_path):
     warnings = form_overlay.stamp(pages, fields, str(out))
     assert warnings == []
     assert out.exists() and out.stat().st_size > 0
-    # 盖字后与原白页不同
-    stamped = Image.open(pages[0]["image"]).convert("RGB")
-    region = stamped.crop((100, 100, 400, 124))
-    assert region.getextrema() != ((255, 255), (255, 255), (255, 255))
+    # 源页面图保持原样（不就地改图，可反复重渲染）
+    src = Image.open(pages[0]["image"]).convert("RGB")
+    assert src.getextrema() == ((255, 255), (255, 255), (255, 255))
+    # 输出 PDF 比纯白页版本大（盖了字）
+    blank_out = tmp_path / "blank.pdf"
+    form_overlay.stamp(pages, [], str(blank_out))
+    assert out.stat().st_size > blank_out.stat().st_size
 
 
 def test_stamp_truncates_overlong_value(tmp_path):
