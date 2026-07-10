@@ -109,3 +109,41 @@ def test_cli_member_validation_without_override(tmp_path):
                        errors="replace", env=env)
     assert r.returncode == 1
     assert "成员未登记" in r.stdout
+
+
+class TestAgentWiring:
+    def test_commands_allowed_and_routed(self):
+        import agent_core
+        for c in ("profile-set", "profile-unset", "profile-list"):
+            assert c in agent_core.ALLOWED_COMMANDS
+            assert agent_core._cli_path(c).parent.name == "Document_Keeper"
+
+    def test_tools_registered(self):
+        import agent_core
+        names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
+        assert {"set_profile_field", "remove_profile_field"} <= names
+        assert {"set_profile_field", "remove_profile_field"} <= set(agent_core._TOOL_MAP)
+
+    def test_not_member_injected(self):
+        # 目标成员是显式数据（member-name），不能被发送者身份覆盖
+        import agent_core
+        out = agent_core._apply_member(
+            "set_profile_field",
+            {"member-name": "Euphie", "field": "生日", "value": "2016-10-18"},
+            "Jim Zheng")
+        assert "member" not in out
+        assert out["member-name"] == "Euphie"
+
+    def test_profiles_context_renders(self, tmp_path):
+        import agent_core
+        db = str(tmp_path / "documents.db")
+        doc_db.init_db(db)
+        doc_db.set_profile("Jim Zheng", "生日", "1987-06-11", db_path=db)
+        block = agent_core._profiles_context(db_path=db)
+        assert "家庭成员资料" in block and "1987-06-11" in block
+        assert agent_core._profiles_context(db_path=str(tmp_path / "empty.db")) == ""
+
+    def test_system_prompt_mentions_profiles(self):
+        import agent_core
+        p = agent_core._build_system_prompt()
+        assert "set_profile_field" in p
