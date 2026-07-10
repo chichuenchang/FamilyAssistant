@@ -73,6 +73,17 @@ from image_gc import image_gc_tick as _image_gc_tick
 CREDS_FILE = ROOT / "data" / "wechat_creds.json"
 
 
+def _with_quote(text: str, quoted_title) -> str:
+    """引用/回复消息：把被引用内容前置注入，让 agent 看到用户在回复什么。
+
+    格式沿用 SDK extract_text 约定: ``[引用: {title}]\\n{text}``。
+    引用图片/文件时 title 只是摘要占位（如 "[图片]"），拿不到原始媒体。
+    """
+    if quoted_title:
+        return f"[引用: {quoted_title}]\n{text}"
+    return text
+
+
 def _send_reply(msg, reply: str) -> None:
     """拆出图片/文档哨兵：先发图，再发文档，最后发文字。失败仅记录，不影响文字。"""
     text, imgs, docs = _split_reply(reply or "")
@@ -124,12 +135,14 @@ def run_bot(relogin: bool = False) -> None:
         if member is None:
             print(f"[wx] 忽略未注册来源 {msg.from_user}")
             return
+        text = _with_quote(msg.text, msg.quoted_title)
         print(f"[wx] 文字消息 from {msg.from_user}({member}): {msg.text[:60]}")
-        log.debug("文字 from %s(%s): %s", msg.from_user, member, msg.text)
+        log.debug("文字 from %s(%s) 引用=%s: %s",
+                  msg.from_user, member, msg.quoted_title or "-", msg.text)
         _calendar_tick()  # 已注册成员消息 → 静默节流刷新远程日历（内部把关，永不抛）
         _image_gc_tick()  # 节流（约每月）清理陈旧来图
         try:
-            reply = agent.handle(msg.text, user=msg.from_user, member=member)
+            reply = agent.handle(text, user=msg.from_user, member=member)
             log.debug("文字回复 → %s", (reply or "")[:200])
             _send_reply(msg, reply)
         except Exception as e:
