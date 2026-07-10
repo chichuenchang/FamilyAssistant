@@ -167,6 +167,38 @@ def ocr_image(image_path: str) -> Optional[str]:
     return "\n".join(words) if words else ""
 
 
+def ocr_image_words(image_path: str) -> Optional[list]:
+    """通用识别（带坐标）。返回 [{"text","x","y","w","h"}]（图片像素坐标）；
+    None = OCR 不可用/失败。仅支持图片——PDF 先由调用方逐页渲染成图。
+    Form_Filler 平面表格的标签定位用。
+    """
+    p = Path(image_path)
+    if not p.exists():
+        return None
+    b64 = base64.b64encode(p.read_bytes()).decode()
+    data = _call_ocr({"ImageBase64": b64, "LanguageType": "zh"})
+    if not data:
+        return None
+    words = []
+    for d in data.get("TextDetections", []):
+        text = d.get("DetectedText")
+        if not text:
+            continue
+        ip = d.get("ItemPolygon") or {}
+        if {"X", "Y", "Width", "Height"} <= set(ip):
+            x, y, w, h = ip["X"], ip["Y"], ip["Width"], ip["Height"]
+        else:
+            poly = d.get("Polygon") or []
+            xs = [pt.get("X", 0) for pt in poly]
+            ys = [pt.get("Y", 0) for pt in poly]
+            if not xs or not ys:
+                continue
+            x, y = min(xs), min(ys)
+            w, h = max(xs) - x, max(ys) - y
+        words.append({"text": text, "x": int(x), "y": int(y), "w": int(w), "h": int(h)})
+    return words
+
+
 # ── 票据结构化提取 ──────────────────────────────────────────
 
 def ocr_extract(image_path: str) -> Optional[dict]:

@@ -69,3 +69,33 @@ def test_ocr_extract_uses_ocr_image_for_pdf(monkeypatch, tmp_path):
     monkeypatch.setattr(ocr, "ocr_image", lambda path: "txn line 1")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "")   # 无 LLM → raw_text 透传，确认走 ocr_image
     assert ocr.ocr_extract(str(f)) == {"raw_text": "txn line 1"}
+
+
+def test_ocr_image_words_item_polygon(monkeypatch, tmp_path):
+    f = tmp_path / "x.png"
+    f.write_bytes(b"img")
+    monkeypatch.setattr(ocr, "_call_ocr", lambda payload: {"TextDetections": [
+        {"DetectedText": "姓名", "ItemPolygon": {"X": 10, "Y": 20, "Width": 60, "Height": 18}},
+        {"DetectedText": "", "ItemPolygon": {"X": 0, "Y": 0, "Width": 1, "Height": 1}},
+    ]})
+    assert ocr.ocr_image_words(str(f)) == [
+        {"text": "姓名", "x": 10, "y": 20, "w": 60, "h": 18}]
+
+
+def test_ocr_image_words_polygon_fallback(monkeypatch, tmp_path):
+    f = tmp_path / "x.png"
+    f.write_bytes(b"img")
+    monkeypatch.setattr(ocr, "_call_ocr", lambda payload: {"TextDetections": [
+        {"DetectedText": "地址", "Polygon": [
+            {"X": 5, "Y": 8}, {"X": 105, "Y": 8}, {"X": 105, "Y": 28}, {"X": 5, "Y": 28}]},
+    ]})
+    assert ocr.ocr_image_words(str(f)) == [
+        {"text": "地址", "x": 5, "y": 8, "w": 100, "h": 20}]
+
+
+def test_ocr_image_words_unavailable(monkeypatch, tmp_path):
+    f = tmp_path / "x.png"
+    f.write_bytes(b"img")
+    monkeypatch.setattr(ocr, "_call_ocr", lambda payload: None)
+    assert ocr.ocr_image_words(str(f)) is None
+    assert ocr.ocr_image_words(str(tmp_path / "missing.png")) is None
