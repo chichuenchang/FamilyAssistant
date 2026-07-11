@@ -216,6 +216,28 @@ def send_document(chat_id: int | str, path: str, caption: str = "") -> bool:
         return False
 
 
+def _tg_quoted_text(msg: dict):
+    """引用/回复消息的原文。Telegram 与微信不同，reply_to_message 自带被引消息
+    全文（text/caption），无需本地缓存反查；媒体退化为占位。超长截断防挤爆上下文。"""
+    ref = msg.get("reply_to_message") or {}
+    quoted = ref.get("text") or ref.get("caption") or ""
+    if quoted:
+        return quoted[:200] + ("…" if len(quoted) > 200 else "")
+    if ref.get("photo"):
+        return "[图片]"
+    if ref.get("document"):
+        name = (ref.get("document") or {}).get("file_name", "")
+        return f"[文件] {name}".strip()
+    return None
+
+
+def _with_quote(text: str, quoted) -> str:
+    """把被引用内容前置注入正文（与 wechat_ilink._with_quote 同约定）。"""
+    if quoted:
+        return f"[引用: {quoted}]\n{text}"
+    return text
+
+
 def _send_reply(chat_id, reply: str) -> None:
     """拆出图片/文档哨兵：先发图，再发文档，最后发文字。失败仅记录，不影响文字。"""
     from agent_core import split_reply
@@ -347,11 +369,12 @@ def run() -> None:
             if not text:
                 continue
 
+            quoted = _tg_quoted_text(msg)
             print(f"[tg] {user_name}: {text[:60]}")
-            log.debug("文字 from %s(%s): %s", user_name, member, text)
+            log.debug("文字 from %s(%s) 引用=%s: %s", user_name, member, quoted or "-", text)
 
             # 处理消息
-            reply = agent.handle(text, user=str(chat_id), member=member)
+            reply = agent.handle(_with_quote(text, quoted), user=str(chat_id), member=member)
             log.debug("文字回复 → %s", (reply or "")[:200])
             if reply:
                 _send_reply(chat_id, reply)

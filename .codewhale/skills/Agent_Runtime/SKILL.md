@@ -69,6 +69,9 @@ python .codewhale/skills/Agent_Runtime/telegram_bot.py --no-debug
 ```
 
 微信凭据加密存于 `data/wechat_creds.json`；Telegram 去重 offset 存于 `data/.telegram_offset`。
+微信引用反查缓存存于 `data/wechat_recent_msgs.json`（近期入站消息）与
+`data/wechat_sent_msgs.json`（bot 出站回复，按时间戳匹配）——均为运行时状态，不进备份。
+微信 Bot 启动时抢单实例锁（绑定 `127.0.0.1:47831`）：双开会导致每条消息处理/回复两次，后启动的进程直接退出。
 
 ## 新增频道
 
@@ -97,7 +100,7 @@ if __name__ == "__main__":
 - 用频道内唯一 id 作 `user`（隔离对话历史），解析出的成员名作 `member` 传给 `agent.handle(text, user, member)` / `agent.handle_image(path, user, member)`（图片或 PDF）。
 - 图片或 PDF 文件消息：先存到发送成员的 inbox `data/<成员>/inbox/YYYY-MM/`（用 `agent_core.member_inbox_dir(member)`），再调 `agent.handle_image(path, user, member)`——**PDF 与图片同一入口**，`ocr_image` 对两者一视同仁（PDF 走腾讯 IsPdf 逐页）。OCR 后 LLM 分类，agent 搬到对应位置（备忘→成员 notes，票据→Family/receipts，文档→Family/documents）。非 PDF 文件仍回复"暂不支持"。
 - 长回复需分段的频道（如 Telegram 4096 字限制）自行在传输层切分（见 `telegram_bot.py:send_message`）。
-- 引用/回复消息（频道支持时，如微信 `ref_msg`）：传输层把被引用内容以 `[引用: <摘要>]\n` 前置进正文再交 Agent（见 `wechat_ilink.py:_with_quote`），引用媒体只有摘要占位（如 `[图片]`）。
+- 引用/回复消息：传输层把被引用内容以 `[引用: <原文>]\n` 前置进正文再交 Agent（见 `wechat_ilink.py:_with_quote`）。Telegram 的 `reply_to_message` 自带原文，直接取；微信 iLink 的 `ref_msg` 只带被引消息的 `msg_id`/时间戳（无内容，实测 2026-07-10），需本地缓存反查：入站消息按 `message_id` 精确命中，bot 自己的回复按发送时间 ±15s 匹配（服务端不回传出站 id），都查不到退化为时间占位。
 - 不在传输层写任何记账/查账逻辑 —— 全部交给 Agent。
 
 ## 安全

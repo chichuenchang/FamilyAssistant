@@ -95,11 +95,8 @@ def _acquire_single_instance_lock(port: int = _LOCK_PORT) -> bool:
 
 
 def _with_quote(text: str, quoted_title) -> str:
-    """引用/回复消息：把被引用内容前置注入，让 agent 看到用户在回复什么。
-
-    格式沿用 SDK extract_text 约定: ``[引用: {title}]\\n{text}``。
-    引用图片/文件时 title 只是摘要占位（如 "[图片]"），拿不到原始媒体。
-    """
+    """引用/回复消息：把被引用内容前置注入（``[引用: {内容}]\\n{text}``），
+    让 agent 看到用户在回复什么。内容由 _quoted_text 解析（缓存反查/时间匹配）。"""
     if quoted_title:
         return f"[引用: {quoted_title}]\n{text}"
     return text

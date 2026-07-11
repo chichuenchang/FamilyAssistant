@@ -87,7 +87,8 @@ STATE_FILE = _STATE_DIR / ".backup_state.json"
 _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
                        ".backup_manifest.json", ".backup_state.json",
                        ".calendar_state.json", ".sync_state.json",
-                       ".image_gc_state.json"}
+                       ".image_gc_state.json",
+                       "wechat_recent_msgs.json", "wechat_sent_msgs.json"}
 
 # 永不进备份的目录段（图表可再生，不镜像）
 _HARD_EXCLUDE_DIRS = {"charts"}

@@ -51,6 +51,13 @@ In `.codewhale/skills/Agent_Runtime/wechat_ilink.py`:
 No `agent_core.py` change: the agent receives the quote inline in the user
 message, same as any other text.
 
+## Telegram parity (added 2026-07-11)
+
+Telegram's `reply_to_message` carries the quoted message's full `text`/`caption`
+natively, so `telegram_bot.py` injects quotes with a trivial `_tg_quoted_text`
+(no cache needed; media → `[图片]`/`[文件] name` placeholder; >200 chars
+truncated). Same `[引用: …]\n` convention as WeChat.
+
 ## Limits (accepted)
 
 - Quoting an image/file yields only the summary placeholder (e.g. `[图片]`),
