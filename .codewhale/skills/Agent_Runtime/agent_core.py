@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -198,7 +198,6 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
     CLI 示例），对运行时对话无用，不进 prompt——省每条消息的 token。
     分类/币种从 config.json 提取为紧凑列表，不嵌原始 JSON。
     """
-    today = date.today()
     tx_types = "/".join(_TX_TYPES)
     currencies = "/".join(_CURRENCIES)
     doc_types = "/".join(_DOC_TYPES)
@@ -305,7 +304,7 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 - 用户闲聊/问候 → 直接友好回复，不用调工具
 - 需要精确信息时（金额、日期）才调工具，闲聊不调
 - 工具执行后会返回结果，你基于结果用自然语言回复
-- 如果用户没有指定日期，默认今天 {today}
+- 如果用户没有指定日期，默认今天（见"当前时间"块）；用户问现在几点/今天几号，直接按该块回答
 - 回复中不要暴露技术细节（如 SQLite、CLI 等）
 """
 
@@ -1095,6 +1094,17 @@ sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
 sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
 
 
+_WEEKDAYS_ZH = "一二三四五六日"
+
+
+def _now_context() -> str:
+    """当前日期时间块。每条消息现算——system prompt 在 __init__ 缓存，
+    时间进缓存的话进程跨午夜后日期就冻结在启动日。"""
+    now = datetime.now()
+    return (f"\n\n## 当前时间\n{now:%Y-%m-%d %H:%M}"
+            f"（星期{_WEEKDAYS_ZH[now.weekday()]}，本地时间）")
+
+
 def _notes_context(member: str, recent_limit: int = 5, clip: int = 100,
                    db_path: str | None = None) -> str:
     """取该成员置顶 + 最近备忘，拼成 system prompt 附加块。
@@ -1287,7 +1297,7 @@ class Agent:
         member_note = (f"\n\n## 当前对话成员\n{member} —— 写入类操作自动归到该成员名下；"
                        f"查询类工具可用 member 参数按成员过滤。")
         msgs = [{"role": "system",
-                 "content": self.system_prompt + member_note
+                 "content": self.system_prompt + _now_context() + member_note
                  + _profiles_context()
                  + _notes_context(member) + _worksheets_context(member)
                  + _schedule_context(member)}]

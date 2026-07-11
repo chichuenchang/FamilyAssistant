@@ -1,4 +1,6 @@
 # tests/test_agent_context.py — agent_core 上下文自动管理（token 预算裁剪 + 闲置清空）。
+from datetime import datetime
+
 import agent_core
 
 
@@ -84,6 +86,51 @@ def test_idle_clear_is_per_user(monkeypatch):
     agent.handle("y", user="fresh_u", member="妈妈")
     assert "idle_u" not in agent.history
     assert len(agent.history["fresh_u"]) == 1
+
+
+def _agent_with_captured_llm(monkeypatch):
+    """带假 LLM 的 Agent：捕获每次调用的 msgs，回固定文本回复。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    agent = agent_core.Agent(idle_clear_hours=0)
+    captured = []
+
+    def fake_llm(msgs):
+        captured.append(msgs)
+        return {"content": "好的"}
+
+    monkeypatch.setattr(agent, "_call_llm", fake_llm)
+    return agent, captured
+
+
+class _FakeDatetime:
+    fixed = datetime(2026, 7, 11, 0, 8)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.fixed
+
+
+def test_system_context_has_current_datetime(monkeypatch):
+    agent, captured = _agent_with_captured_llm(monkeypatch)
+    monkeypatch.setattr(agent_core, "datetime", _FakeDatetime, raising=False)
+    agent.handle("现在几点", user="u", member="爸爸")
+    sys_content = captured[0][0]["content"]
+    assert captured[0][0]["role"] == "system"
+    assert "2026-07-11 00:08" in sys_content
+    assert "星期六" in sys_content  # 2026-07-11 是周六
+
+
+def test_system_datetime_fresh_per_message(monkeypatch):
+    # 缓存的 system prompt 不能冻结时间：跨午夜后新消息要看到新日期
+    agent, captured = _agent_with_captured_llm(monkeypatch)
+    monkeypatch.setattr(agent_core, "datetime", _FakeDatetime, raising=False)
+    monkeypatch.setattr(_FakeDatetime, "fixed", datetime(2026, 7, 10, 23, 47))
+    agent.handle("test", user="u", member="爸爸")
+    monkeypatch.setattr(_FakeDatetime, "fixed", datetime(2026, 7, 11, 0, 8))
+    agent.handle("你现在这里几点", user="u", member="爸爸")
+    assert "2026-07-10 23:47" in captured[0][0]["content"]
+    assert "2026-07-11 00:08" in captured[1][0]["content"]
+    assert "2026-07-10 23:47" not in captured[1][0]["content"]
 
 
 def test_config_defaults_applied():
