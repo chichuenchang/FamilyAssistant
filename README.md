@@ -265,8 +265,7 @@ FamilyAssistant/
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档
-├── requirements-dev.txt  ← 开发依赖（pytest）
-└── requirements-optional.txt ← 可选增强依赖（weixin-ilink、yt-dlp、matplotlib、pypdf、pypdfium2、Pillow；缺失则相关功能优雅降级）
+└── requirements.txt      ← 全部可选依赖（pytest；weixin-ilink、yt-dlp、matplotlib、pypdf、pypdfium2、Pillow —— 缺失则相关功能优雅降级）
 ```
 
 ## 技术栈

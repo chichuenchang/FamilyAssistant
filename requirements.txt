@@ -1,5 +1,10 @@
-# 可选运行时依赖（核心功能 stdlib only；以下仅增强特定 skill）
-# pip install -r requirements-optional.txt
+# 全部为可选依赖 —— 运行时核心 stdlib only，按需安装。
+# pip install -r requirements.txt
+
+# ── 开发/测试 ──────────────────────────────────────────────
+pytest
+
+# ── 可选运行时（仅增强特定 skill，缺失时优雅降级）──────────
 # weixin-ilink — Agent_Runtime 的微信频道（wechat_ilink.py --mode run 扫码登录 + 长轮询）；未安装时仅微信频道不可用。
 weixin-ilink[qr]
 # yt-dlp — Web_Reach 的 YouTube 字幕转写；未安装时 yt-summary 优雅降级（回退标题+简介或报错），不崩溃。
