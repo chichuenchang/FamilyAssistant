@@ -12,13 +12,31 @@ pointing at.
 
 ## Facts
 
-- weixin-ilink 0.3.5 already parses the quote: `IncomingMessage.quoted_title`
-  returns `raw_item["ref_msg"]["title"]` — the replied-to message's summary
-  (full text for text messages, `[图片]`-style placeholder for media).
-- The SDK's own `WeixinClient.extract_text` convention is
-  `[引用: {title}]\n{text}`.
-- Quote-replies always arrive as TEXT items carrying `ref_msg`; image/file/voice
-  handlers never see quotes.
+**Corrected 2026-07-10 from captured wire payloads** (the original "Facts" were
+read off SDK source and turned out wrong — `quoted_title` was always `None`):
+
+- The real iLink `ref_msg` carries **no `title` and no content**, only the
+  quoted message's identity:
+  `ref_msg.message_item = {msg_id, create_time_ms, type: 0, ...}` where
+  `msg_id` equals the quoted message's top-level `message_id`.
+- `IncomingMessage.quoted_title` (`raw_item["ref_msg"]["title"]`, weixin-ilink
+  0.3.5) therefore always returns `None`; the SDK's `extract_text`
+  `[引用: {title}]` path is dead code against the current wire format.
+- Quote-replies do arrive as TEXT items carrying `ref_msg`; that part held.
+- Consequence: quoted content must be resolved locally — cache recent inbound
+  `message_id → text` and look the `msg_id` up (`_remember_msg`/`_quoted_text`
+  in `wechat_ilink.py`, cache capped at 200).
+- The server never reveals outbound `message_id`s: the send API response is an
+  empty object `{}`, and the poll stream does not echo BOT-type messages
+  (both verified 2026-07-10 via temporary `SEND_RESP` / `POLL_NONUSER` dumps).
+  So quotes of bot replies are resolved by **timestamp matching** instead:
+  `_send_reply` records each outbound text with its send time
+  (`data/wechat_sent_msgs.json`, cap 100), and `_quoted_text` matches the
+  quote's `create_time_ms` against it within a ±15 s window, injecting
+  `我此前的回复「{text}」` (truncated to 200 chars). Only if both the msg_id
+  cache and the timestamp match miss does it fall back to the
+  `"{MM-DD HH:MM} 的一条消息（原文不可见…）"` placeholder (e.g. messages from
+  before these caches existed). Both caches persist across restarts.
 
 ## Design
 

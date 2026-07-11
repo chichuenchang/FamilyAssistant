@@ -34,6 +34,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
@@ -73,6 +75,25 @@ from image_gc import image_gc_tick as _image_gc_tick
 CREDS_FILE = _paths.data_root() / "wechat_creds.json"
 
 
+_LOCK_PORT = 47831  # 单实例锁端口（仅 localhost，不对外）
+_LOCK_SOCK = None   # 持有的锁 socket；进程退出/崩溃时 OS 自动释放
+
+
+def _acquire_single_instance_lock(port: int = _LOCK_PORT) -> bool:
+    """单实例锁：绑定 localhost 端口。双开 Bot 会各自轮询同一账号 → 每条消息处理两次、回复两次。"""
+    global _LOCK_SOCK
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+    except OSError:
+        s.close()
+        return False
+    s.listen(1)
+    _LOCK_SOCK = s
+    return True
+
+
 def _with_quote(text: str, quoted_title) -> str:
     """引用/回复消息：把被引用内容前置注入，让 agent 看到用户在回复什么。
 
@@ -82,6 +103,127 @@ def _with_quote(text: str, quoted_title) -> str:
     if quoted_title:
         return f"[引用: {quoted_title}]\n{text}"
     return text
+
+
+_RECENT_MSGS: "OrderedDict[str, str]" = OrderedDict()
+_RECENT_MSGS_CAP = 200
+_RECENT_MSGS_FILE = ROOT / "data" / "wechat_recent_msgs.json"
+
+
+def _remember_msg(message_id, text, persist_file=None) -> None:
+    """缓存近期消息 message_id → 文本，供引用反查。超出上限逐出最旧。"""
+    if not message_id or not text:
+        return
+    key = str(message_id)
+    _RECENT_MSGS[key] = text
+    _RECENT_MSGS.move_to_end(key)
+    while len(_RECENT_MSGS) > _RECENT_MSGS_CAP:
+        _RECENT_MSGS.popitem(last=False)
+    if persist_file is not None:
+        _save_recent_msgs(persist_file)
+
+
+def _save_recent_msgs(path=None) -> None:
+    """持久化缓存（bot 重启后仍可反查引用）。失败仅记录，不影响消息处理。"""
+    p = Path(path) if path else _RECENT_MSGS_FILE
+    try:
+        p.write_text(json.dumps(_RECENT_MSGS, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        log.exception("近期消息缓存写入失败（忽略）")
+
+
+def _load_recent_msgs(path=None) -> None:
+    """启动时恢复缓存。文件缺失/损坏静默跳过。"""
+    p = Path(path) if path else _RECENT_MSGS_FILE
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(data, dict):
+        return
+    for k, v in data.items():
+        if isinstance(v, str):
+            _remember_msg(k, v)
+
+
+# bot 出站回复：服务端不回传 message_id（send 响应 {}，轮询不回显 BOT 消息，
+# 均实测 2026-07-10），引用 bot 回复只能按时间对齐 —— 记录每次发送的时间戳+文本。
+_SENT_REPLIES: list = []          # [[ts_ms, text], ...] 按发送顺序
+_SENT_REPLIES_CAP = 100
+_SENT_REPLIES_FILE = ROOT / "data" / "wechat_sent_msgs.json"
+_SENT_MATCH_WINDOW_MS = 15_000    # 引用时间戳与发送时间允许的最大偏差
+
+
+def _remember_sent(text: str, ts_ms=None, persist_file=None) -> None:
+    """记录一条 bot 出站文字（发送时刻 + 内容），供引用时间戳匹配。"""
+    if not text:
+        return
+    if ts_ms is None:
+        ts_ms = int(time.time() * 1000)
+    _SENT_REPLIES.append([int(ts_ms), text])
+    del _SENT_REPLIES[:-_SENT_REPLIES_CAP]
+    if persist_file is not None:
+        try:
+            Path(persist_file).write_text(
+                json.dumps(_SENT_REPLIES, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            log.exception("出站消息记录写入失败（忽略）")
+
+
+def _load_sent_replies(path=None) -> None:
+    """启动时恢复出站记录。文件缺失/损坏静默跳过。"""
+    p = Path(path) if path else _SENT_REPLIES_FILE
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(data, list):
+        _SENT_REPLIES.extend(
+            [int(e[0]), e[1]] for e in data
+            if isinstance(e, list) and len(e) == 2 and isinstance(e[1], str))
+        del _SENT_REPLIES[:-_SENT_REPLIES_CAP]
+
+
+def _match_sent_by_time(ts_ms: int, window_ms: int = _SENT_MATCH_WINDOW_MS):
+    """按时间戳找最接近的 bot 出站回复；偏差超窗口返回 None。"""
+    best, best_diff = None, window_ms + 1
+    for sent_ts, text in _SENT_REPLIES:
+        diff = abs(sent_ts - ts_ms)
+        if diff <= window_ms and diff < best_diff:
+            best, best_diff = text, diff
+    return best
+
+
+def _quoted_text(raw_item: dict):
+    """解析引用消息的原文。
+
+    iLink 实际报文（实测 2026-07-10）里 ref_msg 只带被引消息的 msg_id 和
+    create_time_ms，没有 title/内容——SDK 的 quoted_title 因此恒为空。
+    这里先兼容 title（万一未来补上），否则拿 msg_id 反查本进程近期消息缓存；
+    查不到（引用 bot 自己的回复、或重启前的消息）退化为时间占位，
+    让 agent 至少知道用户在回复某条历史消息。
+    """
+    ref = raw_item.get("ref_msg") or {}
+    title = ref.get("title")
+    if title:
+        return title
+    item = ref.get("message_item") or {}
+    rid = str(item.get("msg_id") or "")
+    if not rid:
+        return None
+    cached = _RECENT_MSGS.get(rid)
+    if cached:
+        return cached
+    ts = item.get("create_time_ms") or 0
+    if ts:
+        sent = _match_sent_by_time(ts)
+        if sent:
+            body = sent[:200] + ("…" if len(sent) > 200 else "")
+            return f"我此前的回复「{body}」"
+        log.debug("引用未命中: msg_id=%s create_time_ms=%s", rid, ts)
+        when = datetime.fromtimestamp(ts / 1000).strftime("%m-%d %H:%M")
+        return f"{when} 的一条消息（原文不可见，可能是我此前的回复）"
+    return "一条历史消息（原文不可见）"
 
 
 def _send_reply(msg, reply: str) -> None:
@@ -104,6 +246,7 @@ def _send_reply(msg, reply: str) -> None:
             log.exception("发送文件失败（跳过）: %s", rel)
     if text:
         msg.reply_text(text)
+        _remember_sent(text, persist_file=_SENT_REPLIES_FILE)
 
 
 # ── 模式 1: 运行 Bot ────────────────────────────────────────
@@ -111,6 +254,14 @@ def _send_reply(msg, reply: str) -> None:
 def run_bot(relogin: bool = False) -> None:
     """扫码登录并启动长轮询 Bot。"""
     from weixin_ilink import WeixinBot, login
+
+    if not _acquire_single_instance_lock():
+        print("[wechat_ilink] 已有 Bot 实例在运行（单实例锁被占用），本进程退出。")
+        print("  双开会导致每条消息被处理两次、回复两次。")
+        sys.exit(1)
+
+    _load_recent_msgs()    # 重启后仍能反查引用的历史消息
+    _load_sent_replies()   # bot 出站记录（引用 bot 回复按时间匹配）
 
     # 如果要求重新登录或凭据文件不存在，走扫码流程
     if relogin or not CREDS_FILE.exists():
@@ -135,10 +286,12 @@ def run_bot(relogin: bool = False) -> None:
         if member is None:
             print(f"[wx] 忽略未注册来源 {msg.from_user}")
             return
-        text = _with_quote(msg.text, msg.quoted_title)
+        _remember_msg(msg.message_id, msg.text, persist_file=_RECENT_MSGS_FILE)
+        quoted = _quoted_text(msg.raw_item)
+        text = _with_quote(msg.text, quoted)
         print(f"[wx] 文字消息 from {msg.from_user}({member}): {msg.text[:60]}")
         log.debug("文字 from %s(%s) 引用=%s: %s",
-                  msg.from_user, member, msg.quoted_title or "-", msg.text)
+                  msg.from_user, member, quoted or "-", msg.text)
         _calendar_tick()  # 已注册成员消息 → 静默节流刷新远程日历（内部把关，永不抛）
         _image_gc_tick()  # 节流（约每月）清理陈旧来图
         try:
