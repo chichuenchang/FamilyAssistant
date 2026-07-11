@@ -274,6 +274,32 @@ def run_bot(relogin: bool = False) -> None:
     print(f"[wechat_ilink] 登录成功 — 账号: {bot.account_id}")
     print("[wechat_ilink] 等待微信消息... (Ctrl+C 停止)")
 
+    # 自愈：陈旧 cursor 会让 getupdates 持续返回 ret=-1，而 SDK 只特判 ret=-14
+    # (SESSION_EXPIRED)，其余 ret 一律以同一个坏 cursor 无限重试 → 静默收不到消息。
+    # 连续 3 次 ret=-1 就清空 cursor 并删除 .sync 文件，下一轮以空 buf 重新拉取自愈。
+    _orig_poll = bot.client.poll
+    _poll_neg1 = {"n": 0}
+
+    def _poll_with_selfheal():
+        resp = _orig_poll()
+        if (resp.get("ret") or 0) == -1:
+            _poll_neg1["n"] += 1
+            if _poll_neg1["n"] >= 3:
+                print("[wechat_ilink] poll ret=-1 连续 3 次 → 清空陈旧 cursor 自愈")
+                log.warning("poll ret=-1 x3 → 重置 cursor 并删除 .sync 文件")
+                bot.client.cursor = ""
+                if bot._cursor_file:
+                    try:
+                        bot._cursor_file.unlink()
+                    except OSError:
+                        pass
+                _poll_neg1["n"] = 0
+        else:
+            _poll_neg1["n"] = 0
+        return resp
+
+    bot.client.poll = _poll_with_selfheal
+
     agent = Agent()
 
     # 注册文字消息处理器
