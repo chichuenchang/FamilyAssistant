@@ -90,8 +90,9 @@ _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
                        ".image_gc_state.json",
                        "wechat_recent_msgs.json", "wechat_sent_msgs.json"}
 
-# 永不进备份的目录段（图表可再生，不镜像）
-_HARD_EXCLUDE_DIRS = {"charts"}
+# 永不进备份的目录段（图表可再生；.knowking_jobs 为运行时瞬态任务文件，
+# 投递即删且含频道 id/查询主题，绝不镜像上云）
+_HARD_EXCLUDE_DIRS = {"charts", ".knowking_jobs"}
 
 
 def _now_iso() -> str:

@@ -68,6 +68,14 @@
 - **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取；`ANYSEARCH_API_KEY` 可选（未配置走匿名访问，限额较低仍可用）；问最新资讯时优先 Any Search，下面的 Web Reach 作兜底
 - **Web Reach 只读公开信息，无需 API key**（搜索走 DuckDuckGo + Jina 阅读器；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
 
+### 🔎 懂王舆情搜集（KnowKing 桥，可选）
+- 微信/Telegram 里说 **"用 knowking / kk / 懂王 查大家怎么看 X"** → 跨社交平台
+  （YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu）双语搜集"大家在怎么说"，出中立第三方舆情报告
+- **后台运行 + 完成推送**：立即回"已开始"（不卡住会话），数分钟后报告自动发回发起人；同一用户同时只跑一个
+- 仅显式说出触发词才启动（普通查资讯仍走上面的联网搜索）；查询主题等瞬态任务文件不进云备份
+- 依赖外部 KnowKing 项目（独立 uv 项目，自带 API 密钥配置；`config.json`
+  `knowking.project_dir` 指向其位置，未安装则该功能不可用，其余功能不受影响）
+
 ### ☁️ 云盘备份（Remote Backup，可选）
 - 用户数据（账本/票据/文档/配置）单向镜像到云盘，写入后防抖增量同步，本地永远是事实源
 - 当前内置 Google Drive 实现（最小 `drive.file` 权限，只能看到自己上传的文件）；按 provider 契约可换任意云端存储

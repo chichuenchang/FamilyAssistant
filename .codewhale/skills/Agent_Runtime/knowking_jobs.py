@@ -130,6 +130,9 @@ def _has_running_for_user(jdir: Path, channel: str, user: str) -> bool:
 _REPORT_START = "=== REPORT ==="
 _REPORT_END = "=== END REPORT ==="
 
+# submit 的忙检查+落盘互斥锁（防 TOCTOU：并发提交双双通过 running 闸门）
+_SUBMIT_LOCK = threading.Lock()
+
 
 def extract_report(stdout: str) -> str:
     """从 kk ask 的 stdout 抽出 === REPORT === 与 === END REPORT === 之间的正文；
@@ -235,14 +238,16 @@ def submit(topic: str, channel: str, user: str, member: str, *,
     if not topic:
         return None, "要查什么？请给出主题内容（如\"用 knowking 查大家怎么看 X\"）。"
     d = jobs_dir(jdir)
-    if _has_running_for_user(d, channel, str(user)):
-        return None, "你已经有一个 KnowKing 查询正在进行中，出结果会自动发你，请稍候。"
+    # 忙检查 + 落盘在同一把锁内：并发 submit（多线程传输层）不会双双越过闸门
+    with _SUBMIT_LOCK:
+        if _has_running_for_user(d, channel, str(user)):
+            return None, "你已经有一个 KnowKing 查询正在进行中，出结果会自动发你，请稍候。"
 
-    job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
-    job = {"id": job_id, "channel": channel, "user": str(user), "member": member or "",
-           "topic": topic, "status": "running", "report": "", "error": "",
-           "created_at": _now()}
-    _write_job(d, job)
+        job_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+        job = {"id": job_id, "channel": channel, "user": str(user), "member": member or "",
+               "topic": topic, "status": "running", "report": "", "error": "",
+               "created_at": _now()}
+        _write_job(d, job)
 
     if background:
         threading.Thread(
@@ -270,8 +275,10 @@ def poll_and_deliver(send_fn: Callable[[str, str], object], channel: str, *,
     """把某频道已完成/失败的 KnowKing 任务推送给发起人。返回成功投递条数。
 
     - 只处理 channel 匹配的任务；running 未超时的跳过。
-    - running 超过 stale_seconds（bot 重启/线程死）→ 记为超时 error 再投递。
-    - 投递成功即删任务文件（防重复推送）；send_fn 抛异常则保留文件下轮重试。
+    - running 超过 stale_seconds（bot 重启/线程死）→ 先把 error 状态落盘再投递
+      （防：投递/删除失败后下轮再次走"stale 判定"重复计时）。
+    - 投递成功即删任务文件（防重复推送）；删除失败则把 status 改成 delivered 落盘，
+      下轮只清理、绝不重发。send_fn 抛异常则保留文件下轮重试。
     - 单条投递异常不影响其余任务。
     """
     d = jobs_dir(jdir)
@@ -281,12 +288,20 @@ def poll_and_deliver(send_fn: Callable[[str, str], object], channel: str, *,
         if job.get("channel") != channel:
             continue
         status = job.get("status")
+        if status == "delivered":
+            # 上轮已成功投递但删文件失败 → 只清理，绝不重发
+            try:
+                f.unlink(missing_ok=True)
+            except OSError:
+                pass
+            continue
         if status == "running":
             age = now - float(job.get("created_at") or 0)
             if age < stale_seconds:
                 continue
             job["status"] = "error"
             job["error"] = "KnowKing 查询超时或中断（可重试）"
+            _write_job(d, job)   # 先落盘：即使后续投递/删除失败也不会重复 stale 判定
             status = "error"
         elif status not in ("done", "error"):
             continue
@@ -299,5 +314,12 @@ def poll_and_deliver(send_fn: Callable[[str, str], object], channel: str, *,
         try:
             f.unlink(missing_ok=True)
         except OSError:
-            _log.exception("KnowKing 任务文件删除失败（已投递）: %s", job.get("id"))
+            # Windows 文件占用等：标 delivered 落盘，下轮跳过重发只清理
+            _log.exception("KnowKing 任务文件删除失败（已投递，标记 delivered）: %s",
+                           job.get("id"))
+            job["status"] = "delivered"
+            try:
+                _write_job(d, job)
+            except OSError:
+                pass  # 写不进也只可能导致极小概率重发，下轮重试
     return delivered

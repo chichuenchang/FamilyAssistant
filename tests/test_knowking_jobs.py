@@ -172,6 +172,50 @@ class TestPollAndDeliver:
         assert n == 1
         assert "超时" in sent[0][1] or "中断" in sent[0][1]
 
+    def test_stale_error_persisted_even_if_send_fails(self, jdir):
+        # stale 判定先落盘：投递失败后文件必须已是 error（不会下轮重复 stale 计时）
+        _seed_job(jdir, "j1", status="running", created_at=kj._now() - 100000)
+
+        def boom(u, t):
+            raise IOError("down")
+
+        n = kj.poll_and_deliver(boom, "telegram", jdir=jdir, stale_seconds=3600)
+        assert n == 0
+        assert _read_job(jdir, "j1")["status"] == "error"
+
+    def test_unlink_failure_marks_delivered_no_resend(self, jdir, monkeypatch):
+        # 投递成功但删文件失败 → 标 delivered；下轮只清理、不重发
+        _seed_job(jdir, "j1", status="done", report="R")
+        sent = []
+
+        def bad_unlink(self, missing_ok=False):
+            raise OSError("locked")
+
+        real_unlink = kj.Path.unlink
+        monkeypatch.setattr(kj.Path, "unlink", bad_unlink)
+        n = kj.poll_and_deliver(lambda u, t: sent.append(t), "telegram", jdir=jdir)
+        assert n == 1 and len(sent) == 1
+        assert _read_job(jdir, "j1")["status"] == "delivered"
+
+        monkeypatch.setattr(kj.Path, "unlink", real_unlink)
+        n2 = kj.poll_and_deliver(lambda u, t: sent.append(t), "telegram", jdir=jdir)
+        assert n2 == 0 and len(sent) == 1          # 没有第二次推送
+        assert not (jdir / "j1.json").exists()      # 文件被清理
+
+    def test_concurrent_submits_only_one_wins(self, jdir):
+        # 忙闸门加锁：并发提交同用户，只有一个拿到 job_id
+        import threading
+        results = []
+
+        def go(i):
+            results.append(kj.submit(f"t{i}", "telegram", "555", "Jim",
+                                     background=False, jdir=jdir)[0])
+
+        ts = [threading.Thread(target=go, args=(i,)) for i in range(8)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        assert sum(1 for r in results if r) == 1
+
     def test_one_bad_send_does_not_block_others(self, jdir):
         _seed_job(jdir, "j1", user="5", status="done")
         _seed_job(jdir, "j2", user="6", status="done")

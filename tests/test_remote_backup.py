@@ -664,6 +664,16 @@ class TestScopeResolver:
     def test_member_files_missing_token_is_silent(self, sr):
         assert backup_sync._member_files(["Ghost"]) == {}
 
+    def test_knowking_jobs_dir_hard_excluded(self, sr):
+        # 瞬态任务文件（含频道 id/查询主题）绝不镜像上云——即使 scope 覆盖到
+        root = sr
+        jobs = root / "data" / ".knowking_jobs"
+        jobs.mkdir(parents=True)
+        (jobs / "20260713-1.json").write_text("{}", encoding="utf-8")
+        files = backup_sync._member_files([".knowking_jobs"])
+        assert files == {}
+        assert backup_sync._excluded("data/.knowking_jobs/x.json") is True
+
 
 def test_cmd_reorg_invokes_provider(monkeypatch, capsys):
     import importlib.util

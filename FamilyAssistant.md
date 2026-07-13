@@ -16,7 +16,7 @@
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Web Reach** | 只读联网：搜最新资讯、抓取/总结网页、转写 YouTube 字幕（无需 key；YouTube 需 yt-dlp，缺失优雅降级） | [SKILL.md](.codewhale/skills/Web_Reach/SKILL.md) | 最新新闻、查一下、外面在发生什么、总结链接、YouTube、视频 |
 | **Any Search** | 高质量实时联网搜索：垂直领域（finance/health/academic/code 等）结构化结果 + 网页全文抽取（可选 `ANYSEARCH_API_KEY`，未配置走匿名）；问最新资讯时优先，Web Reach 兜底 | [SKILL.md](.codewhale/skills/Any_Search/SKILL.md) | 最新资讯、实时搜索、行情、垂直领域查询 |
-| **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
+| **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram）+ 懂王（KnowKing）跨平台舆情桥（外部 uv 项目，后台跑 + 完成推送） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道、knowking、kk、懂王 |
 
 ## 运行时提示词
 
@@ -73,6 +73,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `agent`（context_max_tokens/idle_clear_hours） | `agent_core`（上下文自动管理：历史 token 预算超出→从最旧一问一答成对丢弃；用户闲置超 N 小时→下一条消息前清空其历史；0=关闭。用户也可发 /clear 手动清空） |
 | ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
 | `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
+| `knowking`（project_dir/timeout_s） | `Agent_Runtime/knowking_jobs.py`（懂王舆情桥：KnowKing 项目根定位 + `kk ask` 子进程超时；环境变量 `KNOWKING_DIR` 可覆盖 project_dir） |
 
 改这些值只改 `config.json`（改后重启进程生效）。config 缺失/损坏时各处有应急回退默认值。
 
@@ -86,4 +87,4 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `.codewhale/skills/Note_Keeper/` — 个人备忘 skill（cli.py 入口 + note_db.py 数据层；按成员私有）
 - `.codewhale/skills/Remote_Backup/` — 用户数据云盘镜像 skill（backup_provider.py 当前为 Google Drive 实现；按其文件头契约重写即可换成其他云盘）
 - `.codewhale/skills/Calendar_Keeper/` — 按成员私有的日程/待办 + 远程日历同步 skill（活动/待办分库；按成员/域选 provider，providers.py 注册表，calendar_provider.py 为 Google Calendar + Tasks 实现；image_gc.py 清理陈旧来图）
-- `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md
+- `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层 + knowking_jobs.py 懂王舆情桥），详见其 SKILL.md

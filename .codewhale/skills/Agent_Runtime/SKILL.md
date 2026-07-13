@@ -119,7 +119,8 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
   独立 `knowking-deliver` 守护线程 ~20s）。
 - **频道上下文注入**：`Agent(channel=...)`（各传输层构造时传 `"wechat"`/`"telegram"`）+ handle 里
   `_apply_context` 把 `__channel`/`__user`/`member` 注入 `knowking` 工具参数（代码确定性，LLM 不得伪造投递目标）。本地测试无 channel → 工具返回"仅正式频道可用"。
-- **任务落盘** `data/.knowking_jobs/<id>.json`（点前缀=瞬态；投递成功即删，防重复/堆积）。
+- **任务落盘** `data/.knowking_jobs/<id>.json`（运行时瞬态，已列入 `backup_sync._HARD_EXCLUDE_DIRS`
+  绝不进云备份；投递成功即删，删除失败标 delivered 下轮只清理绝不重发）。
   `running` 超 `stale_seconds`（默认 1800s，bot 重启/线程死）→ 记超时 error 再推送。同频道同用户
   只允许一个在跑（busy 拦截）。
 - **.env 权威**：子进程 `cwd` 设为 KnowKing 项目根（让其 `dotenv_values(".env")` 读到自己的
@@ -148,12 +149,14 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 图片 OCR（见 [OCR Skill](../OCR/SKILL.md)） | 收图片时 |
 | `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` / `GDRIVE_REFRESH_TOKEN` | 云盘备份（`backup_tick` 在传输层轮询里跑，见 [Remote Backup](../Remote_Backup/SKILL.md)） | backup.enabled 时 |
 | `DATA_ROOT` | 数据根目录覆盖（优先于 config `data_root`；测试隔离用，见 `paths.py`） | ❌ |
+| `KNOWKING_DIR` | KnowKing 项目根覆盖（优先于 config `knowking.project_dir`） | ❌ |
 
 ## 依赖
 
 - 微信：`pip install "weixin-ilink[qr]"`
 - Telegram：零外部包（仅标准库 urllib）
 - Agent 核心：零外部包（urllib 调 DeepSeek）
+- 懂王桥（可选）：需 `uv` 在 PATH + KnowKing 项目就位（依赖都在其自身 venv/.env，本项目零新增包）
 
 ## 相关
 
