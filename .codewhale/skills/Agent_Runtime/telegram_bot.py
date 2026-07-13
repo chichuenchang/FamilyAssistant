@@ -40,6 +40,7 @@ import logging
 
 from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
 from members import resolve
+from knowking_jobs import poll_and_deliver as _knowking_deliver
 import paths as _paths
 
 log = logging.getLogger("familyassist.telegram")
@@ -276,7 +277,7 @@ def run() -> None:
         return
     print(f"[tg] 已连接 — @{me['result']['username']}")
 
-    agent = Agent()
+    agent = Agent(channel="telegram")
     offset = _load_offset()
     print(f"[tg] 等待消息... (Ctrl+C 停止)")
 
@@ -389,6 +390,13 @@ def run() -> None:
         except Exception as e:
             print(f"[tg] 文档提醒检查异常: {e}", file=sys.stderr)
             log.exception("文档提醒检查异常")
+
+        # KnowKing 后台报告投递：把已出结果的懂王查询推回发起人（每轮 ~30s 检查）
+        try:
+            _knowking_deliver(send_message, "telegram")
+        except Exception as e:
+            print(f"[tg] KnowKing 投递异常: {e}", file=sys.stderr)
+            log.exception("KnowKing 投递异常")
 
         # 用户数据备份：脏 + 静默期满则镜像一轮（backup_sync 内部把关，永不抛）
         _backup_tick()

@@ -57,6 +57,7 @@ import logging
 from agent_core import (Agent, receipt_month_dir, member_inbox_dir, setup_logging,
                         split_reply as _split_reply)
 from members import resolve
+from knowking_jobs import poll_and_deliver as _knowking_deliver
 import paths as _paths
 
 log = logging.getLogger("familyassist.wechat")
@@ -300,7 +301,7 @@ def run_bot(relogin: bool = False) -> None:
 
     bot.client.poll = _poll_with_selfheal
 
-    agent = Agent()
+    agent = Agent(channel="wechat")
 
     # 注册文字消息处理器
     @bot.on_text
@@ -404,6 +405,18 @@ def run_bot(relogin: bool = False) -> None:
             _time.sleep(600)
 
     threading.Thread(target=_reminder_loop, daemon=True, name="doc-reminder").start()
+
+    # KnowKing 后台报告投递：单独快轮询线程（reminder 循环 600s 太慢，用户等报告）
+    def _knowking_loop():
+        while True:
+            try:
+                _knowking_deliver(lambda wxid, text: bot.send_text(wxid, text), "wechat")
+            except Exception as e:
+                print(f"[wx] KnowKing 投递异常: {e}", file=sys.stderr)
+                log.exception("KnowKing 投递异常")
+            _time.sleep(20)
+
+    threading.Thread(target=_knowking_loop, daemon=True, name="knowking-deliver").start()
 
     try:
         bot.run()

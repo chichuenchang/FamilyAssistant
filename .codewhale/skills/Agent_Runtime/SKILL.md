@@ -13,6 +13,7 @@
 ├── members.py          ← 成员注册表（频道 id → 成员名；存 git 忽略的 data/members.json）
 ├── paths.py            ← 磁盘布局解析（数据落盘位置的单一事实来源）
 ├── migrate_storage.py  ← 旧单库/旧目录 → 按成员分库的一次性迁移
+├── knowking_jobs.py    ← 懂王（KnowKing）跨平台舆情桥：后台跑 + 完成后推送
 ├── wechat_ilink.py     ← 微信传输层
 └── telegram_bot.py     ← Telegram 传输层
 ```
@@ -102,6 +103,30 @@ if __name__ == "__main__":
 - 长回复需分段的频道（如 Telegram 4096 字限制）自行在传输层切分（见 `telegram_bot.py:send_message`）。
 - 引用/回复消息：传输层把被引用内容以 `[引用: <原文>]\n` 前置进正文再交 Agent（见 `wechat_ilink.py:_with_quote`）。Telegram 的 `reply_to_message` 自带原文，直接取；微信 iLink 的 `ref_msg` 只带被引消息的 `msg_id`/时间戳（无内容，实测 2026-07-10），需本地缓存反查：入站消息按 `message_id` 精确命中，bot 自己的回复按发送时间 ±15s 匹配（服务端不回传出站 id），都查不到退化为时间占位。
 - 不在传输层写任何记账/查账逻辑 —— 全部交给 Agent。
+
+## 懂王（KnowKing）跨平台舆情桥
+
+外部独立 uv 项目 [KnowKing](file:///D:/PROJECTS/KnowKing)（`kk ask "<主题>"`：DeepSeek agent 跨
+YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，出中立报告）经
+`knowking_jobs.py` 接入 Agent，**不改 KnowKing 仓库**。
+
+- **触发**：仅当用户**显式说出 `knowking` / `kk` / `懂王`**（如"用 knowking 查大家怎么看 X"）。
+  普通查事实/新闻仍走 `anysearch_search`/`web_search`。工具描述与 system prompt 双重约束。
+- **后台 + 推送模型**（`kk ask` 耗时数分钟，同步会卡死会话）：`knowking` 工具调
+  `knowking_jobs.submit()` → 落盘 `running` 任务 + 起守护线程跑 `uv run kk ask` → 立即返回
+  "已开始"给用户；出报告后由传输层轮询 `poll_and_deliver(send_fn, channel)` 把报告推回**发起人**
+  （与 `reminder.check_and_push` / `backup_tick` 同构：Telegram 挂在长轮询尾部 ~30s；微信用
+  独立 `knowking-deliver` 守护线程 ~20s）。
+- **频道上下文注入**：`Agent(channel=...)`（各传输层构造时传 `"wechat"`/`"telegram"`）+ handle 里
+  `_apply_context` 把 `__channel`/`__user`/`member` 注入 `knowking` 工具参数（代码确定性，LLM 不得伪造投递目标）。本地测试无 channel → 工具返回"仅正式频道可用"。
+- **任务落盘** `data/.knowking_jobs/<id>.json`（点前缀=瞬态；投递成功即删，防重复/堆积）。
+  `running` 超 `stale_seconds`（默认 1800s，bot 重启/线程死）→ 记超时 error 再推送。同频道同用户
+  只允许一个在跑（busy 拦截）。
+- **.env 权威**：子进程 `cwd` 设为 KnowKing 项目根（让其 `dotenv_values(".env")` 读到自己的
+  `RAPIDAPI_KEY`/`JUSTONEAPI_TOKEN`/`DEEPSEEK_API_KEY`），并把本机 `DEEPSEEK*`/`KK_*`/provider
+  键从子环境剔除（`_child_env`），保证 KnowKing 用自己的密钥/模型，不被 bot 进程环境污染。
+- **配置**：`config.json` `knowking.project_dir`（或环境变量 `KNOWKING_DIR`）定位项目根，
+  `knowking.timeout_s` 定子进程超时。需 `uv` 在 PATH（`knowking_jobs._uv_bin` 回退用户默认安装位置）。
 
 ## 安全
 

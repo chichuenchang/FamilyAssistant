@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 members
 
 import members as _members_registry
 import paths as _paths
+import knowking_jobs as _knowking  # 懂王后台任务桥（独立 uv 项目 KnowKing）
 
 _log = logging.getLogger("familyassist.agent")
 
@@ -301,6 +302,7 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 - 填 PDF 表格：用户发来表格并要求填写 → fill_form_scan（file 传保存路径）。平面/扫描表先按 OCR 布局推断字段（fill_form_define_fields）。之后进入逐字段问答：每次 fill_form_next 取一个字段，一条消息只问一个字段——即使你从成员注册表/备忘/文档里知道答案，也必须问，把已知值作为建议给出（"回复'对'或给出正确值"）。绝不擅自替用户填任何值，绝不编造。用户答一个记一个（fill_form_set_answer；用户说"跳过/留空"传空字符串）。全部答完（或用户说"剩下都留空"时把余下字段逐个置空）再 fill_form_render，PDF 会自动发给用户。中断的填表用 fill_form_list 恢复
 - 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
 - 用户问"最新新闻/外面在发生什么/帮我查一下X" → 优先 anysearch_search（更准，可选 domain 垂直搜索：finance/health/academic/travel/code 等，先 anysearch_subdomains 发现子域）；web_search 为备选。发链接让看/总结文章 → anysearch_extract（备选 web_read）；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
+- 用户**明确说出 knowking / kk / 懂王**（如"用 knowking 查大家怎么看 X""kk 一下 Y"）→ 调 knowking 做跨社交平台舆情搜集（topic 去掉触发词只留要查的内容）。这是**唯一**触发条件：没说这几个词就别用它，普通查事实/新闻用 anysearch_search。它耗时数分钟、后台跑、出报告自动推送——把返回的"已开始"提示原样转达即可，别等待、别自己编报告
 - 用户闲聊/问候 → 直接友好回复，不用调工具
 - 需要精确信息时（金额、日期）才调工具，闲聊不调
 - 工具执行后会返回结果，你基于结果用自然语言回复
@@ -560,6 +562,20 @@ def _tool_anysearch_extract(args): return _run_cli("any-extract", args)
 def _tool_anysearch_subdomains(args): return _run_cli("any-subdomains", args)
 
 
+def _tool_knowking(args):
+    """懂王：跨社交平台舆情搜集。后台跑（数分钟），出报告后由传输层推给发起人。
+    仅在正式频道（注入了 __channel/__user 上下文）可用。"""
+    topic = (args.get("topic") or "").strip()
+    if not topic:
+        return "[错误] 缺少查询主题"
+    channel = args.get("__channel", "")
+    user = args.get("__user", "")
+    if not (channel and user):
+        return "[错误] KnowKing 仅在微信/Telegram 频道可用，当前无频道上下文（如本地测试）。"
+    _job_id, ack = _knowking.submit(topic, channel, user, args.get("member", ""))
+    return ack
+
+
 def _tool_fill_form_scan(args): return _run_cli("form-scan", args)
 
 
@@ -656,6 +672,7 @@ _TOOL_MAP = {
     "anysearch_search": _tool_anysearch_search,
     "anysearch_extract": _tool_anysearch_extract,
     "anysearch_subdomains": _tool_anysearch_subdomains,
+    "knowking": _tool_knowking,
     "set_profile_field": _tool_set_profile_field,
     "remove_profile_field": _tool_remove_profile_field,
     "fill_form_scan": _tool_fill_form_scan,
@@ -704,6 +721,24 @@ def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
             or tool_name in _SHEET_TOOLS or tool_name in _CAL_MEMBER_TOOLS
             or tool_name in _FORM_TOOLS):
         targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
+        if member:
+            targs["member"] = member
+    return targs
+
+
+# 需要频道上下文（把结果异步推回发起人）的工具：代码注入 __channel/__user/member，
+# LLM 拿不到也不该拿这些（防伪造投递目标）。目前仅 knowking。
+_CONTEXT_TOOLS = {"knowking"}
+
+
+def _apply_context(tool_name: str, targs: dict, channel: str, user: str,
+                   member: str) -> dict:
+    """给 _CONTEXT_TOOLS 注入发起频道 + 发起人 id + 成员名（异步投递需要），
+    确定性来自代码而非 LLM。其余工具原样放行。"""
+    if tool_name in _CONTEXT_TOOLS:
+        targs = dict(targs)
+        targs["__channel"] = channel or ""
+        targs["__user"] = str(user) if user else ""
         if member:
             targs["member"] = member
     return targs
@@ -1048,6 +1083,14 @@ TOOL_SCHEMAS = [
         "返回 domain/sub_domain/query_format/params_schema 表", {
         "domains": _s("单个或逗号分隔的多个领域，如 finance 或 finance,health"),
     }, ["domains"]),
+    _fn("knowking", "懂王（KnowKing / kk）：跨社交平台（YouTube/X/Reddit/TikTok/Instagram/"
+        "Bilibili/Zhihu）搜集\"大家在怎么说某话题\"，出中立第三方舆情报告。"
+        "**仅当用户明确说出触发词 knowking / kk / 懂王 时才用**（如\"用 knowking 查 X\""
+        "\"kk 一下大家怎么看 X\"）；普通查事实/新闻/股价仍用 anysearch_search/web_search，不要用它。"
+        "耗时数分钟，后台运行，出报告会自动推送给用户——你只需把本工具返回的\"已开始\"提示原样转达，"
+        "不要等待、不要编造报告内容。", {
+        "topic": _s("要查的主题：去掉 knowking/kk/懂王 触发词，保留真正要查的内容 + 用户给的额外背景/角度/时间范围"),
+    }, ["topic"]),
     _fn("fill_form_scan", "识别 PDF 表格的可填字段并创建填表会话（用户要求填表时用）。"
         "可填写 PDF 直接列出字段；平面/扫描 PDF 返回逐页 OCR 文本+坐标，"
         "需再调 fill_form_define_fields 提交你推断的字段。", {
@@ -1257,7 +1300,11 @@ class Agent:
 
     def __init__(self, history_size: int = 20,
                  context_max_tokens: int | None = None,
-                 idle_clear_hours: float | None = None):
+                 idle_clear_hours: float | None = None,
+                 channel: str = ""):
+        # channel = 传输层名（"wechat"/"telegram"）；异步工具（knowking）据此把结果
+        # 推回正确频道。本地测试留空 → 这类工具报错提示不可用。
+        self.channel = channel
         self.system_prompt = _build_system_prompt(idle_clear_hours)
         self.history_size = history_size
         self.context_max_tokens = int(
@@ -1331,6 +1378,7 @@ class Agent:
                     targs = {}
                 fn = _TOOL_MAP.get(name)
                 targs = _apply_member(name, targs, member)
+                targs = _apply_context(name, targs, self.channel, user, member)
                 result = fn(targs) if fn else f"[错误] 未知工具: {name}"
                 # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
