@@ -1156,6 +1156,40 @@ class TestCliPerMember:
         assert "需要 --member" in r.stderr
         assert not (data_root / "member").exists()
 
+    def test_delete_disambiguates_colliding_ids_across_stores(self, tmp_path):
+        # 活动库/待办库各自自增 → 活动 #1 与待办 #1 撞号。删除靠 kind 消歧；
+        # 不带 kind 且两库都命中 → 拒绝，绝不静默删错库（曾把待办删成了活动）。
+        data_root = tmp_path / "data"
+        sdb = str(data_root / "Alex" / "schedule" / "schedule.db")
+        tdb = str(data_root / "Alex" / "tasks" / "tasks.db")
+        assert _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "event",
+                            "--title", "游泳课", "--date", D1, "--start", "14:00"],
+                           data_root, tmp_path).returncode == 0
+        assert _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "task",
+                            "--title", "买蛋糕"], data_root, tmp_path).returncode == 0
+        assert cal_db.get_item(1, db_path=sdb)["title"] == "游泳课"
+        assert cal_db.get_item(1, db_path=tdb)["title"] == "买蛋糕"   # 两条都是 #1
+
+        # 不带 kind：id 在两库都存在 → 拒绝，两条都不动
+        amb = _cli_member(["cal-delete", "--member", "Alex Lee", "--id", "1"],
+                          data_root, tmp_path)
+        assert amb.returncode != 0
+        assert cal_db.get_item(1, db_path=sdb)["status"] == "active"
+        assert cal_db.get_item(1, db_path=tdb)["status"] == "active"
+
+        # --kind task：只删待办，活动不动
+        dt = _cli_member(["cal-delete", "--member", "Alex Lee", "--id", "1",
+                          "--kind", "task"], data_root, tmp_path)
+        assert dt.returncode == 0, dt.stderr
+        assert cal_db.get_item(1, db_path=tdb)["status"] == "cancelled"
+        assert cal_db.get_item(1, db_path=sdb)["status"] == "active"
+
+        # --kind event：删活动
+        de = _cli_member(["cal-delete", "--member", "Alex Lee", "--id", "1",
+                          "--kind", "event"], data_root, tmp_path)
+        assert de.returncode == 0, de.stderr
+        assert cal_db.get_item(1, db_path=sdb)["status"] == "cancelled"
+
 
 # ── CLI 校验尾行（in-process：subprocess 打不了桩） ──────────────
 

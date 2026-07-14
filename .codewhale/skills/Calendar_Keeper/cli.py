@@ -273,15 +273,24 @@ def cmd_cal_done(args):
 
 def cmd_cal_delete(args):
     _validate_member(args.member, required=True)
-    db = item = None
-    for cand in _member_stores(args.member):    # 活动/待办分库，逐库找 id
+    # 活动库/待办库各自自增 → 同一 id 号可能在两库并存。给了 --kind 只查该库；
+    # 没给且两库都命中 → 拒绝消歧（旧行为按库序取首个，会把待办删成活动）。
+    kind = getattr(args, "kind", None)
+    matches = []
+    for cand in _member_stores(args.member, kind):
         found = cal_db.get_item(args.id, db_path=cand)
         if found is not None:
-            db, item = cand, found
-            break
-    if item is None:
+            matches.append((cand, found))
+    if not matches:
         print("[错误] 无此日程", file=sys.stderr)
         sys.exit(1)
+    if len(matches) > 1:
+        kinds = "、".join("活动" if it["kind"] == "event" else "待办"
+                         for _, it in matches)
+        print(f"[错误] #{args.id} 在多个库都存在（{kinds}），"
+              f"请加 --kind event|task 指定要删哪个", file=sys.stderr)
+        sys.exit(1)
+    db, item = matches[0]
     cal_db.set_status(args.id, "cancelled", db_path=db)
     _mark_backup_dirty()
     _push_quietly(db, args.member, item["kind"])
@@ -364,6 +373,8 @@ def main() -> int:
     p = sub.add_parser("cal-delete", help="取消一条日程（同步删除远端）")
     p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
     p.add_argument("--id", type=int, required=True, help="日程 ID")
+    p.add_argument("--kind", choices=["event", "task"],
+                   help="活动或待办（id 在两库可能撞号，指定以消歧）")
 
     p = sub.add_parser("cal-sync", help="立即强制刷新远程日历")
     p.add_argument("--member", default="", help="按成员刷新其活动+待办；不给则单库全局视图")
