@@ -63,7 +63,7 @@ def family_dir() -> Path:
 
 
 def family_ledger() -> Path:
-    """家庭账本 DB（收支/定期/划转/报税/汇率/文档）。"""
+    """家庭账本 DB（收支/定期/划转/报税/汇率；文档已拆到 documents.db）。"""
     return family_dir() / "ledger.db"
 
 

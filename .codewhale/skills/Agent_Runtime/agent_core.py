@@ -288,7 +288,7 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 
 ## 行为准则
 - 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
-- 用户说"查账""这个月花了多少"→ list_transactions 或 get_summary；要某月汇总→get_monthly；记错要删→delete_transaction
+- 用户说"查账""这个月花了多少"→ list_transactions 或 get_summary（可给 year+month 看某一个月）；要全年逐月对比→get_monthly（只按年，无月参数）；记错要删→delete_transaction
 - 用户说"存了定期""买了理财"→ add_deposit；"我有哪些定期"→ list_deposits
 - 用户说"报税""今年报了多少税"→ add_tax / list_tax
 - 用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）

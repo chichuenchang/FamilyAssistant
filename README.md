@@ -66,7 +66,7 @@
 - "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
 - 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结
 - **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取；`ANYSEARCH_API_KEY` 可选（未配置走匿名访问，限额较低仍可用）；问最新资讯时优先 Any Search，下面的 Web Reach 作兜底
-- **Web Reach 只读公开信息，无需 API key**（搜索走 DuckDuckGo + Jina 阅读器；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
+- **Web Reach 只读公开信息，无需 API key**（搜索走 DuckDuckGo + Jina 阅读器；`JINA_API_KEY` 可选，配了走带鉴权的更高限额；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
 
 ### 🔎 懂王舆情搜集（KnowKing 桥，可选）
 - 微信/Telegram 里说 **"用 knowking / kk / 懂王 查大家怎么看 X"** → 跨社交平台
@@ -79,7 +79,7 @@
 ### ☁️ 云盘备份（Remote Backup，可选）
 - 用户数据（账本/票据/文档/配置）单向镜像到云盘，写入后防抖增量同步，本地永远是事实源
 - 当前内置 Google Drive 实现（最小 `drive.file` 权限，只能看到自己上传的文件）；按 provider 契约可换任意云端存储
-- 换电脑 `backup-restore` 一键恢复全部数据
+- 换电脑 `backup-restore` 按成员恢复数据（每个有备份的成员跑一条命令）
 
 ### 🔒 安全设计
 - Agent 能调的 CLI 命令有限：记账族走 `config.json` 白名单（增删只影响记账族）；备忘/工作表/图表/日程/文档/备份/联网是 Agent 核心能力，由 `agent_core` 恒定放行，不随白名单增删。成员增删、文档删除（doc-remove）、备份恢复（backup-restore/reorg）等敏感命令既不在白名单也不放行，仅限本机
@@ -182,10 +182,10 @@ python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "<主成�
 #    其他成员若各有备份：再 backup-restore --member "成员名"（此时注册表已恢复，正常模式）
 
 # 4. 重设其余凭据（都不在备份里）
-setx DEEPSEEK_API_KEY "sk-xxx"        # 必须
+setx DEEPSEEK_API_KEY "sk-xxx"        # 必须（可选调优：DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_REASONING_EFFORT）
 setx GCAL_CLIENT_ID "xxx"             # 日历同步（可复用 Drive 的同一 OAuth 客户端）
 setx GCAL_CLIENT_SECRET "xxx"
-setx GCAL_CALENDAR_ID "xxx"
+setx GCAL_CALENDAR_ID "xxx"           # 可选，默认 primary 主日历
 #    GCAL refresh token 同样可 calendar_provider.py --auth 重授
 #    可选：setx TENCENT_SECRET_ID / TENCENT_SECRET_KEY（OCR）、setx TELEGRAM_BOT_TOKEN（Telegram）
 
@@ -263,6 +263,7 @@ FamilyAssistant/
 │           ├── members.py        ← 成员注册表（存 git 忽略的 data/members.json）
 │           ├── paths.py          ← 磁盘布局单一事实源（member_store / family_*）
 │           ├── migrate_storage.py ← 一次性存储迁移（单库 → 按成员分库）
+│           ├── knowking_jobs.py  ← 懂王（KnowKing）后台任务桥（提交/轮询/推送报告）
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）
@@ -273,7 +274,7 @@ FamilyAssistant/
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档
-└── requirements.txt      ← 全部可选依赖（pytest；weixin-ilink、yt-dlp、matplotlib、pypdf、pypdfium2、Pillow —— 缺失则相关功能优雅降级）
+└── requirements.txt      ← 全部可选依赖（pytest；weixin-ilink、yt-dlp、matplotlib、numpy、pypdf、pypdfium2、Pillow —— 缺失则相关功能优雅降级）
 ```
 
 ## 技术栈
