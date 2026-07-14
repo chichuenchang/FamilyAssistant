@@ -108,6 +108,66 @@ def test_list_and_cancel(data_root, inbox_pdf):
     assert r.returncode == 1 and "[错误]" in r.stdout
 
 
+def test_scan_same_pdf_reuses_active_session(data_root, inbox_pdf):
+    # 填表回归：LLM 忘会话 id 后常重扫同一 PDF——不能建平行会话丢进度
+    sid = _sid(_run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
+                    data_root=data_root).stdout)
+    _run("form-set", "--session", sid, "--field", "family_name",
+         "--value", "Zheng", "--member", "Jim", data_root=data_root)
+    r = _run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
+             data_root=data_root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _sid(r.stdout) == sid          # 续用同一会话
+    assert "续用" in r.stdout and "1/2" in r.stdout  # 进度没丢
+
+
+def test_scan_after_cancel_creates_new_session(data_root, inbox_pdf):
+    sid = _sid(_run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
+                    data_root=data_root).stdout)
+    _run("form-cancel", "--session", sid, "--member", "Jim", data_root=data_root)
+    r = _run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
+             data_root=data_root)
+    assert r.returncode == 0
+    assert _sid(r.stdout) != sid
+
+
+def test_bad_session_id_auto_resumes_latest_active(data_root, inbox_pdf):
+    # 填表回归：LLM 拿 PDF 文件名当会话 id 编了一个 → 自动接续最近进行中会话
+    sid = _sid(_run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
+                    data_root=data_root).stdout)
+    r = _run("form-set", "--session", "20260713_222759_wechat",
+             "--field", "family_name", "--value", "Zheng",
+             "--member", "Jim", data_root=data_root)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "自动接续" in r.stdout and sid in r.stdout
+    assert "✅" in r.stdout and "1/2" in r.stdout
+    r = _run("form-next", "--session", "bogus", "--member", "Jim",
+             data_root=data_root)
+    assert r.returncode == 0
+    assert "agree" in r.stdout  # family_name 已答，下一个是 agree
+
+
+def test_bad_session_id_without_active_session_errors(data_root, inbox_pdf):
+    sid = _sid(_run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
+                    data_root=data_root).stdout)
+    _run("form-cancel", "--session", sid, "--member", "Jim", data_root=data_root)
+    r = _run("form-next", "--session", "bogus", "--member", "Jim",
+             data_root=data_root)
+    assert r.returncode == 1
+    assert "[错误]" in r.stdout and "没有进行中的填表会话" in r.stdout
+
+
+def test_cancel_stays_strict_on_bad_session_id(data_root, inbox_pdf):
+    # 取消绝不自动接续——取消错会话比报错更糟
+    sid = _sid(_run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
+                    data_root=data_root).stdout)
+    r = _run("form-cancel", "--session", "bogus", "--member", "Jim",
+             data_root=data_root)
+    assert r.returncode == 1 and "[错误]" in r.stdout
+    r = _run("form-list", "--member", "Jim", data_root=data_root)
+    assert sid in r.stdout and "collecting" in r.stdout  # 原会话安然无恙
+
+
 def test_flat_scan_without_ocr_reports_hint(data_root):
     pytest.importorskip("PIL")
     pytest.importorskip("pypdfium2")

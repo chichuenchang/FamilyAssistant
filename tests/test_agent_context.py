@@ -11,22 +11,26 @@ def test_estimate_tokens_cjk_and_ascii():
     assert agent_core._estimate_tokens("你好ab") == 3          # 2 CJK + 2 ASCII(向上取整)
 
 
-def test_save_history_trims_oldest_pairs_over_token_budget():
+def _turn(q, a):
+    return [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
+
+
+def test_save_history_trims_oldest_turns_over_token_budget():
     agent = agent_core.Agent(history_size=100, context_max_tokens=50,
                              idle_clear_hours=0)
     for i in range(5):
-        agent._save_history("u", f"问题{i}" + "字" * 20, f"回答{i}" + "字" * 20)
+        agent._save_history("u", _turn(f"问题{i}" + "字" * 20, f"回答{i}" + "字" * 20))
     h = agent.history["u"]
-    total = sum(agent_core._estimate_tokens(m["content"]) for m in h)
+    total = sum(agent_core._msg_tokens(m) for m in h)
     assert total <= 50
-    # 成对丢弃最旧、保留最新：首条必是 user、末条是最后一轮的 assistant
+    # 整轮丢弃最旧、保留最新：首条必是 user、末条是最后一轮的 assistant
     assert h[0]["role"] == "user" and h[-1]["content"].startswith("回答4")
     assert not any(m["content"].startswith(("问题0", "回答0")) for m in h)
 
 
-def test_save_history_keeps_last_pair_even_if_over_budget():
+def test_save_history_keeps_last_turn_even_if_over_budget():
     agent = agent_core.Agent(context_max_tokens=5, idle_clear_hours=0)
-    agent._save_history("u", "字" * 100, "字" * 100)
+    agent._save_history("u", _turn("字" * 100, "字" * 100))
     assert len(agent.history["u"]) == 2  # 单轮超预算也不清成空
 
 
@@ -34,8 +38,38 @@ def test_save_history_no_trim_when_budget_disabled():
     agent = agent_core.Agent(history_size=100, context_max_tokens=0,
                              idle_clear_hours=0)
     for i in range(5):
-        agent._save_history("u", "字" * 50, "字" * 50)
+        agent._save_history("u", _turn("字" * 50, "字" * 50))
     assert len(agent.history["u"]) == 10
+
+
+def test_save_history_trims_whole_turns_no_orphan_tool_msgs():
+    # 带工具调用的轮：裁剪必须整轮丢，绝不留孤儿 tool 消息（API 会拒收）
+    agent = agent_core.Agent(history_size=100, context_max_tokens=60,
+                             idle_clear_hours=0)
+    for i in range(4):
+        agent._save_history("u", [
+            {"role": "user", "content": f"问{i}" + "字" * 10},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": f"t{i}", "function": {
+                 "name": "fill_form_next", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": f"t{i}", "content": "下一个字段: 17" + "字" * 10},
+            {"role": "assistant", "content": f"答{i}" + "字" * 10},
+        ])
+    h = agent.history["u"]
+    assert h[0]["role"] == "user"  # 永远从整轮开头开始
+    for j, m in enumerate(h):      # 每条 tool 前面紧跟着它的 assistant tool_calls
+        if m["role"] == "tool":
+            assert h[j - 1]["role"] == "assistant" and h[j - 1].get("tool_calls")
+
+
+def test_save_history_turn_count_cap_trims_whole_turns():
+    agent = agent_core.Agent(history_size=2, context_max_tokens=0,
+                             idle_clear_hours=0)
+    for i in range(5):
+        agent._save_history("u", _turn(f"问{i}", f"答{i}"))
+    h = agent.history["u"]
+    assert sum(1 for m in h if m["role"] == "user") == 2
+    assert h[0]["content"] == "问3"
 
 
 def test_idle_clears_history_before_next_message(monkeypatch):
@@ -137,3 +171,56 @@ def test_config_defaults_applied():
     agent = agent_core.Agent()
     assert agent.context_max_tokens == agent_core._CTX_MAX_TOKENS
     assert agent.idle_clear_seconds == agent_core._IDLE_CLEAR_HOURS * 3600
+
+
+def test_tool_results_persist_across_turns(monkeypatch):
+    """填表回归：工具结果（含会话 id）必须留在历史里，下一轮模型能看到。
+    否则模型只见自己的文字回复（不含 id），会拿 PDF 文件名瞎编会话 id。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    agent = agent_core.Agent(idle_clear_hours=0)
+    monkeypatch.setitem(agent_core._TOOL_MAP, "fake_scan",
+                        lambda a: "会话: 20260713_222813_2b73\n类型: acroform")
+    replies = iter([
+        {"content": "", "tool_calls": [{"id": "t1", "function": {
+            "name": "fake_scan", "arguments": "{}"}}]},
+        {"content": "已开始填表，第一个字段是姓"},
+        {"content": "好的"},
+    ])
+    captured = []
+
+    def fake_llm(msgs):
+        captured.append([dict(m) for m in msgs])
+        return next(replies)
+
+    monkeypatch.setattr(agent, "_call_llm", fake_llm)
+    agent.handle("帮我填表", user="u", member="Jim")
+    agent.handle("对", user="u", member="Jim")
+
+    h = agent.history["u"]
+    assert any(m["role"] == "assistant" and m.get("tool_calls") for m in h)
+    assert any(m["role"] == "tool" and "20260713_222813_2b73" in m["content"]
+               for m in h)
+    # 第二轮（第 3 次 LLM 调用）的请求里能看到上一轮的工具结果
+    msgs2 = captured[2]
+    assert any(m.get("role") == "tool"
+               and "20260713_222813_2b73" in (m.get("content") or "")
+               for m in msgs2)
+
+
+def test_huge_tool_result_truncated_in_history(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    agent = agent_core.Agent(idle_clear_hours=0)
+    big = "会话: 20260713_222813_2b73\n" + "字" * 5000
+    monkeypatch.setitem(agent_core._TOOL_MAP, "fake_big", lambda a: big)
+    replies = iter([
+        {"content": "", "tool_calls": [{"id": "t1", "function": {
+            "name": "fake_big", "arguments": "{}"}}]},
+        {"content": "好"},
+    ])
+    monkeypatch.setattr(agent, "_call_llm", lambda msgs: next(replies))
+    agent.handle("扫描", user="u", member="Jim")
+    tool_msgs = [m for m in agent.history["u"] if m["role"] == "tool"]
+    assert len(tool_msgs) == 1
+    assert len(tool_msgs[0]["content"]) <= agent_core._HIST_TOOL_CAP + 20
+    assert tool_msgs[0]["content"].startswith("会话: 20260713_222813_2b73")  # 首行保留
+    assert "截断" in tool_msgs[0]["content"]

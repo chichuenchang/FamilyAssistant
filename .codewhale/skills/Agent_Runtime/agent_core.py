@@ -1097,25 +1097,26 @@ TOOL_SCHEMAS = [
     }, ["topic"]),
     _fn("fill_form_scan", "识别 PDF 表格的可填字段并创建填表会话（用户要求填表时用）。"
         "可填写 PDF 直接列出字段；平面/扫描 PDF 返回逐页 OCR 文本+坐标，"
-        "需再调 fill_form_define_fields 提交你推断的字段。", {
+        "需再调 fill_form_define_fields 提交你推断的字段。"
+        "同一 PDF 已有进行中会话时直接续用该会话（不会重建）。", {
         "file": _s("PDF 路径（用户发来的保存路径，data 内）"),
     }, ["file"]),
     _fn("fill_form_define_fields", "平面表专用：把你从 OCR 布局推断出的待填字段提交给会话。"
         "anchor 是填写区域（标签右侧或下方的空白处），页面像素坐标。", {
-        "session": _s("会话 id"),
+        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
         "fields": _s('JSON 数组: [{"name","label","type":"text|checkbox|choice",'
                      '"options":[],"page":0,"anchor":{"x","y","w","h"}}]'),
     }, ["session", "fields"]),
     _fn("fill_form_next", "取会话中下一个未回答字段（问用户前调它）。", {
-        "session": _s("会话 id"),
+        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
     }, ["session"]),
     _fn("fill_form_set_answer", "记录用户对某字段的回答。留空传空字符串。", {
-        "session": _s("会话 id"),
+        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
         "field": _s("字段 name"),
         "value": _s("用户给的值；checkbox 用 on/off；留空传 \"\""),
     }, ["session", "field", "value"]),
     _fn("fill_form_render", "所有字段回答完后生成填好的 PDF 并自动发给用户。", {
-        "session": _s("会话 id"),
+        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
     }, ["session"]),
     _fn("fill_form_list", "列出我的填表会话（恢复中断的填表用）。", {}),
     _fn("set_profile_field", "写/改一条家庭成员资料（法定名/生日/电话/邮箱/住址/证件卡号等"
@@ -1129,7 +1130,7 @@ TOOL_SCHEMAS = [
         "field": _s("字段名"),
     }, ["member-name", "field"]),
     _fn("fill_form_cancel", "取消一个填表会话。", {
-        "session": _s("会话 id"),
+        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
     }, ["session"]),
 ]
 
@@ -1291,11 +1292,26 @@ def _estimate_tokens(text: str) -> int:
     return (len(text) - ascii_n) + (ascii_n + 3) // 4
 
 
+# 历史存档里单条工具结果的字符上限（本轮内不截断，只影响跨轮存档）：
+# 工具结果必须跨轮保留（填表会话 id 只出现在工具结果里，丢了模型下轮就瞎编），
+# 但 OCR/网页全文动辄上万字，原样存会挤爆 token 预算 → 截断留头部（id 都在首行）。
+_HIST_TOOL_CAP = 1500
+
+
+def _msg_tokens(m: dict) -> int:
+    """粗估一条历史消息的 token（content + tool_calls 参数）。"""
+    n = _estimate_tokens(m.get("content") or "")
+    if m.get("tool_calls"):
+        n += _estimate_tokens(json.dumps(m["tool_calls"], ensure_ascii=False))
+    return n
+
+
 class Agent:
     """频道无关的全量上下文智能助手。每条消息带完整项目文档 + 对话历史调 DeepSeek。
 
     上下文自动管理（旋钮在 config.json "agent" 块，构造参数可覆盖，0=关闭）：
-    - context_max_tokens: 对话历史 token 预算。超出时从最旧的一问一答开始成对丢弃，
+    - context_max_tokens: 对话历史 token 预算。超出时从最旧的整轮开始丢弃
+      （轮 = user 消息到下一条 user 之前，含工具调用/结果），
       保留最近上下文——老话题不再挤占预算，Agent 保持聚焦。
     - idle_clear_hours: 某用户闲置超过 N 小时后，下一条消息前自动清空其对话历史
       （隔了半天多半是新话题，旧上下文只会干扰）。
@@ -1352,9 +1368,12 @@ class Agent:
                  + _profiles_context()
                  + _notes_context(member) + _worksheets_context(member)
                  + _schedule_context(member)}]
-        user_history = self.history[user]
-        msgs.extend(user_history[-self.history_size * 2:])
+        # 历史（含跨轮保留的工具调用/结果）由 _save_history 控制长度，这里全量带上
+        msgs.extend(self.history[user])
         msgs.append({"role": "user", "content": text})
+        # 本轮完整消息序列（user → 中间 assistant/tool → 最终 assistant），
+        # 结束后整体进历史——工具结果里的会话 id 等状态必须跨轮可见
+        turn: list[dict] = [{"role": "user", "content": text}]
 
         reply = ""
         tool_log = ""  # 回复里展示的工具调用摘要（按名计数）
@@ -1374,6 +1393,10 @@ class Agent:
                 break
 
             msgs.append(message)
+            # 历史只存干净结构（去 reasoning_content 等 API 附带的大字段）
+            turn.append({"role": "assistant",
+                         "content": message.get("content") or "",
+                         "tool_calls": tool_calls})
             for tc in tool_calls:
                 name = tc.get("function", {}).get("name", "")
                 try:
@@ -1397,6 +1420,10 @@ class Agent:
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
                              "content": result})
+                turn.append({"role": "tool",
+                             "tool_call_id": tc.get("id", ""),
+                             "content": result if len(result) <= _HIST_TOOL_CAP
+                             else result[:_HIST_TOOL_CAP] + "\n…（历史存档截断）"})
 
         if tool_counts:
             tool_log = "⚙️ " + ", ".join(
@@ -1404,7 +1431,8 @@ class Agent:
         if not reply:
             reply = "（工具已执行，但生成回复失败）" if tool_log else "抱歉，暂时出错了。"
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
-        self._save_history(user, text, reply)
+        turn.append({"role": "assistant", "content": reply})
+        self._save_history(user, turn)
         for p in produced_images:
             final += f"\n{IMG_SENTINEL}{p}"
         for p in produced_docs:
@@ -1492,22 +1520,37 @@ class Agent:
             _log.exception("LLM 调用失败")
             return None
 
-    def _save_history(self, user, user_msg, assistant_msg):
+    def _save_history(self, user, turn_msgs: list[dict]):
+        """整轮消息（user → 中间 assistant/tool → 最终 assistant）追加进历史。
+
+        工具调用与结果必须跨轮保留：填表等多轮流程的状态（会话 id）只出现在
+        工具结果里，丢了模型下一轮就会瞎编（曾把 PDF 文件名当会话 id 用）。
+        裁剪一律按整轮进行（轮 = 一条 user 到下一条 user 之前），
+        绝不留下没有配对 assistant tool_calls 的孤儿 tool 消息。
+        """
         h = self.history[user]
-        h.append({"role": "user", "content": user_msg})
-        h.append({"role": "assistant", "content": assistant_msg})
-        if len(h) > self.history_size * 2:
-            h = self.history[user] = h[-self.history_size * 2:]
-        # token 预算裁剪：超出 context_max_tokens 时从最旧的一问一答成对丢弃，
+        h.extend(turn_msgs)
+
+        def _turn_starts() -> list[int]:
+            return [i for i, m in enumerate(h) if m.get("role") == "user"]
+
+        # 轮数上限：只留最近 history_size 轮
+        starts = _turn_starts()
+        if len(starts) > self.history_size:
+            del h[:starts[len(starts) - self.history_size]]
+        # token 预算裁剪：超出 context_max_tokens 时整轮丢最旧，
         # 至少保留最近一轮（哪怕它单独超预算）。
         if self.context_max_tokens > 0:
             trimmed = 0
-            while (len(h) > 2 and sum(_estimate_tokens(m.get("content") or "")
-                                      for m in h) > self.context_max_tokens):
-                del h[:2]
-                trimmed += 2
+            while True:
+                starts = _turn_starts()
+                if (len(starts) <= 1
+                        or sum(_msg_tokens(m) for m in h) <= self.context_max_tokens):
+                    break
+                del h[:starts[1]]
+                trimmed += 1
             if trimmed:
-                _log.debug("用户 %s 对话历史超 %d token 预算，丢弃最旧 %d 条",
+                _log.debug("用户 %s 对话历史超 %d token 预算，丢弃最旧 %d 轮",
                            user, self.context_max_tokens, trimmed)
 
 

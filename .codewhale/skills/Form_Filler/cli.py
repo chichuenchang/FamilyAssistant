@@ -60,11 +60,30 @@ def _resolve_source(path: str, member: str) -> Path:
         _die("路径不允许或文件不存在")
 
 
-def _load_session(args) -> dict:
+# 进行中会话状态（可自动接续的）
+_ACTIVE_STATUSES = ("collecting", "defining")
+
+
+def _load_session(args, strict: bool = False, note_to_stderr: bool = False) -> dict:
+    """按 id 加载会话；id 无效/不存在且非 strict 时自动接续最近的进行中会话。
+
+    LLM 跨消息容易忘掉真实会话 id（甚至拿 PDF 文件名当 id 编一个），
+    strict=False 时兜底到该成员最近的进行中会话，避免填表流程原地打转。
+    form-cancel 保持 strict——取消错会话比报错更糟。
+    form-render 传 note_to_stderr=True：其 stdout 首行必须是文件路径（哨兵契约）。"""
     try:
         return form_session.load(args.member, args.session)
     except (FileNotFoundError, ValueError) as e:
-        _die(str(e))
+        if strict:
+            _die(str(e))
+        active = [s for s in form_session.list_sessions(args.member)
+                  if s.get("status") in _ACTIVE_STATUSES]
+        if not active:
+            _die(f"{e}，且没有进行中的填表会话（可用 fill_form_scan 新建）")
+        s = active[0]
+        print(f"（会话 id {args.session} 无效，已自动接续最近会话 {s['id']}）",
+              file=sys.stderr if note_to_stderr else sys.stdout)
+        return s
 
 
 def _mark_backup_dirty() -> None:
@@ -86,6 +105,27 @@ def _fmt_field_line(i: int, f: dict) -> str:
 
 def cmd_form_scan(args):
     src = _resolve_source(args.file, args.member)
+    rel_src = _paths.to_rel(src)
+
+    # 同一 PDF 已有进行中（collecting）的会话 → 直接续用，
+    # 避免 LLM 忘会话 id 后重复扫描建出一堆平行会话、进度全丢
+    for s in form_session.list_sessions(args.member):
+        if s.get("source_pdf") == rel_src and s.get("status") == "collecting":
+            a, n = form_session.progress(s)
+            print(f"会话: {s['id']}")
+            print(f"类型: {s['kind']}（该 PDF 已有进行中的填表会话，续用，进度 {a}/{n}）")
+            print(f"字段 ({len(s['fields'])}):")
+            for i, f in enumerate(s["fields"], 1):
+                print(_fmt_field_line(i, f))
+            print("用 fill_form_next 继续提问。")
+            return
+
+    # 同一 PDF 半途的 flat 扫描（defining，还没定义字段）重扫即作废，不留僵尸会话
+    for s in form_session.list_sessions(args.member):
+        if s.get("source_pdf") == rel_src and s.get("status") == "defining":
+            s["status"] = "cancelled"
+            form_session.save(s)
+
     if not form_fill.is_available():
         _die("缺少 pypdf 依赖，无法读取 PDF 表单。pip install pypdf")
     try:
@@ -94,7 +134,6 @@ def cmd_form_scan(args):
         _die(str(e))
     except Exception as e:
         _die(f"PDF 解析失败: {e}")
-    rel_src = _paths.to_rel(src)
 
     if fields:
         s = form_session.new_session(args.member, rel_src, "acroform",
@@ -194,7 +233,7 @@ def cmd_form_set(args):
 
 
 def cmd_form_render(args):
-    s = _load_session(args)
+    s = _load_session(args, note_to_stderr=True)
     if s["status"] == "cancelled":
         _die("会话已取消")
     values = {f["name"]: f["value"] for f in s["fields"]
@@ -242,7 +281,7 @@ def cmd_form_list(args):
 
 
 def cmd_form_cancel(args):
-    s = _load_session(args)
+    s = _load_session(args, strict=True)
     s["status"] = "cancelled"
     form_session.save(s)
     _mark_backup_dirty()
