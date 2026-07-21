@@ -106,7 +106,7 @@ if __name__ == "__main__":
 
 ## 懂王（KnowKing）跨平台舆情桥
 
-外部独立 uv 项目 [KnowKing](file:///D:/PROJECTS/KnowKing)（`kk ask "<主题>"`：DeepSeek agent 跨
+外部独立 uv 项目 [KnowKing](file:///C:/Users/slimj/PROJECTS/KnowKing)（`kk ask "<主题>"`：DeepSeek agent 跨
 YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，出中立报告）经
 `knowking_jobs.py` 接入 Agent，**不改 KnowKing 仓库**。
 
@@ -128,6 +128,11 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
   键从子环境剔除（`_child_env`），保证 KnowKing 用自己的密钥/模型，不被 bot 进程环境污染。
 - **配置**：`config.json` `knowking.project_dir`（或环境变量 `KNOWKING_DIR`）定位项目根，
   `knowking.timeout_s` 定子进程超时。需 `uv` 在 PATH（`knowking_jobs._uv_bin` 回退用户默认安装位置）。
+- **KnowKing 环境自建**：调用走 `uv run --no-sync`，只用 KnowKing 已有的 `.venv`，uv 不联网。
+  该 venv 由 pip 建（KnowKing 需 Python ≥3.13）：
+  `py -3.13 -m venv .venv && .venv\Scripts\pip install -e .`（在 KnowKing 项目根执行）。
+  依赖变更后需重跑该命令。本机 VPN 会向所有进程注入 hook DLL，uv 一旦联网即
+  `EXCEPTION_ILLEGAL_INSTRUCTION` 崩溃（pip/winget 不受影响），故刻意走离线路径。
 
 ## 安全
 

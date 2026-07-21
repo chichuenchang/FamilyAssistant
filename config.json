@@ -69,7 +69,7 @@
   },
   "knowking": {
     "_comment": "懂王（KnowKing）跨社交平台舆情桥。独立 uv 项目，Agent 经 knowking_jobs 后台调用 `uv run kk ask`，出报告后由传输层轮询推回发起人。project_dir=KnowKing 项目根（也可用环境变量 KNOWKING_DIR 覆盖）；timeout_s=单次 kk ask 子进程超时（KnowKing agent 默认 300s，外加搜集给足余量）。仅当用户显式说 knowking/kk/懂王 时触发。",
-    "project_dir": "D:\\PROJECTS\\KnowKing",
+    "project_dir": "C:\\Users\\slimj\\PROJECTS\\KnowKing",
     "timeout_s": 900
   },
   "wechat": {

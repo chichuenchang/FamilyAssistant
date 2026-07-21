@@ -3,9 +3,12 @@ KnowKing 后台任务桥 — 把独立项目 KnowKing（懂王）的 `kk ask` �
 频道无关 Agent，用"后台跑 + 完成后自动推送"模式（用户选定）。
 
 为什么要桥而不是普通 CLI 工具：
-  - KnowKing 是**独立 uv 项目**（D:\\PROJECTS\\KnowKing），自带 venv 和 .env
+  - KnowKing 是**独立 uv 项目**（C:\\Users\\slimj\\PROJECTS\\KnowKing），自带 venv 和 .env
     （RAPIDAPI_KEY / JUSTONEAPI_TOKEN / DEEPSEEK_API_KEY），不在 .codewhale/skills 下，
-    调用方式是 `uv run kk ask "<主题>"`（位置参数），不是本项目 CLI 的 --flag 风格。
+    调用方式是 `uv run --no-sync kk ask "<主题>"`（位置参数），不是本项目 CLI 的 --flag 风格。
+    （--no-sync：用其已建好的 .venv，不让 uv 联网同步 —— 本机 VPN 注入的 hook DLL
+    会让 uv 任何联网操作崩在 EXCEPTION_ILLEGAL_INSTRUCTION；离线路径不受影响。
+    故 KnowKing 的 .venv 由 pip 建：`py -3.13 -m venv .venv && .venv\\Scripts\\pip install -e .`）
   - 一次 `kk ask` 是一个完整 DeepSeek agent 会话，跨 8 平台搜集要**数分钟**。
     Agent.handle() 同步返回单条回复，若同步等待会把该会话卡死数分钟。
     故：提交即返回"已开始"，后台线程跑，出报告后由传输层轮询推送给发起人。
@@ -42,7 +45,7 @@ import paths as _paths
 _log = logging.getLogger("familyassist.knowking")
 
 # 默认 KnowKing 项目位置；可被 config.json knowking.project_dir 或环境变量 KNOWKING_DIR 覆盖
-_DEFAULT_PROJECT_DIR = r"D:\PROJECTS\KnowKing"
+_DEFAULT_PROJECT_DIR = r"C:\Users\slimj\PROJECTS\KnowKing"
 _ROOT = Path(__file__).resolve().parents[3]
 
 # 子进程超时：kk agent_timeout_s 默认 300s，外加搜集/展开，给足余量（可 config 覆盖）
@@ -175,10 +178,14 @@ def _child_env() -> dict:
 
 
 def _default_runner(topic: str) -> tuple[bool, str]:
-    """跑 `uv run kk ask "<topic>"`（cwd=KnowKing 项目，让其 .env 生效）。
-    返回 (成功?, 报告或错误文本)。"""
+    """跑 `uv run --no-sync kk ask "<topic>"`（cwd=KnowKing 项目，让其 .env 生效）。
+    返回 (成功?, 报告或错误文本)。
+
+    --no-sync：直接用 KnowKing 已有的 .venv，跳过 uv 的联网解析/同步。既省掉每次
+    调用的网络往返，也绕开本机 VPN 注入 DLL 导致 uv 联网即崩的问题（见模块头）。
+    代价：KnowKing 依赖变更后需手动重建其 .venv。"""
     proj = project_dir()
-    argv = [_uv_bin(), "run", "--project", str(proj), "kk", "ask", topic]
+    argv = [_uv_bin(), "run", "--project", str(proj), "--no-sync", "kk", "ask", topic]
     try:
         r = subprocess.run(
             argv, cwd=str(proj), env=_child_env(),
