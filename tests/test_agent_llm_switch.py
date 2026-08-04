@@ -34,7 +34,7 @@ def test_save_llm_overrides_roundtrip_atomic(tmp_path, monkeypatch):
     data = {"u1": {"model": "deepseek-v4-pro", "effort": "max"}}
     agent_core._save_llm_overrides(data)
     assert agent_core._load_llm_overrides() == data
-    assert not (tmp_path / ".llm_overrides.json.tmp").exists()  # 临时文件已 replace
+    assert [p.name for p in tmp_path.iterdir()] == [".llm_overrides.json"]  # 无临时文件残留
 
 
 def _agent(tmp_path, monkeypatch):
@@ -164,12 +164,12 @@ def test_agent_knows_own_model_and_effort(tmp_path, monkeypatch):
     a._call_llm = lambda msgs, user="": seen.append(msgs) or {"content": "好"}
     a.handle("你好", user="u1", member="Jim")
     sysmsg = seen[0][0]["content"]
-    assert "deepseek-v4-flash" in sysmsg and "max" in sysmsg
+    assert "deepseek-v4-flash" in sysmsg and "运行，推理档 max" in sysmsg
     a.handle("/model pro", user="u1", member="Jim")
     a.handle("/effort low", user="u1", member="Jim")
     a.handle("你现在用什么模型", user="u1", member="Jim")
     sysmsg = seen[1][0]["content"]
-    assert "deepseek-v4-pro" in sysmsg and "low" in sysmsg
+    assert "deepseek-v4-pro" in sysmsg and "运行，推理档 low" in sysmsg
 
 
 def test_command_extra_args_shows_usage(tmp_path, monkeypatch):
@@ -196,3 +196,15 @@ def test_persist_failure_warns_but_applies(tmp_path, monkeypatch):
     r = a.handle("/model pro", user="u1", member="Jim")
     assert "重启后可能失效" in r
     assert a._llm_settings("u1")[0] == "deepseek-v4-pro"  # 内存仍生效
+
+
+def test_reset_persist_failure_warns(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    a.handle("/model pro", user="u1", member="Jim")
+
+    def boom(_):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(agent_core, "_save_llm_overrides", boom)
+    r = a.handle("/model reset", user="u1", member="Jim")
+    assert "重启后可能恢复" in r  # 旧覆盖还在盘上，重启会复活——必须告知

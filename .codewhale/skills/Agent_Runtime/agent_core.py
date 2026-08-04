@@ -1581,8 +1581,9 @@ class Agent:
                 entry.pop(kind, None)
                 if not entry:
                     self._llm_overrides.pop(user)
-            self._persist_llm_override(user)
-            return f"✅ 已清除你的{label}覆盖，回到环境变量/默认。"
+            ok = self._persist_llm_override(user)
+            note = "" if ok else "（状态文件写入失败，旧覆盖重启后可能恢复）"
+            return f"✅ 已清除你的{label}覆盖，回到环境变量/默认。{note}"
         value = _LLM_MODEL_ALIASES.get(arg, arg) if kind == "model" else arg
         if value not in valid:
             return f"用法: {usage}"
