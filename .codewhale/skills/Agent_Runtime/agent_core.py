@@ -32,6 +32,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from collections import defaultdict
 from datetime import date, datetime
@@ -281,8 +282,8 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 - 被问"你能不能清除上下文/记忆"时，如实说明上述机制，不要说做不到
 
 ## 斜杠命令（系统直接处理，你调不到；用户迷茫/问怎么用时照此说明，让用户自己发）
-- /model — 查当前用的模型；/model flash 或 /model pro — 切换；/model reset — 恢复默认
-- /effort — 查当前推理档；/effort low|medium|high|max — 调档；/effort reset — 恢复默认
+- /model — 查当前用的模型；/model flash 或 /model pro — 切换；/model reset — 恢复环境变量/默认
+- /effort — 查当前推理档；/effort low|medium|high|max — 调档；/effort reset — 恢复环境变量/默认
 - 只影响发命令的用户本人，重启后保留；flash 快而省、pro 强而慢；推理档越高想得越深、回复越慢
 - 用户没说困惑就别主动提这些命令（守"回复风格"：不刷屏罗列功能）
 
@@ -1351,13 +1352,21 @@ def _load_llm_overrides() -> dict:
 
 
 def _save_llm_overrides(overrides: dict) -> None:
-    """原子写（临时文件 + os.replace，同 members._save_members 套路）。"""
+    """原子写（mkstemp 唯一临时文件 + os.replace，同 members._save_members 套路）。"""
     p = _llm_overrides_path()
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(overrides, ensure_ascii=False, indent=2) + "\n",
-                   encoding="utf-8")
-    os.replace(tmp, p)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(overrides, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 class Agent:
@@ -1552,6 +1561,10 @@ class Agent:
         valid = _LLM_MODELS if kind == "model" else _LLM_EFFORTS
         env_name = "DEEPSEEK_MODEL" if kind == "model" else "DEEPSEEK_REASONING_EFFORT"
         default = _LLM_DEFAULT_MODEL if kind == "model" else _LLM_DEFAULT_EFFORT
+        usage = ("/model [flash|pro|reset]" if kind == "model"
+                 else "/effort [low|medium|high|max|reset]")
+        if len(parts) > 2:
+            return f"用法: {usage}"
         arg = parts[1] if len(parts) > 1 else ""
 
         if not arg:  # 查询当前生效值与来源
@@ -1572,8 +1585,6 @@ class Agent:
             return f"✅ 已清除你的{label}覆盖，回到环境变量/默认。"
         value = _LLM_MODEL_ALIASES.get(arg, arg) if kind == "model" else arg
         if value not in valid:
-            usage = ("/model [flash|pro|reset]" if kind == "model"
-                     else "/effort [low|medium|high|max|reset]")
             return f"用法: {usage}"
         self._llm_overrides.setdefault(user, {})[kind] = value
         ok = self._persist_llm_override(user)

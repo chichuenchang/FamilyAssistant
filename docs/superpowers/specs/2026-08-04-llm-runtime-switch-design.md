@@ -64,8 +64,11 @@ On set/reset:
    read (so a concurrent switch from the *other* transport process is not lost),
    atomic-write back (temp file + `os.replace`, same pattern as `members._save_members`).
 
-The merge-on-write is the only cross-process coordination; per-user keys mean the two
-transports almost never touch the same entry anyway.
+The merge-on-write is the only cross-process coordination. Note the contention unit is
+the *whole file*, not per-user entries: two switches landing in the same few milliseconds
+across transports can still lose one update (the loser keeps it in memory until restart
+and self-heals on its next switch). Accepted tradeoff — switch commands are rare and
+human-typed, and user ids are channel-namespaced.
 
 ## 3. Resolution
 

@@ -170,3 +170,29 @@ def test_agent_knows_own_model_and_effort(tmp_path, monkeypatch):
     a.handle("你现在用什么模型", user="u1", member="Jim")
     sysmsg = seen[1][0]["content"]
     assert "deepseek-v4-pro" in sysmsg and "low" in sysmsg
+
+
+def test_command_extra_args_shows_usage(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    r = a.handle("/model pro 怎么样", user="u1", member="Jim")
+    assert "用法" in r and a._llm_settings("u1")[0] == "deepseek-v4-flash"
+
+
+def test_command_case_insensitive_and_models_fallthrough(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    a.handle("/MODEL PRO", user="u1", member="Jim")
+    assert a._llm_settings("u1")[0] == "deepseek-v4-pro"
+    # /models 不是命令 → 走 LLM 路径（无 key → 提示未配置）
+    assert a.handle("/models", user="u1", member="Jim") == "未配置 DEEPSEEK_API_KEY。"
+
+
+def test_persist_failure_warns_but_applies(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+
+    def boom(_):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(agent_core, "_save_llm_overrides", boom)
+    r = a.handle("/model pro", user="u1", member="Jim")
+    assert "重启后可能失效" in r
+    assert a._llm_settings("u1")[0] == "deepseek-v4-pro"  # 内存仍生效
