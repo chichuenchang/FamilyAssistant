@@ -77,3 +77,68 @@ def test_handle_passes_user_to_call_llm(tmp_path, monkeypatch):
     a._call_llm = stub
     assert a.handle("你好", user="wx_1", member="Jim") == "好"
     assert seen["user"] == "wx_1"
+
+
+def test_model_command_set_show_reset(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    r = a.handle("/model pro", user="u1", member="Jim")
+    assert "deepseek-v4-pro" in r and a._llm_settings("u1")[0] == "deepseek-v4-pro"
+    r = a.handle("/model", user="u1", member="Jim")
+    assert "deepseek-v4-pro" in r and "覆盖" in r
+    r = a.handle("/model reset", user="u1", member="Jim")
+    assert "✅" in r and a._llm_settings("u1") == ("deepseek-v4-flash", "max")
+
+
+def test_effort_command_set_show_reset(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    a.handle("/effort low", user="u1", member="Jim")
+    assert a._llm_settings("u1")[1] == "low"
+    assert "low" in a.handle("/effort", user="u1", member="Jim")
+    a.handle("/effort reset", user="u1", member="Jim")
+    assert a._llm_settings("u1")[1] == "max"
+
+
+def test_commands_accept_full_id_and_alias(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    a.handle("/model deepseek-v4-pro", user="u1", member="Jim")
+    assert a._llm_settings("u1")[0] == "deepseek-v4-pro"
+    a.handle("/model flash", user="u1", member="Jim")
+    assert a._llm_settings("u1")[0] == "deepseek-v4-flash"
+
+
+def test_command_invalid_arg_shows_usage_no_state_change(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    r = a.handle("/model turbo", user="u1", member="Jim")
+    assert "用法" in r and a._llm_settings("u1")[0] == "deepseek-v4-flash"
+    r = a.handle("/effort xhigh", user="u1", member="Jim")
+    assert "用法" in r and a._llm_settings("u1")[1] == "max"
+
+
+def test_commands_need_no_api_key_and_no_llm_call(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)  # fixture 已删 DEEPSEEK_API_KEY
+    called = []
+    a._call_llm = lambda *args, **kw: called.append(1)
+    a.handle("/model pro", user="u1", member="Jim")
+    a.handle("/effort high", user="u1", member="Jim")
+    assert not called
+
+
+def test_overrides_persist_across_instances(tmp_path, monkeypatch):
+    a1 = _agent(tmp_path, monkeypatch)
+    a1.handle("/model pro", user="u1", member="Jim")
+    a1.handle("/effort low", user="u1", member="Jim")
+    a2 = agent_core.Agent(idle_clear_hours=0)  # 同 DATA_ROOT 新实例 = 模拟重启
+    assert a2._llm_settings("u1") == ("deepseek-v4-pro", "low")
+
+
+def test_persist_merges_other_process_writes(tmp_path, monkeypatch):
+    a1 = _agent(tmp_path, monkeypatch)
+    a1.handle("/model pro", user="u1", member="Jim")
+    # 另一进程（另一个 Agent 实例）同时给 u2 写入覆盖
+    a2 = agent_core.Agent(idle_clear_hours=0)
+    a2.handle("/effort high", user="u2", member="Jim")
+    # a1 再切换 u1 时不得丢掉 u2 的覆盖
+    a1.handle("/effort max", user="u1", member="Jim")
+    disk = agent_core._load_llm_overrides()
+    assert disk["u2"] == {"effort": "high"}
+    assert disk["u1"] == {"model": "deepseek-v4-pro", "effort": "max"}

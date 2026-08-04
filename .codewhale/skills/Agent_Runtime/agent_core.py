@@ -1406,6 +1406,11 @@ class Agent:
             self.history.pop(user, None)
             return "✅ 对话上下文已清除。"
 
+        # 频道无关命令：/model /effort 运行时切换 LLM（不经 LLM，零 token）
+        llm_reply = self._handle_llm_command(text, user)
+        if llm_reply is not None:
+            return llm_reply
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             return "未配置 DEEPSEEK_API_KEY。"
@@ -1528,6 +1533,59 @@ class Agent:
             )
             return self.handle(prompt, user=user, member=member)
         return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"
+
+    def _handle_llm_command(self, text: str, user: str) -> str | None:
+        """/model /effort 运行时切换（不经 LLM，零 token；每用户覆盖持久化到
+        data/.llm_overrides.json）。是切换命令返回回复，否则返回 None。"""
+        parts = text.lower().split()
+        if not parts or parts[0] not in ("/model", "/effort"):
+            return None
+        kind = "model" if parts[0] == "/model" else "effort"
+        label = "模型" if kind == "model" else "推理档"
+        valid = _LLM_MODELS if kind == "model" else _LLM_EFFORTS
+        env_name = "DEEPSEEK_MODEL" if kind == "model" else "DEEPSEEK_REASONING_EFFORT"
+        default = _LLM_DEFAULT_MODEL if kind == "model" else _LLM_DEFAULT_EFFORT
+        arg = parts[1] if len(parts) > 1 else ""
+
+        if not arg:  # 查询当前生效值与来源
+            ov = (self._llm_overrides.get(user) or {}).get(kind)
+            env = os.environ.get(env_name)
+            if ov:
+                return f"当前{label}：{ov}（你的个人覆盖）。"
+            if env:
+                return f"当前{label}：{env}（环境变量）。"
+            return f"当前{label}：{default}（默认）。"
+        if arg == "reset":
+            entry = self._llm_overrides.get(user)
+            if entry:
+                entry.pop(kind, None)
+                if not entry:
+                    self._llm_overrides.pop(user)
+            self._persist_llm_override(user)
+            return f"✅ 已清除你的{label}覆盖，回到环境变量/默认。"
+        value = _LLM_MODEL_ALIASES.get(arg, arg) if kind == "model" else arg
+        if value not in valid:
+            usage = ("/model [flash|pro|reset]" if kind == "model"
+                     else "/effort [low|medium|high|max|reset]")
+            return f"用法: {usage}"
+        self._llm_overrides.setdefault(user, {})[kind] = value
+        ok = self._persist_llm_override(user)
+        note = "" if ok else "（状态文件写入失败，重启后可能失效）"
+        return f"✅ 你的{label}已切换为 {value}（仅影响你）{note}。"
+
+    def _persist_llm_override(self, user: str) -> bool:
+        """写回状态文件：先重读合并（另一传输进程的切换不被覆盖），再原子写。"""
+        try:
+            on_disk = _load_llm_overrides()
+            if user in self._llm_overrides:
+                on_disk[user] = self._llm_overrides[user]
+            else:
+                on_disk.pop(user, None)
+            _save_llm_overrides(on_disk)
+            return True
+        except Exception:
+            _log.warning("LLM 覆盖状态写回失败", exc_info=True)
+            return False
 
     def _llm_settings(self, user: str) -> tuple[str, str]:
         """该用户生效的 (model, effort)：个人覆盖 > 环境变量 > 默认。"""
