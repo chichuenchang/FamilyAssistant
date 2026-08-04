@@ -1306,6 +1306,54 @@ def _msg_tokens(m: dict) -> int:
     return n
 
 
+# ── 每用户 LLM 运行时覆盖（/model /effort；状态文件不入备份） ──────
+# 状态存 data/.llm_overrides.json：{user: {"model": ..., "effort": ...}}。
+# 只在 Agent 启动与执行切换命令时读写——消息路径零文件 IO。
+
+_LLM_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+_LLM_MODEL_ALIASES = {"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro"}
+_LLM_EFFORTS = ("low", "medium", "high", "max")
+_LLM_DEFAULT_MODEL = "deepseek-v4-flash"
+_LLM_DEFAULT_EFFORT = "max"
+
+
+def _llm_overrides_path() -> Path:
+    return _paths.data_root() / ".llm_overrides.json"
+
+
+def _load_llm_overrides() -> dict:
+    """读每用户 LLM 覆盖。文件缺失 → {}；损坏/值非法 → 跳过并告警（手工改过也不炸）。"""
+    try:
+        raw = json.loads(_llm_overrides_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        _log.warning("LLM 覆盖状态文件损坏，按无覆盖启动", exc_info=True)
+        return {}
+    out = {}
+    for user, entry in (raw.items() if isinstance(raw, dict) else []):
+        if not isinstance(entry, dict):
+            continue
+        clean = {}
+        if entry.get("model") in _LLM_MODELS:
+            clean["model"] = entry["model"]
+        if entry.get("effort") in _LLM_EFFORTS:
+            clean["effort"] = entry["effort"]
+        if clean:
+            out[user] = clean
+    return out
+
+
+def _save_llm_overrides(overrides: dict) -> None:
+    """原子写（临时文件 + os.replace，同 members._save_members 套路）。"""
+    p = _llm_overrides_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(overrides, ensure_ascii=False, indent=2) + "\n",
+                   encoding="utf-8")
+    os.replace(tmp, p)
+
+
 class Agent:
     """频道无关的全量上下文智能助手。每条消息带完整项目文档 + 对话历史调 DeepSeek。
 
@@ -1333,6 +1381,7 @@ class Agent:
         self.idle_clear_seconds = float(hours) * 3600
         self.history: dict[str, list[dict]] = defaultdict(list)
         self._last_active: dict[str, float] = {}
+        self._llm_overrides: dict[str, dict] = _load_llm_overrides()
 
     def handle(self, text: str, user: str = "default", member: str = "") -> str:
         # 防御纵深：传输层闸门漏掉的未注册来源，这里二次拦截，不碰 LLM
@@ -1383,7 +1432,7 @@ class Agent:
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
         for _ in range(8):
-            message = self._call_llm(msgs)
+            message = self._call_llm(msgs, user=user)
             if message is None:
                 return "抱歉，暂时出错了。"
 
@@ -1480,25 +1529,34 @@ class Agent:
             return self.handle(prompt, user=user, member=member)
         return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"
 
-    def _call_llm(self, messages) -> dict | None:
+    def _llm_settings(self, user: str) -> tuple[str, str]:
+        """该用户生效的 (model, effort)：个人覆盖 > 环境变量 > 默认。"""
+        ov = self._llm_overrides.get(user) or {}
+        model = (ov.get("model") or os.environ.get("DEEPSEEK_MODEL")
+                 or _LLM_DEFAULT_MODEL)
+        effort = (ov.get("effort") or os.environ.get("DEEPSEEK_REASONING_EFFORT")
+                  or _LLM_DEFAULT_EFFORT)
+        return model, effort
+
+    def _call_llm(self, messages, user: str = "") -> dict | None:
         """调 DeepSeek chat completions（native function calling）。
 
         返回 choices[0].message 整个 dict（可能含 tool_calls）；失败返回 None。
+        model/effort 按 user 解析：个人覆盖（/model /effort）> 环境变量 > 默认。
         """
         import urllib.request
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        model = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
+        model, effort = self._llm_settings(user)
         body = json.dumps({
             "model": model,
             "messages": messages,
             "tools": TOOL_SCHEMAS,
             # DeepSeek V4 是推理模型，reasoning 占用 completion 预算，
             # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
-            # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足。
-            # reasoning_effort=max 默认开满推理档（thinking 本就默认 enabled）；
-            # max 档推理更长，max_tokens 相应调高避免被截断成空 content。
-            "reasoning_effort": os.environ.get("DEEPSEEK_REASONING_EFFORT", "max"),
+            # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足；
+            # 高档位推理更长，max_tokens 相应调高避免被截断成空 content。
+            "reasoning_effort": effort,
             "temperature": 0.3, "max_tokens": 32000,
         }).encode("utf-8")
         req = urllib.request.Request(
