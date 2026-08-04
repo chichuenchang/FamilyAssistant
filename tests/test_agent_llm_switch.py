@@ -142,3 +142,8 @@ def test_persist_merges_other_process_writes(tmp_path, monkeypatch):
     disk = agent_core._load_llm_overrides()
     assert disk["u2"] == {"effort": "high"}
     assert disk["u1"] == {"model": "deepseek-v4-pro", "effort": "max"}
+
+
+def test_state_file_excluded_from_backup():
+    import backup_sync
+    assert ".llm_overrides.json" in backup_sync._HARD_EXCLUDE_NAMES

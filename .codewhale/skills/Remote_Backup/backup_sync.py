@@ -87,7 +87,7 @@ STATE_FILE = _STATE_DIR / ".backup_state.json"
 _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
                        ".backup_manifest.json", ".backup_state.json",
                        ".calendar_state.json", ".sync_state.json",
-                       ".image_gc_state.json",
+                       ".image_gc_state.json", ".llm_overrides.json",
                        "wechat_recent_msgs.json", "wechat_sent_msgs.json"}
 
 # 永不进备份的目录段（图表可再生；.knowking_jobs 为运行时瞬态任务文件，
