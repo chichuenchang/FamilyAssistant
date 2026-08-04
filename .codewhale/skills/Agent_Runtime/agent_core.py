@@ -32,6 +32,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from collections import defaultdict
 from datetime import date, datetime
@@ -279,6 +280,12 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 ## 对话上下文
 - 用户随时可发 /clear（或"清除上下文"）清空与你的对话上下文{idle_note}
 - 被问"你能不能清除上下文/记忆"时，如实说明上述机制，不要说做不到
+
+## 斜杠命令（系统直接处理，你调不到；用户迷茫/问怎么用时照此说明，让用户自己发）
+- /model — 查当前用的模型；/model flash 或 /model pro — 切换；/model reset — 恢复环境变量/默认
+- /effort — 查当前推理档；/effort low|medium|high|max — 调档；/effort reset — 恢复环境变量/默认
+- 只影响发命令的用户本人，重启后保留；flash 快而省、pro 强而慢；推理档越高想得越深、回复越慢
+- 用户没说困惑就别主动提这些命令（守"回复风格"：不刷屏罗列功能）
 
 ## 回复风格
 - 简洁、易读是第一优先级：先给结论/结果，能一句话说清就不写三句
@@ -1306,6 +1313,62 @@ def _msg_tokens(m: dict) -> int:
     return n
 
 
+# ── 每用户 LLM 运行时覆盖（/model /effort；状态文件不入备份） ──────
+# 状态存 data/.llm_overrides.json：{user: {"model": ..., "effort": ...}}。
+# 只在 Agent 启动与执行切换命令时读写——消息路径零文件 IO。
+
+_LLM_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
+_LLM_MODEL_ALIASES = {"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro"}
+_LLM_EFFORTS = ("low", "medium", "high", "max")
+_LLM_DEFAULT_MODEL = "deepseek-v4-flash"
+_LLM_DEFAULT_EFFORT = "max"
+
+
+def _llm_overrides_path() -> Path:
+    return _paths.data_root() / ".llm_overrides.json"
+
+
+def _load_llm_overrides() -> dict:
+    """读每用户 LLM 覆盖。文件缺失 → {}；损坏/值非法 → 跳过并告警（手工改过也不炸）。"""
+    try:
+        raw = json.loads(_llm_overrides_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        _log.warning("LLM 覆盖状态文件损坏，按无覆盖启动", exc_info=True)
+        return {}
+    out = {}
+    for user, entry in (raw.items() if isinstance(raw, dict) else []):
+        if not isinstance(entry, dict):
+            continue
+        clean = {}
+        if entry.get("model") in _LLM_MODELS:
+            clean["model"] = entry["model"]
+        if entry.get("effort") in _LLM_EFFORTS:
+            clean["effort"] = entry["effort"]
+        if clean:
+            out[user] = clean
+    return out
+
+
+def _save_llm_overrides(overrides: dict) -> None:
+    """原子写（mkstemp 唯一临时文件 + os.replace，同 members._save_members 套路）。"""
+    p = _llm_overrides_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(overrides, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 class Agent:
     """频道无关的全量上下文智能助手。每条消息带完整项目文档 + 对话历史调 DeepSeek。
 
@@ -1333,6 +1396,7 @@ class Agent:
         self.idle_clear_seconds = float(hours) * 3600
         self.history: dict[str, list[dict]] = defaultdict(list)
         self._last_active: dict[str, float] = {}
+        self._llm_overrides: dict[str, dict] = _load_llm_overrides()
 
     def handle(self, text: str, user: str = "default", member: str = "") -> str:
         # 防御纵深：传输层闸门漏掉的未注册来源，这里二次拦截，不碰 LLM
@@ -1357,6 +1421,11 @@ class Agent:
             self.history.pop(user, None)
             return "✅ 对话上下文已清除。"
 
+        # 频道无关命令：/model /effort 运行时切换 LLM（不经 LLM，零 token）
+        llm_reply = self._handle_llm_command(text, user)
+        if llm_reply is not None:
+            return llm_reply
+
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         if not api_key:
             return "未配置 DEEPSEEK_API_KEY。"
@@ -1365,6 +1434,7 @@ class Agent:
                        f"查询类工具可用 member 参数按成员过滤。")
         msgs = [{"role": "system",
                  "content": self.system_prompt + _now_context() + member_note
+                 + self._llm_status_note(user)
                  + _profiles_context()
                  + _notes_context(member) + _worksheets_context(member)
                  + _schedule_context(member)}]
@@ -1383,7 +1453,7 @@ class Agent:
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
         for _ in range(8):
-            message = self._call_llm(msgs)
+            message = self._call_llm(msgs, user=user)
             if message is None:
                 return "抱歉，暂时出错了。"
 
@@ -1480,25 +1550,105 @@ class Agent:
             return self.handle(prompt, user=user, member=member)
         return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"
 
-    def _call_llm(self, messages) -> dict | None:
+    def _handle_llm_command(self, text: str, user: str) -> str | None:
+        """/model /effort 运行时切换（不经 LLM，零 token；每用户覆盖持久化到
+        data/.llm_overrides.json）。是切换命令返回回复，否则返回 None。"""
+        parts = text.lower().split()
+        if not parts or parts[0] not in ("/model", "/effort"):
+            return None
+        kind = "model" if parts[0] == "/model" else "effort"
+        label = "模型" if kind == "model" else "推理档"
+        valid = _LLM_MODELS if kind == "model" else _LLM_EFFORTS
+        env_name = "DEEPSEEK_MODEL" if kind == "model" else "DEEPSEEK_REASONING_EFFORT"
+        default = _LLM_DEFAULT_MODEL if kind == "model" else _LLM_DEFAULT_EFFORT
+        usage = ("/model [flash|pro|reset]" if kind == "model"
+                 else "/effort [low|medium|high|max|reset]")
+        if len(parts) > 2:
+            return f"用法: {usage}"
+        arg = parts[1] if len(parts) > 1 else ""
+
+        if not arg:  # 查询当前生效值与来源
+            ov = (self._llm_overrides.get(user) or {}).get(kind)
+            env = os.environ.get(env_name)
+            if ov:
+                return f"当前{label}：{ov}（你的个人覆盖）。"
+            if env:
+                return f"当前{label}：{env}（环境变量）。"
+            return f"当前{label}：{default}（默认）。"
+        if arg == "reset":
+            entry = self._llm_overrides.get(user)
+            if entry:
+                entry.pop(kind, None)
+                if not entry:
+                    self._llm_overrides.pop(user)
+            ok = self._persist_llm_override(user)
+            note = "" if ok else "（状态文件写入失败，旧覆盖重启后可能恢复）"
+            return f"✅ 已清除你的{label}覆盖，回到环境变量/默认。{note}"
+        value = _LLM_MODEL_ALIASES.get(arg, arg) if kind == "model" else arg
+        if value not in valid:
+            return f"用法: {usage}"
+        self._llm_overrides.setdefault(user, {})[kind] = value
+        ok = self._persist_llm_override(user)
+        note = "" if ok else "（状态文件写入失败，重启后可能失效）"
+        return f"✅ 你的{label}已切换为 {value}（仅影响你）{note}。"
+
+    def _persist_llm_override(self, user: str) -> bool:
+        """写回状态文件：先重读合并（另一传输进程的切换不被覆盖），再原子写。"""
+        try:
+            on_disk = _load_llm_overrides()
+            if user in self._llm_overrides:
+                on_disk[user] = self._llm_overrides[user]
+            else:
+                on_disk.pop(user, None)
+            _save_llm_overrides(on_disk)
+            return True
+        except Exception:
+            _log.warning("LLM 覆盖状态写回失败", exc_info=True)
+            return False
+
+    def _llm_settings(self, user: str) -> tuple[str, str]:
+        """该用户生效的 (model, effort)：个人覆盖 > 环境变量 > 默认。"""
+        ov = self._llm_overrides.get(user) or {}
+        model = (ov.get("model") or os.environ.get("DEEPSEEK_MODEL")
+                 or _LLM_DEFAULT_MODEL)
+        effort = (ov.get("effort") or os.environ.get("DEEPSEEK_REASONING_EFFORT")
+                  or _LLM_DEFAULT_EFFORT)
+        return model, effort
+
+    def _llm_status_note(self, user: str) -> str:
+        """注入 system 的当前 LLM 设置：被问"你用什么模型/推理档"时如实答。"""
+        model, effort = self._llm_settings(user)
+        ov = self._llm_overrides.get(user) or {}
+
+        def _src(kind: str, env_name: str) -> str:
+            if ov.get(kind):
+                return "你的个人覆盖"
+            return "环境变量" if os.environ.get(env_name) else "默认"
+
+        return (f"\n\n## 当前 LLM 设置\n本轮你以 {model} 运行，推理档 {effort}"
+                f"（模型来源：{_src('model', 'DEEPSEEK_MODEL')}；"
+                f"推理档来源：{_src('effort', 'DEEPSEEK_REASONING_EFFORT')}）。"
+                f"被问用什么模型/推理档时如实告知；用户想改，让他自己发 /model 或 /effort。")
+
+    def _call_llm(self, messages, user: str = "") -> dict | None:
         """调 DeepSeek chat completions（native function calling）。
 
         返回 choices[0].message 整个 dict（可能含 tool_calls）；失败返回 None。
+        model/effort 按 user 解析：个人覆盖（/model /effort）> 环境变量 > 默认。
         """
         import urllib.request
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
         base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        model = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
+        model, effort = self._llm_settings(user)
         body = json.dumps({
             "model": model,
             "messages": messages,
             "tools": TOOL_SCHEMAS,
             # DeepSeek V4 是推理模型，reasoning 占用 completion 预算，
             # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
-            # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足。
-            # reasoning_effort=max 默认开满推理档（thinking 本就默认 enabled）；
-            # max 档推理更长，max_tokens 相应调高避免被截断成空 content。
-            "reasoning_effort": os.environ.get("DEEPSEEK_REASONING_EFFORT", "max"),
+            # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足；
+            # 高档位推理更长，max_tokens 相应调高避免被截断成空 content。
+            "reasoning_effort": effort,
             "temperature": 0.3, "max_tokens": 32000,
         }).encode("utf-8")
         req = urllib.request.Request(

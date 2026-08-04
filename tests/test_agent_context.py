@@ -128,7 +128,7 @@ def _agent_with_captured_llm(monkeypatch):
     agent = agent_core.Agent(idle_clear_hours=0)
     captured = []
 
-    def fake_llm(msgs):
+    def fake_llm(msgs, user=""):
         captured.append(msgs)
         return {"content": "好的"}
 
@@ -188,7 +188,7 @@ def test_tool_results_persist_across_turns(monkeypatch):
     ])
     captured = []
 
-    def fake_llm(msgs):
+    def fake_llm(msgs, user=""):
         captured.append([dict(m) for m in msgs])
         return next(replies)
 
@@ -217,7 +217,7 @@ def test_huge_tool_result_truncated_in_history(monkeypatch):
             "name": "fake_big", "arguments": "{}"}}]},
         {"content": "好"},
     ])
-    monkeypatch.setattr(agent, "_call_llm", lambda msgs: next(replies))
+    monkeypatch.setattr(agent, "_call_llm", lambda msgs, user="": next(replies))
     agent.handle("扫描", user="u", member="Jim")
     tool_msgs = [m for m in agent.history["u"] if m["role"] == "tool"]
     assert len(tool_msgs) == 1
