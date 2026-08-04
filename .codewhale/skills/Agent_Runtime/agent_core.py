@@ -278,6 +278,8 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 
 ## 对话上下文
 - 用户随时可发 /clear（或"清除上下文"）清空与你的对话上下文{idle_note}
+- 用户可发 /model flash|pro 与 /effort low|medium|high|max 切换自己用的模型与推理档
+  （每用户生效、重启保留）；被问"怎么切换模型/推理"时如实说明
 - 被问"你能不能清除上下文/记忆"时，如实说明上述机制，不要说做不到
 
 ## 回复风格

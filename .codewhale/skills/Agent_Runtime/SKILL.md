@@ -148,13 +148,19 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 |------|------|------|
 | `DEEPSEEK_API_KEY` | Agent LLM（所有频道共用） | ✅ |
 | `DEEPSEEK_BASE_URL` | LLM 自定义端点（默认官方） | ❌ |
-| `DEEPSEEK_MODEL` | Agent LLM 模型（默认 `deepseek-v4-flash`） | ❌ |
-| `DEEPSEEK_REASONING_EFFORT` | 推理档，默认 `max`（开满）；可设 `high` 降档 | ❌ |
+| `DEEPSEEK_MODEL` | Agent LLM 模型启动默认（默认 `deepseek-v4-flash`；用户可用 `/model` 运行时覆盖） | ❌ |
+| `DEEPSEEK_REASONING_EFFORT` | 推理档启动默认，默认 `max`；可设 `high` 降档（用户可用 `/effort` 运行时覆盖） | ❌ |
 | `TELEGRAM_BOT_TOKEN` | Telegram 频道 | Telegram 时必需 |
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 图片 OCR（见 [OCR Skill](../OCR/SKILL.md)） | 收图片时 |
 | `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` / `GDRIVE_REFRESH_TOKEN` | 云盘备份（`backup_tick` 在传输层轮询里跑，见 [Remote Backup](../Remote_Backup/SKILL.md)） | backup.enabled 时 |
 | `DATA_ROOT` | 数据根目录覆盖（优先于 config `data_root`；测试隔离用，见 `paths.py`） | ❌ |
 | `KNOWKING_DIR` | KnowKing 项目根覆盖（优先于 config `knowking.project_dir`） | ❌ |
+
+### 运行时切换（/model /effort）
+
+用户随时可发 `/model flash|pro|reset`、`/effort low|medium|high|max|reset`（不带参数查当前值，
+含来源：个人覆盖/环境变量/默认）。每用户覆盖存 `data/.llm_overrides.json`（不入备份），
+Agent 启动时读入、切换时合并写回；消息路径不读文件。优先级：个人覆盖 > 环境变量 > 默认。
 
 ## 依赖
 

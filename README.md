@@ -182,7 +182,7 @@ python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "<主成�
 #    其他成员若各有备份：再 backup-restore --member "成员名"（此时注册表已恢复，正常模式）
 
 # 4. 重设其余凭据（都不在备份里）
-setx DEEPSEEK_API_KEY "sk-xxx"        # 必须（可选调优：DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_REASONING_EFFORT）
+setx DEEPSEEK_API_KEY "sk-xxx"        # 必须（可选调优：DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_REASONING_EFFORT；聊天里 /model /effort 可运行时切换）
 setx GCAL_CLIENT_ID "xxx"             # 日历同步（可复用 Drive 的同一 OAuth 客户端）
 setx GCAL_CLIENT_SECRET "xxx"
 setx GCAL_CALENDAR_ID "xxx"           # 可选，默认 primary 主日历
