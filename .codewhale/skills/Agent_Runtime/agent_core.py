@@ -109,7 +109,8 @@ def setup_logging(debug: bool = True) -> logging.Logger:
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s",
                             datefmt="%Y-%m-%d %H:%M:%S")
     sh = logging.StreamHandler(sys.stderr)
-    sh.setFormatter(fmt)
+    # 控制台只打消息本体（全量），不带 时间/[级别]/logger 名 前缀；完整格式留给日志文件
+    sh.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(sh)
     if debug:
         log_dir = _paths.data_root()
