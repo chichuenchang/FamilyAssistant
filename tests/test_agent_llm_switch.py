@@ -147,3 +147,11 @@ def test_persist_merges_other_process_writes(tmp_path, monkeypatch):
 def test_state_file_excluded_from_backup():
     import backup_sync
     assert ".llm_overrides.json" in backup_sync._HARD_EXCLUDE_NAMES
+
+
+def test_system_prompt_documents_slash_commands(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    sp = a.system_prompt
+    # 用户迷茫时 Agent 要能从 system prompt 里查到用法并转述
+    assert "/model flash" in sp and "/model pro" in sp and "/model reset" in sp
+    assert "/effort low|medium|high|max" in sp and "/effort reset" in sp
