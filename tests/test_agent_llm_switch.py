@@ -155,3 +155,18 @@ def test_system_prompt_documents_slash_commands(tmp_path, monkeypatch):
     # 用户迷茫时 Agent 要能从 system prompt 里查到用法并转述
     assert "/model flash" in sp and "/model pro" in sp and "/model reset" in sp
     assert "/effort low|medium|high|max" in sp and "/effort reset" in sp
+
+
+def test_agent_knows_own_model_and_effort(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
+    seen = []
+    a._call_llm = lambda msgs, user="": seen.append(msgs) or {"content": "好"}
+    a.handle("你好", user="u1", member="Jim")
+    sysmsg = seen[0][0]["content"]
+    assert "deepseek-v4-flash" in sysmsg and "max" in sysmsg
+    a.handle("/model pro", user="u1", member="Jim")
+    a.handle("/effort low", user="u1", member="Jim")
+    a.handle("你现在用什么模型", user="u1", member="Jim")
+    sysmsg = seen[1][0]["content"]
+    assert "deepseek-v4-pro" in sysmsg and "low" in sysmsg

@@ -161,6 +161,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 用户随时可发 `/model flash|pro|reset`、`/effort low|medium|high|max|reset`（不带参数查当前值，
 含来源：个人覆盖/环境变量/默认）。每用户覆盖存 `data/.llm_overrides.json`（不入备份），
 Agent 启动时读入、切换时合并写回；消息路径不读文件。优先级：个人覆盖 > 环境变量 > 默认。
+每轮 system 注入当前生效值（`_llm_status_note`），Agent 可直接回答"你在用什么模型/推理档"。
 
 ## 依赖
 

@@ -1425,6 +1425,7 @@ class Agent:
                        f"查询类工具可用 member 参数按成员过滤。")
         msgs = [{"role": "system",
                  "content": self.system_prompt + _now_context() + member_note
+                 + self._llm_status_note(user)
                  + _profiles_context()
                  + _notes_context(member) + _worksheets_context(member)
                  + _schedule_context(member)}]
@@ -1601,6 +1602,21 @@ class Agent:
         effort = (ov.get("effort") or os.environ.get("DEEPSEEK_REASONING_EFFORT")
                   or _LLM_DEFAULT_EFFORT)
         return model, effort
+
+    def _llm_status_note(self, user: str) -> str:
+        """注入 system 的当前 LLM 设置：被问"你用什么模型/推理档"时如实答。"""
+        model, effort = self._llm_settings(user)
+        ov = self._llm_overrides.get(user) or {}
+
+        def _src(kind: str, env_name: str) -> str:
+            if ov.get(kind):
+                return "你的个人覆盖"
+            return "环境变量" if os.environ.get(env_name) else "默认"
+
+        return (f"\n\n## 当前 LLM 设置\n本轮你以 {model} 运行，推理档 {effort}"
+                f"（模型来源：{_src('model', 'DEEPSEEK_MODEL')}；"
+                f"推理档来源：{_src('effort', 'DEEPSEEK_REASONING_EFFORT')}）。"
+                f"被问用什么模型/推理档时如实告知；用户想改，让他自己发 /model 或 /effort。")
 
     def _call_llm(self, messages, user: str = "") -> dict | None:
         """调 DeepSeek chat completions（native function calling）。
