@@ -148,7 +148,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 |------|------|------|
 | `DEEPSEEK_API_KEY` | Agent LLM（所有频道共用） | ✅ |
 | `DEEPSEEK_BASE_URL` | LLM 自定义端点（默认官方） | ❌ |
-| `DEEPSEEK_MODEL` | Agent LLM 模型（默认 `deepseek-v4-pro`） | ❌ |
+| `DEEPSEEK_MODEL` | Agent LLM 模型（默认 `deepseek-v4-flash`） | ❌ |
 | `DEEPSEEK_REASONING_EFFORT` | 推理档，默认 `max`（开满）；可设 `high` 降档 | ❌ |
 | `TELEGRAM_BOT_TOKEN` | Telegram 频道 | Telegram 时必需 |
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 图片 OCR（见 [OCR Skill](../OCR/SKILL.md)） | 收图片时 |
