@@ -114,6 +114,46 @@ class TestCalDb:
                                       db_path=cal_db_path)
         assert [r["id"] for r in only_a] == [ev]
 
+    def test_list_range_covers_past(self, cal_db_path):
+        past = _add_event(cal_db_path, title="7月游泳课", start="2026-07-05T14:00",
+                          end="2026-07-05T15:00")
+        _add_event(cal_db_path, title="6月的", start="2026-06-05T14:00", end="")
+        _add_event(cal_db_path, title="未来的", start="2026-08-05T14:00", end="")
+        rows = cal_db.list_range(start="2026-07-01", end="2026-07-31",
+                                 db_path=cal_db_path)
+        assert [r["id"] for r in rows] == [past]
+
+    def test_list_range_open_bounds(self, cal_db_path):
+        old = _add_event(cal_db_path, title="很久以前", start="2019-01-01T09:00", end="")
+        new = _add_event(cal_db_path, title="很久以后", start="2099-01-01T09:00", end="")
+        assert [r["id"] for r in cal_db.list_range(end="2020-01-01",
+                                                   db_path=cal_db_path)] == [old]
+        assert [r["id"] for r in cal_db.list_range(start="2098-01-01",
+                                                   db_path=cal_db_path)] == [new]
+        assert {r["id"] for r in cal_db.list_range(db_path=cal_db_path)} == {old, new}
+
+    def test_list_range_keeps_spanning_event(self, cal_db_path):
+        span = cal_db.add_item(kind="event", title="跨月", start_at="2026-06-28",
+                               end_at="2026-07-03", db_path=cal_db_path)
+        rows = cal_db.list_range(start="2026-07-01", end="2026-07-31",
+                                 db_path=cal_db_path)
+        assert [r["id"] for r in rows] == [span]
+
+    def test_list_range_closed_undated_and_kind_filters(self, cal_db_path):
+        done = _add_task(cal_db_path, title="已完成", due="2026-07-10")
+        cal_db.set_status(done, "done", db_path=cal_db_path)
+        undated = _add_task(cal_db_path, title="无期限", due="")
+        ev = _add_event(cal_db_path, title="7月活动", start="2026-07-11T09:00", end="")
+        assert cal_db.list_range(start="2026-07-01", end="2026-07-31",
+                                 kind="task", db_path=cal_db_path) == []
+        rows = cal_db.list_range(start="2026-07-01", end="2026-07-31", kind="task",
+                                 include_closed=True, db_path=cal_db_path)
+        assert [r["id"] for r in rows] == [done]        # 数历史次数要带 include_closed
+        rows = cal_db.list_range(start="2026-07-01", end="2026-07-31",
+                                 include_closed=True, include_undated=True,
+                                 db_path=cal_db_path)
+        assert [r["id"] for r in rows] == [done, ev, undated]   # 无日期的排最后
+
     def test_set_status_marks_unsynced(self, cal_db_path):
         iid = _add_task(cal_db_path)
         cal_db.mark_synced(iid, uid="remote-1", db_path=cal_db_path)
@@ -434,6 +474,7 @@ class FakeProvider:
     def __init__(self):
         self.configured = True
         self.events = []          # list_events 返回值
+        self.event_windows = []   # 每次 list_events 收到的 (time_min, time_max)
         self.tasks = []           # list_tasks 返回值
         self.created = []         # (kind, item)
         self.completed = []       # task uids
@@ -446,6 +487,7 @@ class FakeProvider:
         return self.configured
 
     def list_events(self, time_min, time_max):
+        self.event_windows.append((time_min, time_max))
         if self.fail_list:
             raise RuntimeError("network down")
         return list(self.events)
@@ -578,6 +620,79 @@ class TestSyncEngine:
         rows = [r for r in cal_db.list_upcoming(days=60, today=TODAY, db_path=db)
                 if r["uid"] == "ev-far"]
         assert len(rows) == 1 and rows[0]["origin"] == "remote"
+
+    def test_refresh_pulls_past_events(self, engine):
+        # 回归：拉取窗口曾从"今天"起 → 历史活动永远进不了本地，agent 只能答"查不到历史"
+        fake, db = engine
+        past = (TODAY - timedelta(days=40)).isoformat()
+        fake.events = [{"uid": "ev-past", "title": "7月游泳课",
+                        "start": f"{past}T14:00", "end": f"{past}T15:00",
+                        "all_day": False, "location": "", "notes": ""}]
+        result = calendar_sync.refresh(db_path=db, today=TODAY)
+        assert result["errors"] == []
+        time_min = fake.event_windows[-1][0]
+        assert time_min[:10] == (TODAY - timedelta(days=365)).isoformat()
+        rows = cal_db.list_range(start=past, end=past, db_path=db)
+        assert [r["title"] for r in rows] == ["7月游泳课"]
+        assert rows[0]["origin"] == "remote"
+
+    def test_refresh_reconciles_inside_past_window_only(self, engine):
+        fake, db = engine
+        recent = _add_event(db, title="上月已删",
+                            start=f"{(TODAY - timedelta(days=30)).isoformat()}T10:00",
+                            end="")
+        cal_db.mark_synced(recent, uid="ev-recent", db_path=db)
+        ancient = _add_event(db, title="窗口外不动",
+                             start=f"{(TODAY - timedelta(days=800)).isoformat()}T10:00",
+                             end="")
+        cal_db.mark_synced(ancient, uid="ev-ancient", db_path=db)
+        _age(db, recent)
+        _age(db, ancient)
+        fake.events = []
+        calendar_sync.refresh(db_path=db, today=TODAY)
+        assert cal_db.get_item(recent, db_path=db)["status"] == "cancelled"
+        assert cal_db.get_item(ancient, db_path=db)["status"] == "active"
+
+    def test_refresh_range_pulls_arbitrary_old_window(self, engine, monkeypatch):
+        fake, db = engine
+        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: fake)
+        fake.events = [{"uid": "ev-2019", "title": "很久以前的课",
+                        "start": "2019-03-02T14:00", "end": "2019-03-02T15:00",
+                        "all_day": False, "location": "", "notes": ""}]
+        r = calendar_sync.refresh_range("MemberA", "schedule",
+                                        date(2019, 1, 1), date(2019, 12, 31),
+                                        db_path=db)
+        assert r["mode"] == "remote" and r["errors"] == []
+        assert fake.event_windows[-1][0][:10] == "2019-01-01"
+        assert fake.event_windows[-1][1][:10] == "2019-12-31"
+        rows = cal_db.list_range(start="2019-01-01", end="2019-12-31", db_path=db)
+        assert [r["title"] for r in rows] == ["很久以前的课"]
+
+    def test_refresh_range_local_mode_and_errors(self, engine, monkeypatch):
+        fake, db = engine
+        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
+        assert calendar_sync.refresh_range(
+            "MemberA", "schedule", date(2019, 1, 1), date(2019, 12, 31),
+            db_path=db)["mode"] == "local"
+        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: fake)
+        fake.fail_list = True
+        r = calendar_sync.refresh_range("MemberA", "schedule", date(2019, 1, 1),
+                                        date(2019, 12, 31), db_path=db)
+        assert r["mode"] == "remote" and r["errors"]
+
+    def test_window_iso_handles_pre_epoch(self):
+        # 回归：naive.astimezone() 在 Windows 上对 1970 前的本地时刻抛 OSError
+        # [Errno 22]，"不限过去"的历史拉取会静默变成一条 error，一条都拉不到。
+        s = calendar_sync._window_iso(date(1970, 1, 1))
+        e = calendar_sync._window_iso(date(1970, 1, 1), end_of_day=True)
+        assert s.startswith("1970-01-01T00:00:00") and len(s) > 19   # 带时区偏移
+        assert e.startswith("1970-01-01T23:59:59")
+
+    def test_refresh_range_rejects_bad_domain(self, engine):
+        _, db = engine
+        with pytest.raises(ValueError):
+            calendar_sync.refresh_range("MemberA", "nope", date(2019, 1, 1),
+                                        date(2019, 12, 31), db_path=db)
 
     def test_refresh_records_error_and_continues(self, engine):
         fake, db = engine
@@ -927,6 +1042,33 @@ class TestCli:
         out = _cli(["cal-list"], cal_db_path, tmp_path)
         assert "游泳课" in out.stdout and "泳馆" in out.stdout
 
+    def test_cal_list_range_shows_past(self, cal_db_path, tmp_path):
+        past = (date.today() - timedelta(days=45)).isoformat()
+        _add_event(cal_db_path, title="历史游泳课", start=f"{past}T14:00", end="")
+        out = _cli(["cal-list"], cal_db_path, tmp_path)
+        assert "历史游泳课" not in out.stdout          # 默认窗口只看未来
+        out = _cli(["cal-list", "--from", past, "--to", past],
+                   cal_db_path, tmp_path)
+        assert out.returncode == 0, out.stderr
+        assert "历史游泳课" in out.stdout
+
+    def test_cal_list_range_open_from_and_empty_notice(self, cal_db_path, tmp_path):
+        past = (date.today() - timedelta(days=400)).isoformat()
+        _add_event(cal_db_path, title="去年的", start=f"{past}T09:00", end="")
+        out = _cli(["cal-list", "--to", date.today().isoformat()],
+                   cal_db_path, tmp_path)
+        assert "去年的" in out.stdout                  # --from 省略 = 不限过去
+        out = _cli(["cal-list", "--from", "2001-01-01", "--to", "2001-12-31"],
+                   cal_db_path, tmp_path)
+        assert "2001-01-01~2001-12-31 无日程" in out.stdout
+
+    def test_cal_list_range_rejects_bad_dates(self, cal_db_path, tmp_path):
+        r = _cli(["cal-list", "--from", "07/01/2026"], cal_db_path, tmp_path)
+        assert r.returncode == 1 and "YYYY-MM-DD" in r.stderr
+        r = _cli(["cal-list", "--from", "2026-07-31", "--to", "2026-07-01"],
+                 cal_db_path, tmp_path)
+        assert r.returncode == 1 and "晚于" in r.stderr
+
     def test_cal_add_task_undated(self, cal_db_path, tmp_path):
         r = _cli(["cal-add", "--member", "MemberA", "--kind", "task",
                   "--title", "买蛋糕"], cal_db_path, tmp_path)
@@ -1222,7 +1364,7 @@ def _ns(**kw):
     base = {"member": "MemberA", "kind": "event", "title": "X", "date": None,
             "start": None, "end": None, "all_day": False, "location": None,
             "notes": None, "source_image": None, "days": 10, "all": False,
-            "id": 1}
+            "id": 1, "date_from": None, "date_to": None}
     base.update(kw)
     return argparse.Namespace(**base)
 
@@ -1251,6 +1393,41 @@ class TestCliVerify:
         assert "已自动修复" in out
         assert "买蛋糕" not in out.split("校验")[0]   # 修复后已 done，不在开放列表
         assert cal_db.get_item(tk, db_path=tdb)["status"] == "done"
+
+    def test_list_range_pulls_remote_history(self, cli_verify, capsys):
+        # 历史查询：本地一无所有，靠 refresh_range 实拉远端那段窗口
+        mod, fake = cli_verify
+        fake.events = [{"uid": "ev-old", "title": "去年游泳课",
+                        "start": "2025-07-06T14:00", "end": "2025-07-06T15:00",
+                        "all_day": False, "location": "泳馆", "notes": ""}]
+        mod.cmd_cal_list(_ns(kind="event", date_from="2025-07-01",
+                             date_to="2025-07-31"))
+        out = capsys.readouterr().out
+        assert "去年游泳课" in out and "2025-07-06" in out   # 跨年 → 日期带年份
+        assert fake.event_windows[-1][0][:10] == "2025-07-01"
+        assert fake.event_windows[-1][1][:10] == "2025-07-31"
+        assert "校验" not in out                    # 区间模式不跑常驻窗口校验
+
+    def test_list_range_open_from_reaches_epoch(self, cli_verify, capsys):
+        mod, fake = cli_verify
+        mod.cmd_cal_list(_ns(kind="event", date_to="2026-01-01"))
+        capsys.readouterr()
+        assert fake.event_windows[-1][0][:10] == "1970-01-01"
+
+    def test_list_range_remote_failure_is_reported(self, cli_verify, capsys):
+        mod, fake = cli_verify
+        fake.fail_list = True
+        mod.cmd_cal_list(_ns(kind="event", date_from="2025-07-01",
+                             date_to="2025-07-31"))
+        out = capsys.readouterr().out
+        assert "⚠ 历史拉取失败（活动）" in out      # 不许静默：结果可能不全
+
+    def test_list_range_local_member_silent(self, cli_verify, capsys):
+        mod, _ = cli_verify
+        mod.cmd_cal_list(_ns(member="Robin", kind="event", date_from="2025-07-01",
+                             date_to="2025-07-31"))
+        out = capsys.readouterr().out
+        assert "无日程" in out and "⚠" not in out
 
     def test_add_push_failure_still_divergent(self, cli_verify, capsys):
         mod, fake = cli_verify
@@ -1345,6 +1522,21 @@ class TestAgentWiring:
         assert "必须调 list_schedule" in p          # 查询必须过工具（远端核对）
         assert "校验" in p                          # verdict 转告规则
         assert "calendar_status 不是凭据" not in p   # 旧拐杖已退役
+
+    def test_list_schedule_exposes_history_window(self):
+        # 回归：schema 只有 days（未来窗口）→ LLM 无从查历史，直接答"我只能看到未来日程"
+        import agent_core
+        fn = next(t["function"] for t in agent_core.TOOL_SCHEMAS
+                  if t["function"]["name"] == "list_schedule")
+        props = fn["parameters"]["properties"]
+        assert "from" in props and "to" in props
+        assert "历史" in fn["description"] or "过去" in props["from"]["description"]
+
+    def test_prompt_tells_agent_history_is_queryable(self):
+        import agent_core
+        p = agent_core._build_system_prompt()
+        assert "历史日程一样能查" in p
+        assert "查不到历史" in p          # 明令禁止那句错话
 
     def test_calendar_tool_descs_mention_verify(self):
         import agent_core

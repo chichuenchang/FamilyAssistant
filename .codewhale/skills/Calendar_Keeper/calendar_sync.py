@@ -10,7 +10,10 @@ Calendar Keeper — 同步引擎（远程日历 ↔ 本地缓存），按成员 
     calendar_tick()   传输层在已注册成员消息到达后调用。enabled + 遍历每个成员 × 每个域，
                       对启用且 provider 就绪的域按各自节流刷新。单成员/单域失败被隔离，
                       永不抛异常。本地模式成员（无 sync 偏好）一律跳过。
-    refresh_domain()  刷新某成员某域：先推后拉 + 对账，写该域状态。
+    refresh_domain()  刷新某成员某域：先推后拉 + 对账，写该域状态。活动窗口 = _event_window()
+                      （过去 sync_past_days 天 ~ 未来 sync_horizon_days 天）。
+    refresh_range()   按需拉任意窗口（含更久远的过去）进本地，只拉不推、不写状态。
+                      cal-list --from/--to 的历史查询走它。
     verify_domain()   只读校验某成员某域本地↔远端一致性（分桶：待推送/远端缺失/
                       本地缺失/字段漂移；60s 新鲜行豁免）。永不抛。
     verify_and_heal() 校验→不一致则 refresh_domain 修复→复检。CLI 每个 cal-* 命令
@@ -31,7 +34,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date, datetime, time as dtime, timedelta
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -49,7 +52,8 @@ _FALLBACK_CFG = {
     "lookahead_days": 10,
     "refresh_minutes": 15,
     "query_refresh_seconds": 60,   # sync_for_query 节流（兼容保留；主路径=每操作校验，无节流）
-    "sync_horizon_days": 90,       # 远端拉取窗口（独立于 lookahead_days，覆盖远期事件）
+    "sync_horizon_days": 90,       # 远端拉取窗口（未来侧，独立于 lookahead_days）
+    "sync_past_days": 365,         # 远端拉取窗口（过去侧）；更早的历史走 refresh_range 按需拉
 }
 
 _DOMAIN_KIND = {"schedule": "event", "tasks": "task"}
@@ -60,6 +64,19 @@ _DOMAIN_KIND = {"schedule": "event", "tasks": "task"}
 _VERIFY_FRESH_SECONDS = 60
 
 
+def _window_iso(day: date, end_of_day: bool = False) -> str:
+    """日期 → 带本地时区偏移的 ISO 时刻（provider 的 timeMin/timeMax 参数）。
+
+    不用 naive.astimezone()：Windows 上它走 C 运行时的 localtime，1970 之前的
+    时刻（时区西于 UTC 时 1970-01-01 本地 = 1969 UTC）抛 OSError [Errno 22]，
+    整段历史拉取会静默退化成一条 error。固定偏移拼装则任意年份都成立。
+    """
+    off = datetime.now().astimezone().utcoffset() or timedelta(0)
+    t = dtime(23, 59, 59) if end_of_day else dtime.min
+    return datetime.combine(day, t).replace(tzinfo=timezone(off)) \
+        .isoformat(timespec="seconds")
+
+
 def _is_fresh(updated_at: str, now: datetime) -> bool:
     """行的 updated_at 在保护窗内 → True（解析失败按不新鲜处理）。"""
     try:
@@ -67,6 +84,18 @@ def _is_fresh(updated_at: str, now: datetime) -> bool:
             < _VERIFY_FRESH_SECONDS
     except (TypeError, ValueError):
         return False
+
+
+def _event_window(today: date) -> tuple[date, date]:
+    """常规活动拉取/校验窗口 (起, 止)：过去 sync_past_days 天 ~ 未来 sync_horizon_days 天。
+
+    未来侧不受 lookahead_days（仅上下文注入与列表默认窗口）限制；过去侧让"上个月游了几次课"
+    这类历史查询直接命中缓存。更早的历史不常驻，由 refresh_range() 按需拉。
+    """
+    past = max(int(CFG.get("sync_past_days", 365) or 0), 0)
+    ahead = max(int(CFG.get("sync_horizon_days", 90) or 0),
+                int(CFG.get("lookahead_days", 10) or 0))
+    return today - timedelta(days=past), today + timedelta(days=ahead)
 
 
 def _load_cfg() -> dict:
@@ -177,21 +206,21 @@ def push_pending(db_path=None, prov=None, kind: str | None = None):
 
 # ── 拉取 + 对账（后拉），按域分半 ────────────────────────────
 
-def _sync_events(db_path, p, today: date, horizon: date,
+def _sync_events(db_path, p, win_start: date, win_end: date,
                  now: datetime | None = None) -> tuple[int, list[str]]:
-    """活动半：拉窗口活动，按 uid 合并（remote wins）；窗口内远端消失 → 本地取消。
+    """活动半：拉 [win_start, win_end] 内活动，按 uid 合并（remote wins）；
+    窗口内远端消失 → 本地取消。窗口可含过去（历史活动同样入本地缓存）。
 
     新鲜保护：updated_at 在 _VERIFY_FRESH_SECONDS 内的行不参与"远端消失→取消"
     对账（Google list 读写延迟会让刚推送的行短暂缺席）。
     """
     now = now or datetime.now()
+    today, horizon = win_start, win_end
     errors: list[str] = []
     n = 0
     try:
-        time_min = datetime.combine(today, dtime.min).astimezone() \
-            .isoformat(timespec="seconds")
-        time_max = datetime.combine(horizon, dtime(23, 59, 59)).astimezone() \
-            .isoformat(timespec="seconds")
+        time_min = _window_iso(today)
+        time_max = _window_iso(horizon, end_of_day=True)
         events = p.list_events(time_min, time_max)
         seen = set()
         for e in events:
@@ -248,16 +277,13 @@ def refresh(db_path=None, today: date | None = None,
     """单库刷新（活动 + 待办两半），写全局状态。错误收集进返回值，不抛出。"""
     now = now or datetime.now()
     today = today or now.date()
-    # 拉取窗口用 sync_horizon_days（远期事件可见），不受 lookahead_days（仅上下文/列表窗口）限制
-    horizon_days = max(int(CFG.get("sync_horizon_days", 90)),
-                       int(CFG.get("lookahead_days", 10)))
-    horizon = today + timedelta(days=horizon_days)
+    win_start, horizon = _event_window(today)
     errors: list[str] = []
 
     pushed, push_errors = push_pending(db_path=db_path, prov=prov)
     errors.extend(push_errors)
     p = prov if prov is not None else provider
-    n_events, e1 = _sync_events(db_path, p, today, horizon, now)
+    n_events, e1 = _sync_events(db_path, p, win_start, horizon, now)
     n_tasks, e2 = _sync_tasks(db_path, p, now)
     errors.extend(e1)
     errors.extend(e2)
@@ -281,10 +307,7 @@ def refresh_domain(member: str, domain: str, *, db_path=None, prov=None,
         raise ValueError(f"domain 必须是 {tuple(_DOMAIN_KIND)}")
     now = now or datetime.now()
     today = today or now.date()
-    # 拉取窗口用 sync_horizon_days（远期事件可见），不受 lookahead_days（仅上下文/列表窗口）限制
-    horizon_days = max(int(CFG.get("sync_horizon_days", 90)),
-                       int(CFG.get("lookahead_days", 10)))
-    horizon = today + timedelta(days=horizon_days)
+    win_start, horizon = _event_window(today)
     db_path = db_path or str(_paths.member_store(member, domain))
     p = prov if prov is not None else provider_for(member, domain)
     state_path = state_path or _paths.member_sync_state(member, domain)
@@ -294,7 +317,7 @@ def refresh_domain(member: str, domain: str, *, db_path=None, prov=None,
     pushed, push_errors = push_pending(db_path=db_path, prov=p, kind=kind)
     errors.extend(push_errors)
     if domain == "schedule":
-        n, e = _sync_events(db_path, p, today, horizon, now)
+        n, e = _sync_events(db_path, p, win_start, horizon, now)
     else:
         n, e = _sync_tasks(db_path, p, now)
     errors.extend(e)
@@ -304,6 +327,32 @@ def refresh_domain(member: str, domain: str, *, db_path=None, prov=None,
     st["last_error"] = "; ".join(errors[:5]) if errors else None
     _save_state(state_path, st)
     return {"pushed": pushed, "synced": n, "errors": errors}
+
+
+def refresh_range(member: str, domain: str, win_start: date, win_end: date, *,
+                  db_path=None, prov=None, now: datetime | None = None) -> dict:
+    """按需拉任意窗口（**含任意久远的过去**）进本地缓存，只拉不推。
+
+    常驻窗口（_event_window）之外的历史查询用：cal-list --from/--to 先调它把该段
+    远端活动灌进本地，再读本地。待办域无窗口概念（list_tasks 恒全量），忽略窗口。
+    远端查询失败 → errors 非空，本地照旧可读（拉取异常在 _sync_events 内被捕获，
+    "远端消失→取消"对账不会在空结果上误跑）。永不抛。
+    """
+    if domain not in _DOMAIN_KIND:
+        raise ValueError(f"domain 必须是 {tuple(_DOMAIN_KIND)}")
+    now = now or datetime.now()
+    db_path = db_path or str(_paths.member_store(member, domain))
+    p = prov if prov is not None else provider_for(member, domain)
+    try:
+        if p is None or not p.is_configured():
+            return {"mode": "local", "synced": 0, "errors": []}
+    except Exception:
+        return {"mode": "local", "synced": 0, "errors": []}
+    if domain == "schedule":
+        n, errors = _sync_events(db_path, p, win_start, win_end, now)
+    else:
+        n, errors = _sync_tasks(db_path, p, now)
+    return {"mode": "remote", "synced": n, "errors": errors}
 
 
 def calendar_tick(now: datetime | None = None) -> bool:
@@ -434,13 +483,9 @@ def verify_domain(member: str, domain: str, *, db_path=None, prov=None,
         db_path = db_path or str(_paths.member_store(member, domain))
 
         if kind == "event":
-            horizon_days = max(int(CFG.get("sync_horizon_days", 90)),
-                               int(CFG.get("lookahead_days", 10)))
-            horizon = today + timedelta(days=horizon_days)
-            time_min = datetime.combine(today, dtime.min).astimezone() \
-                .isoformat(timespec="seconds")
-            time_max = datetime.combine(horizon, dtime(23, 59, 59)).astimezone() \
-                .isoformat(timespec="seconds")
+            win_start, horizon = _event_window(today)   # 与 refresh 同窗口，历史行也参与校验
+            time_min = _window_iso(win_start)
+            time_max = _window_iso(horizon, end_of_day=True)
             remote = {e["uid"]: e for e in p.list_events(time_min, time_max)}
         else:
             remote = {t["uid"]: t for t in p.list_tasks()}
@@ -451,11 +496,10 @@ def verify_domain(member: str, domain: str, *, db_path=None, prov=None,
 
         local_only: list[str] = []
         drift: list[str] = []
-        t_iso = today.isoformat()
         for row in cal_db.synced_active(kind, db_path=db_path):
             if kind == "event":
                 d = row["start_at"][:10]
-                if not d or not (t_iso <= d <= horizon.isoformat()):
+                if not d or not (win_start.isoformat() <= d <= horizon.isoformat()):
                     continue                      # 窗口外不参与（拉取也拉不到）
             if _is_fresh(row["updated_at"], now):
                 continue                          # 读写延迟保护

@@ -158,6 +158,52 @@ def list_upcoming(
     return [dict(r) for r in rows]
 
 
+def list_range(
+    start: str = "",
+    end: str = "",
+    kind: Optional[str] = None,
+    member: Optional[str] = None,
+    include_closed: bool = False,
+    include_undated: bool = False,
+    db_path: Optional[str] = None,
+) -> list[dict]:
+    """任意日期窗口内的日程/待办（**含过去**），start/end 为 'YYYY-MM-DD'。
+
+    start='' = 不限过去，end='' = 不限未来（两者都空 = 全部有日期的行）。
+    窗口判定同 list_upcoming（前 10 位字典序）：开始日 <= end 且（结束日或开始日）>= start，
+    跨窗口边界的多日活动也算。include_undated=True 时额外带上无日期的行（无期限待办）。
+    """
+    where: list[str] = []
+    args: list = []
+    span = ["substr(start_at,1,10) <= ?"] if end else []
+    if end:
+        args.append(end)
+    if start:
+        span.append("substr(CASE WHEN end_at = '' THEN start_at ELSE end_at END,1,10) >= ?")
+        args.append(start)
+    dated = "(" + " AND ".join(span) + ")" if span else "start_at != ''"
+    if include_undated:
+        where.append(f"(start_at = '' OR ({dated} AND start_at != ''))")
+    else:
+        where.append(f"(start_at != '' AND {dated})")
+    if not include_closed:
+        where.append("status = 'active'")
+    if kind:
+        where.append("kind = ?")
+        args.append(kind)
+    if member:
+        where.append("member = ?")
+        args.append(member)
+    conn = _connect(db_path)
+    rows = conn.execute(
+        "SELECT * FROM schedule_items WHERE " + " AND ".join(where) +
+        " ORDER BY (start_at = ''), start_at, id",
+        args,
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def set_status(
     item_id: int,
     status: str,

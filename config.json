@@ -54,11 +54,12 @@
     "worksheet_pin_row_cap": 80
   },
   "calendar": {
-    "_comment": "日历引擎旋钮。enabled=总开关；lookahead_days=上下文注入+cal-list 默认窗口；refresh_minutes=后台 tick 节流；sync_horizon_days=远端拉取窗口（覆盖远期事件，独立于 lookahead_days）；query_refresh_seconds=兼容保留，仅后台 sync_for_query 路径（主路径每操作校验无节流）；image_*=陈旧来图清理。按成员/域的同步偏好在 data/members.json 的 sync 块。凭据走 GCAL_* 环境变量，日历 id 走 GCAL_CALENDAR_ID，均不入 git。",
+    "_comment": "日历引擎旋钮。enabled=总开关；lookahead_days=上下文注入+cal-list 默认窗口；refresh_minutes=后台 tick 节流；sync_horizon_days=远端拉取窗口未来侧（覆盖远期事件，独立于 lookahead_days）；sync_past_days=远端拉取窗口过去侧（常驻缓存的历史长度；更早的历史由 cal-list --from/--to 按需实拉）；query_refresh_seconds=兼容保留，仅后台 sync_for_query 路径（主路径每操作校验无节流）；image_*=陈旧来图清理。按成员/域的同步偏好在 data/members.json 的 sync 块。凭据走 GCAL_* 环境变量，日历 id 走 GCAL_CALENDAR_ID，均不入 git。",
     "enabled": true,
     "lookahead_days": 10,
     "refresh_minutes": 15,
     "sync_horizon_days": 90,
+    "sync_past_days": 365,
     "query_refresh_seconds": 60,
     "image_retention_years": 2,
     "image_prune_interval_days": 30
