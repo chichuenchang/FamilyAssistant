@@ -10,6 +10,8 @@
 .codewhale/skills/Agent_Runtime/
 ├── SKILL.md            ← 本文件
 ├── agent_core.py       ← 频道无关 Agent（共用大脑）
+├── llm_client.py       ← DeepSeek 调用 + /model /effort 每用户覆盖
+├── context_budget.py   ← 历史 token 粗估 + 整轮裁剪（纯函数）
 ├── transport_base.py   ← 频道共用生命周期（闸门/投递/后台节拍）；新增频道继承它
 ├── skill_registry.py   ← 发现/合并各 skill 的 agent_tools.py（manifest 契约见模块头）
 ├── tool_runtime.py     ← manifest 共用：run_cli / schema 助手 / 路径闸门

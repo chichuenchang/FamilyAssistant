@@ -31,7 +31,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 import time
 from collections import defaultdict
 from datetime import date, datetime
@@ -50,6 +49,8 @@ if sys.platform == "win32":
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
+import context_budget as _budget
+import llm_client as _llm
 import members as _members_registry
 import paths as _paths
 import skill_registry
@@ -264,86 +265,12 @@ def _now_context() -> str:
 
 
 
-# ── Agent ───────────────────────────────────────────────────
-
-def _estimate_tokens(text: str) -> int:
-    """粗估文本 token 数：CJK ≈ 1 token/字，ASCII ≈ 4 字符/token。
-
-    宁可略高估（裁剪触发更早），不追求精确——只用于历史预算，不用于计费。"""
-    if not text:
-        return 0
-    ascii_n = sum(1 for c in text if ord(c) < 128)
-    return (len(text) - ascii_n) + (ascii_n + 3) // 4
-
-
-# 历史存档里单条工具结果的字符上限（本轮内不截断，只影响跨轮存档）：
-# 工具结果必须跨轮保留（填表会话 id 只出现在工具结果里，丢了模型下轮就瞎编），
-# 但 OCR/网页全文动辄上万字，原样存会挤爆 token 预算 → 截断留头部（id 都在首行）。
-_HIST_TOOL_CAP = 1500
-
-
-def _msg_tokens(m: dict) -> int:
-    """粗估一条历史消息的 token（content + tool_calls 参数）。"""
-    n = _estimate_tokens(m.get("content") or "")
-    if m.get("tool_calls"):
-        n += _estimate_tokens(json.dumps(m["tool_calls"], ensure_ascii=False))
-    return n
-
-
-# ── 每用户 LLM 运行时覆盖（/model /effort；状态文件不入备份） ──────
-# 状态存 data/.llm_overrides.json：{user: {"model": ..., "effort": ...}}。
-# 只在 Agent 启动与执行切换命令时读写——消息路径零文件 IO。
-
-_LLM_MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
-_LLM_MODEL_ALIASES = {"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro"}
-_LLM_EFFORTS = ("low", "medium", "high", "max")
-_LLM_DEFAULT_MODEL = "deepseek-v4-flash"
-_LLM_DEFAULT_EFFORT = "max"
-
-
-def _llm_overrides_path() -> Path:
-    return _paths.data_root() / ".llm_overrides.json"
-
-
-def _load_llm_overrides() -> dict:
-    """读每用户 LLM 覆盖。文件缺失 → {}；损坏/值非法 → 跳过并告警（手工改过也不炸）。"""
-    try:
-        raw = json.loads(_llm_overrides_path().read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
-    except Exception:
-        _log.warning("LLM 覆盖状态文件损坏，按无覆盖启动", exc_info=True)
-        return {}
-    out = {}
-    for user, entry in (raw.items() if isinstance(raw, dict) else []):
-        if not isinstance(entry, dict):
-            continue
-        clean = {}
-        if entry.get("model") in _LLM_MODELS:
-            clean["model"] = entry["model"]
-        if entry.get("effort") in _LLM_EFFORTS:
-            clean["effort"] = entry["effort"]
-        if clean:
-            out[user] = clean
-    return out
-
-
-def _save_llm_overrides(overrides: dict) -> None:
-    """原子写（mkstemp 唯一临时文件 + os.replace，同 members._save_members 套路）。"""
-    p = _llm_overrides_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(overrides, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        os.replace(tmp, p)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+# ── 转发：实现在 context_budget / llm_client（测试直引这些名字） ──
+_estimate_tokens = _budget.estimate_tokens
+_msg_tokens = _budget.msg_tokens
+_HIST_TOOL_CAP = _budget.HIST_TOOL_CAP
+_load_llm_overrides = _llm.load_overrides
+_save_llm_overrides = _llm.save_overrides
 
 
 class Agent:
@@ -467,8 +394,7 @@ class Agent:
                              "content": result})
                 turn.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
-                             "content": result if len(result) <= _HIST_TOOL_CAP
-                             else result[:_HIST_TOOL_CAP] + "\n…（历史存档截断）"})
+                             "content": _budget.clip_tool_result(result)})
 
         if tool_counts:
             tool_log = "⚙️ " + ", ".join(
@@ -504,46 +430,8 @@ class Agent:
         return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"
 
     def _handle_llm_command(self, text: str, user: str) -> str | None:
-        """/model /effort 运行时切换（不经 LLM，零 token；每用户覆盖持久化到
-        data/.llm_overrides.json）。是切换命令返回回复，否则返回 None。"""
-        parts = text.lower().split()
-        if not parts or parts[0] not in ("/model", "/effort"):
-            return None
-        kind = "model" if parts[0] == "/model" else "effort"
-        label = "模型" if kind == "model" else "推理档"
-        valid = _LLM_MODELS if kind == "model" else _LLM_EFFORTS
-        env_name = "DEEPSEEK_MODEL" if kind == "model" else "DEEPSEEK_REASONING_EFFORT"
-        default = _LLM_DEFAULT_MODEL if kind == "model" else _LLM_DEFAULT_EFFORT
-        usage = ("/model [flash|pro|reset]" if kind == "model"
-                 else "/effort [low|medium|high|max|reset]")
-        if len(parts) > 2:
-            return f"用法: {usage}"
-        arg = parts[1] if len(parts) > 1 else ""
-
-        if not arg:  # 查询当前生效值与来源
-            ov = (self._llm_overrides.get(user) or {}).get(kind)
-            env = os.environ.get(env_name)
-            if ov:
-                return f"当前{label}：{ov}（你的个人覆盖）。"
-            if env:
-                return f"当前{label}：{env}（环境变量）。"
-            return f"当前{label}：{default}（默认）。"
-        if arg == "reset":
-            entry = self._llm_overrides.get(user)
-            if entry:
-                entry.pop(kind, None)
-                if not entry:
-                    self._llm_overrides.pop(user)
-            ok = self._persist_llm_override(user)
-            note = "" if ok else "（状态文件写入失败，旧覆盖重启后可能恢复）"
-            return f"✅ 已清除你的{label}覆盖，回到环境变量/默认。{note}"
-        value = _LLM_MODEL_ALIASES.get(arg, arg) if kind == "model" else arg
-        if value not in valid:
-            return f"用法: {usage}"
-        self._llm_overrides.setdefault(user, {})[kind] = value
-        ok = self._persist_llm_override(user)
-        note = "" if ok else "（状态文件写入失败，重启后可能失效）"
-        return f"✅ 你的{label}已切换为 {value}（仅影响你）{note}。"
+        """/model /effort 运行时切换（不经 LLM，零 token）。是切换命令返回回复，否则 None。"""
+        return _llm.apply_command(self._llm_overrides, user, text, self._persist_llm_override)
 
     def _persist_llm_override(self, user: str) -> bool:
         """写回状态文件：先重读合并（另一传输进程的切换不被覆盖），再原子写。"""
@@ -561,67 +449,14 @@ class Agent:
 
     def _llm_settings(self, user: str) -> tuple[str, str]:
         """该用户生效的 (model, effort)：个人覆盖 > 环境变量 > 默认。"""
-        ov = self._llm_overrides.get(user) or {}
-        model = (ov.get("model") or os.environ.get("DEEPSEEK_MODEL")
-                 or _LLM_DEFAULT_MODEL)
-        effort = (ov.get("effort") or os.environ.get("DEEPSEEK_REASONING_EFFORT")
-                  or _LLM_DEFAULT_EFFORT)
-        return model, effort
+        return _llm.settings(self._llm_overrides, user)
 
     def _llm_status_note(self, user: str) -> str:
-        """注入 system 的当前 LLM 设置：被问"你用什么模型/推理档"时如实答。"""
-        model, effort = self._llm_settings(user)
-        ov = self._llm_overrides.get(user) or {}
-
-        def _src(kind: str, env_name: str) -> str:
-            if ov.get(kind):
-                return "你的个人覆盖"
-            return "环境变量" if os.environ.get(env_name) else "默认"
-
-        return (f"\n\n## 当前 LLM 设置\n本轮你以 {model} 运行，推理档 {effort}"
-                f"（模型来源：{_src('model', 'DEEPSEEK_MODEL')}；"
-                f"推理档来源：{_src('effort', 'DEEPSEEK_REASONING_EFFORT')}）。"
-                f"被问用什么模型/推理档时如实告知；用户想改，让他自己发 /model 或 /effort。")
+        return _llm.status_note(self._llm_overrides, user)
 
     def _call_llm(self, messages, user: str = "") -> dict | None:
-        """调 DeepSeek chat completions（native function calling）。
-
-        返回 choices[0].message 整个 dict（可能含 tool_calls）；失败返回 None。
-        model/effort 按 user 解析：个人覆盖（/model /effort）> 环境变量 > 默认。
-        """
-        import urllib.request
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-        base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-        model, effort = self._llm_settings(user)
-        body = json.dumps({
-            "model": model,
-            "messages": messages,
-            "tools": TOOL_SCHEMAS,
-            # DeepSeek V4 是推理模型，reasoning 占用 completion 预算，
-            # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
-            # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足；
-            # 高档位推理更长，max_tokens 相应调高避免被截断成空 content。
-            "reasoning_effort": effort,
-            "temperature": 0.3, "max_tokens": 32000,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            f"{base_url}/v1/chat/completions", data=body,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        )
-        try:
-            resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
-            choice = resp["choices"][0]
-            _log.debug("LLM finish=%s tokens=%s tool_calls=%d",
-                       choice.get("finish_reason"),
-                       resp.get("usage", {}).get("completion_tokens"),
-                       len(choice["message"].get("tool_calls") or []))
-            if choice.get("finish_reason") == "length":
-                _log.warning("LLM 输出被 max_tokens 截断（推理模型预算不足的信号）")
-            return choice["message"]
-        except Exception as e:
-            print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
-            _log.exception("LLM 调用失败")
-            return None
+        """返回 choices[0].message dict（可能含 tool_calls）；失败 None。"""
+        return _llm.chat(messages, TOOL_SCHEMAS, *self._llm_settings(user))
 
     def _save_history(self, user, turn_msgs: list[dict]):
         """整轮消息（user → 中间 assistant/tool → 最终 assistant）追加进历史。
@@ -633,28 +468,10 @@ class Agent:
         """
         h = self.history[user]
         h.extend(turn_msgs)
-
-        def _turn_starts() -> list[int]:
-            return [i for i, m in enumerate(h) if m.get("role") == "user"]
-
-        # 轮数上限：只留最近 history_size 轮
-        starts = _turn_starts()
-        if len(starts) > self.history_size:
-            del h[:starts[len(starts) - self.history_size]]
-        # token 预算裁剪：超出 context_max_tokens 时整轮丢最旧，
-        # 至少保留最近一轮（哪怕它单独超预算）。
-        if self.context_max_tokens > 0:
-            trimmed = 0
-            while True:
-                starts = _turn_starts()
-                if (len(starts) <= 1
-                        or sum(_msg_tokens(m) for m in h) <= self.context_max_tokens):
-                    break
-                del h[:starts[1]]
-                trimmed += 1
-            if trimmed:
-                _log.debug("用户 %s 对话历史超 %d token 预算，丢弃最旧 %d 轮",
-                           user, self.context_max_tokens, trimmed)
+        trimmed = _budget.trim_history(h, self.history_size, self.context_max_tokens)
+        if trimmed:
+            _log.debug("用户 %s 对话历史超 %d token 预算，丢弃最旧 %d 轮",
+                       user, self.context_max_tokens, trimmed)
 
 
 # ── 测试入口 ────────────────────────────────────────────────
