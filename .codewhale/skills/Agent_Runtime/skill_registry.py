@@ -14,6 +14,7 @@ manifest 是普通模块，模块级属性即契约（全部可选，缺省为�
     PROMPT_SECTIONS list[str]  system prompt 独立段落（"## 标题" 开头）
     PROMPT_RULES    list[str]  并入 "## 行为准则" 的条目（不带 "- "）
     CONTEXT_FNS     list[callable(member)->str]  每条消息注入 system prompt 的动态块
+    IMAGE_ROUTES    list[str]  来图/PDF OCR 后的分流条目（agent_core.handle_image 按 ORDER 编号拼接）
     MESSAGE_TICKS   list[callable()]  已注册成员每条消息到达时跑（节流自理）
     SLOW_TICKS      list[callable(push_text, channel)]  后台慢拍（~10 分钟）：提醒/备份
     FAST_TICKS      list[callable(push_text, channel)]  后台快拍（~20 秒）：异步结果投递
@@ -49,6 +50,7 @@ class Registry:
     prompt_sections: list[str] = field(default_factory=list)
     prompt_rules: list[str] = field(default_factory=list)
     context_fns: list[Callable[[str], str]] = field(default_factory=list)
+    image_routes: list[str] = field(default_factory=list)
     message_ticks: list[Callable] = field(default_factory=list)
     slow_ticks: list[Callable] = field(default_factory=list)
     fast_ticks: list[Callable] = field(default_factory=list)
@@ -117,6 +119,7 @@ def load() -> Registry:
         reg.prompt_sections.extend(getattr(m, "PROMPT_SECTIONS", ()))
         reg.prompt_rules.extend(getattr(m, "PROMPT_RULES", ()))
         reg.context_fns.extend(getattr(m, "CONTEXT_FNS", ()))
+        reg.image_routes.extend(getattr(m, "IMAGE_ROUTES", ()))
         reg.message_ticks.extend(getattr(m, "MESSAGE_TICKS", ()))
         reg.slow_ticks.extend(getattr(m, "SLOW_TICKS", ()))
         reg.fast_ticks.extend(getattr(m, "FAST_TICKS", ()))

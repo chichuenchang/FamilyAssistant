@@ -233,3 +233,9 @@ def worksheets_context(member: str, db_path: str | None = None) -> str:
 
 
 CONTEXT_FNS = [notes_context, worksheets_context]
+
+IMAGE_ROUTES = [
+    "其他有信息价值的杂项材料（路由器标签/课表/名片/告示等，不属于本清单其他条目的）：用 save_note 记备忘，"
+    "content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
+    "source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。",
+]

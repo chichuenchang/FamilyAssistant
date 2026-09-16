@@ -486,7 +486,7 @@ class Agent:
 
     def handle_image(self, image_path: str, user: str = "default", member: str = "") -> str:
         """图片/PDF 入口：ocr_image 对两者一视同仁（PDF 走腾讯 IsPdf 逐页），
-        OCR 文字交 LLM 按五类分流（记账/文档归档/备忘/日程）。"""
+        OCR 文字交 LLM 按各 skill 的 IMAGE_ROUTES 分流。"""
         if not member:
             return ""
         from ocr import ocr_image, is_available
@@ -494,33 +494,11 @@ class Agent:
             return "📄 材料已收到（已保存）。请用文字描述（如\"午餐45块\"），或配置腾讯云 OCR 自动识别。"
         ocr_text = ocr_image(image_path)
         if ocr_text:
+            routes = "\n".join(f"{i}) {r}" for i, r in enumerate(REGISTRY.image_routes, 1))
             prompt = (
                 f"用户发来一份材料（图片或 PDF），已保存为 {image_path}，OCR结果:\n{ocr_text}\n"
-                f"判断内容，按六种情况处理：\n"
-                f"1) 单张消费票据：提取金额/日期/类别，调 add_transaction 记一笔。\n"
-                f"2) 银行/信用卡/支付App流水或账单（多行消费，PDF 多页账单常见）：逐笔记账，每条明细调一次"
-                f" add_transaction（可在一条回复里并发多次调用）。**重点：记的是每一笔交易明细，绝不要把账单总额、"
-                f"应还款额、最低还款额、已还款额当成一笔记账**——那些是汇总数字，不是消费。"
-                f"每笔的 desc 带上能区分该行的信息（商家+时间，OCR 里有就带），这样同日同额的不同消费"
-                f"不会被误判为重复，而重复发同一张截图会被正确拦截。某行确属独立消费却被重复检查拦下时，"
-                f"对该行加 force=true 重记。行数多一条回复记不完就分多条继续记。"
-                f"无法确定金额/日期的行先列出来问用户，不要瞎记。\n"
-                f"3) 重要文档（合同/保单/证件/健康卡/政府或移民表格，PDF 多属此类）：用 add_document 归档，"
-                f"file 传上面的保存路径，ocr-text 传 OCR 全文，type 选最合适的；"
-                f"有到期日带 expiry，到期要办的事带 action-note。\n"
-                f"4) 邀请函/活动海报/预约/带日期时间的安排 → add_event（有日期；有具体时间给 start/end，"
-                f"location 给地点）；账单/发票/催款等需要跟进办理的 → add_task（截止日给 due）。"
-                f"两者都把上面的保存路径传给 source-image，留存原始材料（日后可定期清理）。"
-                f"默认进你（发送者）的日历/待办，即使活动关于别的成员；仅用户明确说加到某成员时"
-                f"才传 for-member。\n"
-                f"5) 用户此前或随图说明想要**填写**这份表格（如\"帮我填这个表\"）："
-                f"不要归档，改调 fill_form_scan（file 传上面的保存路径）进入填表流程。\n"
-                f"6) 其他有信息价值的材料（路由器标签/课表/名片/告示等杂项）：用 save_note 记备忘，"
-                f"content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
-                f"source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。\n"
-                f"注意：开出去的发票/报价单/还没付的账单 = 没有实际现金流，绝不要直接记成收入或支出；"
-                f"可建 add_task 跟进收款（带 source-image），别记成 income/expense。\n"
-                f"信息不完整就先问用户。拿不准是归档还是填表时问用户。记完简要汇报记了什么。"
+                f"判断内容，按以下情况处理（取最匹配的一条）：\n{routes}\n"
+                f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
             )
             return self.handle(prompt, user=user, member=member)
         return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"

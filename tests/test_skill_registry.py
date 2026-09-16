@@ -50,6 +50,7 @@ def test_new_skill_dir_is_discovered_without_hub_change(tmp_path, monkeypatch):
         PROMPT_SECTIONS = ["## 玩具\\n- 说 ping 就调 toy_ping"]
         PROMPT_RULES = ["toy 规则"]
         CONTEXT_FNS = [lambda member: f"\\n\\n## toy {member}"]
+        IMAGE_ROUTES = ["toy 图路由"]
     '''), encoding="utf-8")
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))   # 不读真实 data/
     real = bootstrap.skill_dirs()
@@ -61,6 +62,7 @@ def test_new_skill_dir_is_discovered_without_hub_change(tmp_path, monkeypatch):
     assert "toy 规则" in reg.prompt_rules
     assert "toy_ping" in reg.member_locked
     assert reg.context("Alex").startswith("\n\n## toy Alex")   # 注入块同样按 ORDER
+    assert reg.image_routes[0] == "toy 图路由"
     monkeypatch.setattr(bootstrap, "skill_dirs", lambda: real)
     skill_registry.load()                                    # 幂等：恢复真实注册表
     assert "toy-ping" not in rt.ALLOWED

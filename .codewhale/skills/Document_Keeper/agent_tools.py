@@ -148,3 +148,9 @@ CONTEXT_FNS = [profiles_context]
 from reminder import check_and_push as doc_reminder_check  # noqa: E402
 
 SLOW_TICKS = [doc_reminder_check]
+
+IMAGE_ROUTES = [
+    "重要文档（合同/保单/证件/健康卡/政府或移民表格，PDF 多属此类）：用 add_document 归档，"
+    "file 传上面的保存路径，ocr-text 传 OCR 全文，type 选最合适的；"
+    "有到期日带 expiry，到期要办的事带 action-note。用户若说要**填写**这份表格则不归档（见填表条目）。",
+]

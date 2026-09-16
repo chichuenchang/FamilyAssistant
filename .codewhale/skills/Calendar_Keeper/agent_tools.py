@@ -198,3 +198,10 @@ from calendar_sync import calendar_tick  # noqa: E402
 from image_gc import image_gc_tick  # noqa: E402
 
 MESSAGE_TICKS = [calendar_tick, image_gc_tick]
+
+IMAGE_ROUTES = [
+    "邀请函/活动海报/预约/带日期时间的安排 → add_event（有日期；有具体时间给 start/end，"
+    "location 给地点）；账单/发票/催款等需要跟进办理的 → add_task（截止日给 due）。"
+    "两者都把上面的保存路径传给 source-image，留存原始材料（日后可定期清理）。"
+    "默认进你（发送者）的日历/待办，即使活动关于别的成员；仅用户明确说加到某成员时才传 for-member。",
+]
