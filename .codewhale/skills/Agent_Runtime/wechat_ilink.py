@@ -54,20 +54,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); 
 
 import logging
 
-from agent_core import (Agent, receipt_month_dir, member_inbox_dir, setup_logging,
-                        split_reply as _split_reply)
+from agent_core import Agent, setup_logging, split_reply as _split_reply
 from members import resolve
-from knowking_jobs import poll_and_deliver as _knowking_deliver
+from transport_base import (Transport, with_quote as _with_quote,
+                            knowking_deliver as _knowking_deliver)
 import paths as _paths
 
 log = logging.getLogger("familyassist.wechat")
-
-from reminder import check_and_push as _doc_reminder_check
-
-from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
-
-from calendar_sync import calendar_tick as _calendar_tick
-from image_gc import image_gc_tick as _image_gc_tick
 
 # 凭据存储路径（跟随 data_root；备份硬排除任何含 "creds" 的文件名）
 CREDS_FILE = _paths.data_root() / "wechat_creds.json"
@@ -90,14 +83,6 @@ def _acquire_single_instance_lock(port: int = _LOCK_PORT) -> bool:
     s.listen(1)
     _LOCK_SOCK = s
     return True
-
-
-def _with_quote(text: str, quoted_title) -> str:
-    """引用/回复消息：把被引用内容前置注入（``[引用: {内容}]\\n{text}``），
-    让 agent 看到用户在回复什么。内容由 _quoted_text 解析（缓存反查/时间匹配）。"""
-    if quoted_title:
-        return f"[引用: {quoted_title}]\n{text}"
-    return text
 
 
 _RECENT_MSGS: "OrderedDict[str, str]" = OrderedDict()
@@ -221,27 +206,40 @@ def _quoted_text(raw_item: dict):
     return "一条历史消息（原文不可见）"
 
 
-def _send_reply(msg, reply: str) -> None:
-    """拆出图片/文档哨兵：先发图，再发文档，最后发文字。失败仅记录，不影响文字。"""
-    text, imgs, docs = _split_reply(reply or "")
-    root = _paths.data_root().resolve()
-    for rel in imgs:
+class WeChatTransport(Transport):
+    """微信：target = 收到的 msg（reply_* 回原会话）或 wxid（后台推送，经 bot.send_text）。"""
+    channel = "wechat"
+    tag = "wx"
+
+    def __init__(self, bot=None, agent=None):
+        super().__init__(agent)
+        self.bot = bot
+
+    def send_text(self, target, text: str) -> None:
+        if hasattr(target, "reply_text"):
+            target.reply_text(text)
+        else:
+            self.bot.send_text(target, text)
+
+    def send_photo(self, target, path: str) -> None:
+        target.reply_image(path)
+
+    def send_document(self, target, path: str) -> None:
+        target.reply_file(path)
+
+    def after_text_sent(self, target, text: str) -> None:
+        _remember_sent(text, persist_file=_SENT_REPLIES_FILE)   # bot 出站记录（引用反查）
+
+    def save_incoming(self, msg, member: str, ext: str):
+        """来件落盘到成员 inbox；失败返回 None（on_media 会提示重发）。"""
         try:
-            ap = _paths.resolve_rel(rel).resolve()
-            if ap.exists() and ap.is_relative_to(root):
-                msg.reply_image(str(ap))
+            path = self.inbox_path(member, ext)
+            msg.save(str(path))
+            self.mark_dirty()
+            return path
         except Exception:
-            log.exception("发送图片失败（跳过）: %s", rel)
-    for rel in docs:
-        try:
-            ap = _paths.resolve_rel(rel).resolve()
-            if ap.exists() and ap.is_relative_to(root):
-                msg.reply_file(str(ap))
-        except Exception:
-            log.exception("发送文件失败（跳过）: %s", rel)
-    if text:
-        msg.reply_text(text)
-        _remember_sent(text, persist_file=_SENT_REPLIES_FILE)
+            log.exception("来件保存失败")
+            return None
 
 
 # ── 模式 1: 运行 Bot ────────────────────────────────────────
@@ -298,65 +296,28 @@ def run_bot(relogin: bool = False) -> None:
 
     bot.client.poll = _poll_with_selfheal
 
-    agent = Agent(channel="wechat")
+    t = WeChatTransport(bot)
 
-    # 注册文字消息处理器
     @bot.on_text
     def handle_text(msg):
-        member = resolve("wechat", msg.from_user)
+        member = t.gate(msg.from_user)
         if member is None:
-            print(f"[wx] 忽略未注册来源 {msg.from_user}")
             return
         _remember_msg(msg.message_id, msg.text, persist_file=_RECENT_MSGS_FILE)
-        quoted = _quoted_text(msg.raw_item)
-        text = _with_quote(msg.text, quoted)
         print(f"[wx] 文字消息 from {msg.from_user}({member}): {msg.text[:60]}")
-        log.debug("文字 from %s(%s) 引用=%s: %s",
-                  msg.from_user, member, quoted or "-", msg.text)
-        _calendar_tick()  # 已注册成员消息 → 静默节流刷新远程日历（内部把关，永不抛）
-        _image_gc_tick()  # 节流（约每月）清理陈旧来图
-        try:
-            reply = agent.handle(text, user=msg.from_user, member=member)
-            log.debug("文字回复 → %s", (reply or "")[:200])
-            _send_reply(msg, reply)
-        except Exception as e:
-            log.exception("文字处理出错")
-            msg.reply_text(f"处理出错: {e}")
+        t.on_text(msg, msg.from_user, member, msg.text, quoted=_quoted_text(msg.raw_item))
 
-    # 注册图片消息处理器
     @bot.on_image
     def handle_image(msg):
-        member = resolve("wechat", msg.from_user)
+        member = t.gate(msg.from_user)
         if member is None:
-            print(f"[wx] 忽略未注册来源 {msg.from_user}")
             return
         print(f"[wx] 图片消息 from {msg.from_user}({member})")
-        _calendar_tick()
-        _image_gc_tick()
-        try:
-            now = datetime.now()
-            ts = now.strftime("%Y%m%d_%H%M%S")
-            img_path = member_inbox_dir(member, now) / f"{ts}_wechat.jpg"
-            msg.save(str(img_path))
-            _backup_mark_dirty()
-            log.debug("图片 from %s(%s) 保存 → %s", msg.from_user, member, img_path)
-            reply = agent.handle_image(str(img_path), user=msg.from_user, member=member)
-            log.debug("图片回复 → %s", (reply or "")[:200])
-            _send_reply(msg, reply)
-        except Exception as e:
-            log.exception("图片处理出错")
-            msg.reply_text(f"图片处理出错: {e}")
-
-    # 其他消息类型：友好提示
-    @bot.on_voice
-    def handle_voice(msg):
-        if resolve("wechat", msg.from_user) is None:
-            return
-        msg.reply_text("目前不支持语音消息，请发文字或图片。")
+        t.on_media(msg, msg.from_user, member, t.save_incoming(msg, member, ".jpg"))
 
     @bot.on_file
     def handle_file(msg):
-        member = resolve("wechat", msg.from_user)
+        member = t.gate(msg.from_user)
         if member is None:
             return
         name = msg.file_name or ""
@@ -364,21 +325,14 @@ def run_bot(relogin: bool = False) -> None:
             msg.reply_text(f"收到文件: {name}（暂不支持文件处理，PDF 可以）")
             return
         print(f"[wx] 文件消息 from {msg.from_user}({member}): {name}")
-        _calendar_tick()
-        _image_gc_tick()
-        try:
-            now = datetime.now()
-            ts = now.strftime("%Y%m%d_%H%M%S")
-            pdf_path = member_inbox_dir(member, now) / f"{ts}_wechat.pdf"
-            msg.save(str(pdf_path))
-            _backup_mark_dirty()
-            log.debug("文件 from %s(%s) 保存 → %s", msg.from_user, member, pdf_path)
-            reply = agent.handle_image(str(pdf_path), user=msg.from_user, member=member)
-            log.debug("文件回复 → %s", (reply or "")[:200])
-            _send_reply(msg, reply)
-        except Exception as e:
-            log.exception("文件处理出错")
-            msg.reply_text(f"文件处理出错: {e}")
+        t.on_media(msg, msg.from_user, member, t.save_incoming(msg, member, ".pdf"))
+
+    # 其他消息类型：友好提示（未注册来源静默）
+    @bot.on_voice
+    def handle_voice(msg):
+        if resolve("wechat", msg.from_user) is None:
+            return
+        msg.reply_text("目前不支持语音消息，请发文字或图片。")
 
     @bot.on_video
     def handle_video(msg):
@@ -386,34 +340,8 @@ def run_bot(relogin: bool = False) -> None:
             return
         msg.reply_text("收到视频（暂不支持视频处理）")
 
-    # 文档到期提醒：后台线程每 10 分钟检查（reminder 内部按日去重，
-    # weixin-ilink bot.run() 阻塞，无轮询循环可挂钩）
-    import threading
-    import time as _time
-
-    def _reminder_loop():
-        while True:
-            try:
-                _doc_reminder_check(lambda wxid, text: bot.send_text(wxid, text), "wechat")
-            except Exception as e:
-                print(f"[wx] 文档提醒检查异常: {e}", file=sys.stderr)
-                log.exception("文档提醒检查异常")
-            _backup_tick()
-            _time.sleep(600)
-
-    threading.Thread(target=_reminder_loop, daemon=True, name="doc-reminder").start()
-
-    # KnowKing 后台报告投递：单独快轮询线程（reminder 循环 600s 太慢，用户等报告）
-    def _knowking_loop():
-        while True:
-            try:
-                _knowking_deliver(lambda wxid, text: bot.send_text(wxid, text), "wechat")
-            except Exception as e:
-                print(f"[wx] KnowKing 投递异常: {e}", file=sys.stderr)
-                log.exception("KnowKing 投递异常")
-            _time.sleep(20)
-
-    threading.Thread(target=_knowking_loop, daemon=True, name="knowking-deliver").start()
+    # weixin-ilink bot.run() 阻塞、无轮询钩子 → 后台线程：提醒+备份 600s、懂王投递 20s
+    t.start_background_threads()
 
     try:
         bot.run()
