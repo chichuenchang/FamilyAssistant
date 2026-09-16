@@ -39,7 +39,7 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 paths
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import paths as _paths
 
 _log = logging.getLogger("familyassist.knowking")

@@ -39,8 +39,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import cal_db
 import calendar_provider as provider          # 模块全局默认 provider（可注入/monkeypatch）
 import providers as _providers

@@ -50,8 +50,7 @@ if sys.platform == "win32":
 
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "OCR"))  # OCR skill 的 ocr.py
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 members
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 # 注：CLI 经 subprocess 调用（见 _run_cli），无需加入 sys.path
 
 import members as _members_registry
@@ -1153,9 +1152,6 @@ TOOL_SCHEMAS = [
 
 # ── 备忘上下文注入 ──────────────────────────────────────────
 
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Note_Keeper"))
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
 
 
 _WEEKDAYS_ZH = "一二三四五六日"

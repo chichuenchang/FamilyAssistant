@@ -28,9 +28,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "OCR"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import form_fill
 import form_overlay

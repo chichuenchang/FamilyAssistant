@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 models
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 # 分类/币种/基准的值全部来自 config.json，由 models 统一读取（单一事实来源）。
 from models import (
     SCHEMA, TRANSACTION_TYPES, TAX_COUNTRIES, BASE_CURRENCY, SUPPORTED_CURRENCIES,

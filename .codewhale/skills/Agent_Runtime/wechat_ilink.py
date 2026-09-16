@@ -50,7 +50,7 @@ if sys.platform == "win32":
 
 # 项目根（本文件向上 3 级）
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import logging
 
@@ -62,13 +62,10 @@ import paths as _paths
 
 log = logging.getLogger("familyassist.wechat")
 
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
 from reminder import check_and_push as _doc_reminder_check
 
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
 from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
 
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
 from calendar_sync import calendar_tick as _calendar_tick
 from image_gc import image_gc_tick as _image_gc_tick
 

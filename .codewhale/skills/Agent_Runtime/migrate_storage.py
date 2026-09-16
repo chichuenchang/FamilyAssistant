@@ -39,9 +39,7 @@ if sys.platform == "win32":
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-for _d in ("Agent_Runtime", "Expense_Tracker", "Document_Keeper",
-           "Note_Keeper", "Calendar_Keeper"):
-    sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / _d))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import paths
 import members

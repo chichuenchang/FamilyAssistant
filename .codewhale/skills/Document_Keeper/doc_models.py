@@ -42,7 +42,7 @@ REMINDER_LEAD_DAYS = int(_cfg.get("reminder_lead_days") or 30)
 # 数据落盘位置经 Agent_Runtime/paths（单一事实来源）：家庭文档库 + 家庭文档目录。
 _ROOT = _CONFIG_PATH.parent
 import sys as _sys
-_sys.path.insert(0, str(_ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
+_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import paths as _paths
 
 DB_PATH = _paths.family_documents_db()             # data/Family/documents.db
