@@ -74,6 +74,17 @@ def member_names(members_path: Path | None = None) -> list[str]:
     return list(load_members(members_path).keys())
 
 
+def require_registered(name: str) -> str:
+    """非空成员名必须已登记；返回原值或抛 ValueError。空值放行（家庭级）。"""
+    if not name:
+        return ""
+    known = member_names()
+    if name not in known:
+        raise ValueError(
+            f"未知成员 '{name}'。已登记: {', '.join(known) or '（无）'}。用 member-add 添加。")
+    return name
+
+
 def _slug(name: str) -> str:
     """成员名 → 文件系统安全目录 slug（取首个空白分隔词，小写，去特殊字符）。"""
     tok = (name or "").strip().split()

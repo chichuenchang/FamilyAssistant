@@ -60,17 +60,6 @@ from models import RECEIPTS_DIR
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def _validate_member(name: str) -> str:
-    """非空成员名必须已登记；返回原值或抛 ValueError。空值放行（家庭级）。"""
-    if not name:
-        return ""
-    known = members_registry.member_names()
-    if name not in known:
-        raise ValueError(
-            f"未知成员 '{name}'。已登记: {', '.join(known) or '（无）'}。用 member-add 添加。")
-    return name
-
-
 def _store_receipt(src: str, when: str, label: str) -> str:
     """复制票据到 receipts/YYYY-MM/，返回 data_root 相对路径（正斜杠，如 Family/receipts/...）。
 
@@ -108,7 +97,7 @@ def cmd_init(_args):
 
 
 def cmd_add(args):
-    member = _validate_member(args.member or "")
+    member = members_registry.require_registered(args.member or "")
     receipt = _store_receipt(args.receipt, args.date,
                              f"{args.type}_{args.desc or ''}") if args.receipt else ""
     tid, dupes = add_transaction(
@@ -217,7 +206,7 @@ def cmd_monthly(args):
 
 
 def cmd_deposit_add(args):
-    member = _validate_member(args.member or "")
+    member = members_registry.require_registered(args.member or "")
     receipt = _store_receipt(args.receipt, args.start_date,
                              f"deposit_{args.bank or ''}") if args.receipt else ""
     did = add_deposit(
@@ -269,7 +258,7 @@ def cmd_transfer_add(args):
         to_rate=args.to_rate or 0.0,
         to_maturity=args.to_maturity or "",
         notes=args.notes or "",
-        member=_validate_member(args.member or ""),
+        member=members_registry.require_registered(args.member or ""),
     )
     msg = (f"已记录划转 #{res['transfer_id']}: "
            f"{args.from_amount} {args.from_currency} → {args.to_amount} {args.to_currency} "
@@ -310,7 +299,7 @@ def cmd_transfer_list(args):
 def cmd_tax_add(args):
     import json
     data = json.loads(args.data) if args.data else {}
-    member = _validate_member(args.member or "")
+    member = members_registry.require_registered(args.member or "")
     receipt = _store_receipt(args.receipt, args.filing_date or "",
                              f"tax_{args.year}_{args.country}") if args.receipt else ""
     tid = add_tax_filing(
