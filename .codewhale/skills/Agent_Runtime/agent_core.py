@@ -116,7 +116,6 @@ def setup_logging(debug: bool = True) -> logging.Logger:
 # 契约见 skill_registry.py。命令白名单/路由/超时住在 tool_runtime，此处只转发同一对象。
 
 REGISTRY = skill_registry.load()
-_REGISTRY = REGISTRY
 
 ALLOWED_COMMANDS = rt.ALLOWED
 _CLI_TIMEOUTS = rt.CLI_TIMEOUTS
@@ -124,29 +123,12 @@ _cli_path = rt.cli_path
 _run_cli = rt.run_cli
 _relocate_image = rt.relocate_image
 _resolve_sendable = rt.resolve_sendable
-_TOOL_MAP = _REGISTRY.tool_map
-TOOL_SCHEMAS = _REGISTRY.schemas
-_MEMBER_LOCKED = _REGISTRY.member_locked
-_CONTEXT_TOOLS = _REGISTRY.context_tools
-_IMAGE_TOOLS = _REGISTRY.image_tools
-_DOC_TOOLS = _REGISTRY.doc_tools
-
-
-def _from_skill(skill: str, name: str, default=None):
-    """某 skill manifest 的内部符号（历史别名用；skill 缺席返回 default，不炸启动）。"""
-    return getattr(_REGISTRY.modules.get(skill), name, default)
-
-
-# 历史别名：测试与旧调用方直引这些名字；实现已迁入各 skill 的 agent_tools.py
-_NOTE_TOOLS = _from_skill("Note_Keeper", "NOTE_TOOLS", set())
-_relocate_note_image = _from_skill("Note_Keeper", "relocate_note_image")
-_notes_context = _from_skill("Note_Keeper", "notes_context")
-_worksheets_context = _from_skill("Note_Keeper", "worksheets_context")
-_profiles_context = _from_skill("Document_Keeper", "profiles_context")
-_schedule_context = _from_skill("Calendar_Keeper", "schedule_context")
-_tool_add_event = _from_skill("Calendar_Keeper", "tool_add_event")
-_tool_add_task = _from_skill("Calendar_Keeper", "tool_add_task")
-_tool_knowking = _from_skill("Agent_Runtime", "tool_knowking")
+_TOOL_MAP = REGISTRY.tool_map
+TOOL_SCHEMAS = REGISTRY.schemas
+_MEMBER_LOCKED = REGISTRY.member_locked
+_CONTEXT_TOOLS = REGISTRY.context_tools
+_IMAGE_TOOLS = REGISTRY.image_tools
+_DOC_TOOLS = REGISTRY.doc_tools
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
@@ -208,8 +190,8 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
     idle_note = (f"；用户闲置超过 {idle_hours:g} 小时后也会自动清空"
                  if idle_hours > 0 else "")
 
-    sections = "\n\n".join(_REGISTRY.prompt_sections)
-    rules = "\n".join(f"- {r}" for r in [*_REGISTRY.prompt_rules, *_CORE_RULES])
+    sections = "\n\n".join(REGISTRY.prompt_sections)
+    rules = "\n".join(f"- {r}" for r in [*REGISTRY.prompt_rules, *_CORE_RULES])
 
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 
@@ -430,7 +412,7 @@ class Agent:
         msgs = [{"role": "system",
                  "content": self.system_prompt + _now_context() + member_note
                  + self._llm_status_note(user)
-                 + _REGISTRY.context(member)}]
+                 + REGISTRY.context(member)}]
         # 历史（含跨轮保留的工具调用/结果）由 _save_history 控制长度，这里全量带上
         msgs.extend(self.history[user])
         msgs.append({"role": "user", "content": text})

@@ -66,7 +66,7 @@ class TestToolBehaviour:
             return "job-1", "🔎 已开始"
 
         monkeypatch.setattr(kj, "submit", fake_submit)
-        out = ac._tool_knowking({"topic": "大家怎么看 X", "__channel": "telegram",
+        out = ac.REGISTRY.modules["Agent_Runtime"].tool_knowking({"topic": "大家怎么看 X", "__channel": "telegram",
                                  "__user": "555", "member": "Jim Zheng"})
         assert out == "🔎 已开始"
         assert seen == {"topic": "大家怎么看 X", "channel": "telegram",
@@ -77,12 +77,12 @@ class TestToolBehaviour:
         called = {"n": 0}
         monkeypatch.setattr(kj, "submit",
                             lambda *a, **k: called.__setitem__("n", called["n"] + 1) or ("x", "y"))
-        out = ac._tool_knowking({"topic": "X", "member": "Jim"})
+        out = ac.REGISTRY.modules["Agent_Runtime"].tool_knowking({"topic": "X", "member": "Jim"})
         assert out.startswith("[错误]")
         assert called["n"] == 0
 
     def test_tool_empty_topic_errors(self):
-        out = ac._tool_knowking({"topic": "  ", "__channel": "telegram", "__user": "5"})
+        out = ac.REGISTRY.modules["Agent_Runtime"].tool_knowking({"topic": "  ", "__channel": "telegram", "__user": "5"})
         assert out.startswith("[错误]")
 
 
