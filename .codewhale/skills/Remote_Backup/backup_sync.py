@@ -21,14 +21,12 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
-import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import backup_provider
 
 import members as _members

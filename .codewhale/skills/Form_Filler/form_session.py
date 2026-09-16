@@ -13,12 +13,10 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import paths as _paths
 
 FIELD_TYPES = ("text", "checkbox", "choice")

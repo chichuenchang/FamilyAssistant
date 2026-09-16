@@ -10,10 +10,8 @@ Family Assistant — Document Keeper 数据模型定义
 （pytest、传输层 import reminder）占用这两个模块名，避免冲突。
 """
 
-import sys as _sys
 from pathlib import Path
 
-_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import jsonfile
 import paths as _paths
 

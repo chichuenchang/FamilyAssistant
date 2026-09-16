@@ -2,6 +2,7 @@
 import textwrap
 
 import bootstrap
+import pytest
 import skill_registry
 import tool_runtime as rt
 
@@ -93,3 +94,15 @@ def test_context_swallows_failing_injector():
 
     reg.context_fns = [boom, lambda m: "ok"]
     assert reg.context("A") == "ok"
+
+
+def test_duplicate_module_name_across_skills_rejected(tmp_path):
+    a, b = tmp_path / "A_Skill", tmp_path / "B_Skill"
+    a.mkdir(); b.mkdir()
+    (a / "cli.py").write_text("", encoding="utf-8")       # 允许重名
+    (b / "cli.py").write_text("", encoding="utf-8")
+    bootstrap.check_unique_modules([a, b])
+    (a / "helper.py").write_text("", encoding="utf-8")
+    (b / "helper.py").write_text("", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="helper.py"):
+        bootstrap.check_unique_modules([a, b])

@@ -9,10 +9,8 @@ SQLite 数据库表结构，用于本地个人/家庭记账。
 无需动代码（改后重启进程生效）。config.json 缺失/损坏时用下方应急回退值。
 """
 
-import sys as _sys
 from pathlib import Path
 
-_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import jsonfile
 import paths as _paths
 

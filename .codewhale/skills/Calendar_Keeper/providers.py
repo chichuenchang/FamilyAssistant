@@ -14,10 +14,7 @@ Calendar Keeper — provider 注册表
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import calendar_provider
 
 # 同一 google 模块实现两半（list_events/create_event/... 与 list_tasks/create_task/...）

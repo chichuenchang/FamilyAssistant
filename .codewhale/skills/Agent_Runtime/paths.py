@@ -25,13 +25,11 @@ config.json：data_root（默认 data）、family_dir_name（默认 Family）。
 from __future__ import annotations
 
 import os
-import sys
 from datetime import date
 from pathlib import Path
 
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import jsonfile
 import members as _members

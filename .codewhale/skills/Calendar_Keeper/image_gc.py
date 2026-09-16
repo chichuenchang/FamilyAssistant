@@ -18,13 +18,11 @@ Calendar Keeper — 陈旧来图清理（活动/待办的 source_image）
 from __future__ import annotations
 
 import os
-import sys
 from datetime import date, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import cal_db
 import members as _members
 import paths as _paths

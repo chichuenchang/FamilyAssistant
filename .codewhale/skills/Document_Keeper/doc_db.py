@@ -9,12 +9,10 @@ import hashlib
 import json
 import os
 import sqlite3
-import sys
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 from doc_models import (
     SCHEMA, DOC_TYPES, DOC_STATUSES, REMINDER_LEAD_DAYS,
 )
