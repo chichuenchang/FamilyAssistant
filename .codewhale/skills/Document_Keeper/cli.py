@@ -44,13 +44,7 @@ _BACKUP_WRITE_COMMANDS = {"doc-add", "doc-update", "doc-ack", "doc-remove",
                           "profile-set", "profile-unset"}
 
 
-def _mark_backup_dirty() -> None:
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
-        from backup_sync import mark_dirty
-        mark_dirty()
-    except Exception:
-        pass
+from backup_hook import mark_dirty as _mark_backup_dirty  # 写入后通知备份（失败静默）
 
 
 def _validate_member(name: str) -> str:
