@@ -17,6 +17,7 @@
 ├── bootstrap.py        ← sys.path 单一入口
 ├── backup_hook.py      ← 各 CLI 写入后 mark_dirty
 ├── jsonfile.py         ← config.json / 状态文件读写（缺失/损坏读作 {}）
+├── google_oauth.py     ← Google provider 共用 --auth 回环授权
 ├── members.py          ← 成员注册表（频道 id → 成员名；存 git 忽略的 data/members.json）
 ├── paths.py            ← 磁盘布局解析（数据落盘位置的单一事实来源）
 ├── migrate_storage.py  ← 旧单库/旧目录 → 按成员分库的一次性迁移
