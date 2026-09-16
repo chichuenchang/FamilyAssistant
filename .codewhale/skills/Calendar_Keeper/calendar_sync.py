@@ -31,7 +31,6 @@ CALENDAR_CONFIG（替代 config.json）、DATA_ROOT（数据根，经 paths）�
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from datetime import date, datetime, time as dtime, timedelta, timezone
@@ -45,6 +44,7 @@ import calendar_provider as provider          # 模块全局默认 provider（�
 import providers as _providers
 import members as _members
 import paths as _paths
+import jsonfile
 
 _FALLBACK_CFG = {
     "enabled": False,
@@ -100,13 +100,9 @@ def _event_window(today: date) -> tuple[date, date]:
 def _load_cfg() -> dict:
     # CALENDAR_CONFIG 环境变量可指向替代 config.json（测试隔离用）
     cfg_path = Path(os.environ.get("CALENDAR_CONFIG") or (ROOT / "config.json"))
-    try:
-        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
-        cfg = raw.get("calendar")
-        if isinstance(cfg, dict):
-            return {**_FALLBACK_CFG, **cfg}
-    except Exception:
-        pass
+    cfg = jsonfile.load_dict(cfg_path).get("calendar")
+    if isinstance(cfg, dict):
+        return {**_FALLBACK_CFG, **cfg}
     return dict(_FALLBACK_CFG)
 
 
@@ -122,16 +118,11 @@ def _global_state_file() -> Path:
 
 
 def _load_state(path: Path) -> dict:
-    try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(path)
 
 
 def _save_state(path: Path, st: dict) -> None:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+    jsonfile.save(path, st)
 
 
 def _record_error(path: Path, msg: str) -> None:

@@ -42,6 +42,7 @@ ROOT = HERE.parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import paths
+import jsonfile
 import members
 import models as expense_models      # Expense SCHEMA（transactions/deposits/transfers/tax/fx）
 import doc_models                     # Document SCHEMA（documents）
@@ -205,16 +206,11 @@ def migrate(old_ledger, old_state=None, *, calendar_owner: str | None = None,
 
     # ── 播种 owner 两域同步状态（保留 last_refresh，避免立即churn） ──
     if not dry_run and old_state and Path(old_state).exists() and calendar_owner:
-        try:
-            gst = json.loads(Path(old_state).read_text(encoding="utf-8"))
-        except Exception:
-            gst = {}
+        gst = jsonfile.load_dict(old_state)
         for domain in ("schedule", "tasks"):
-            sp = paths.member_sync_state(calendar_owner, domain)
-            sp.parent.mkdir(parents=True, exist_ok=True)
-            sp.write_text(json.dumps({"last_refresh": gst.get("last_refresh"),
-                                      "last_error": gst.get("last_error")},
-                                     ensure_ascii=False), encoding="utf-8")
+            jsonfile.save(paths.member_sync_state(calendar_owner, domain),
+                          {"last_refresh": gst.get("last_refresh"),
+                           "last_error": gst.get("last_error")})
 
     old.close()
 

@@ -41,6 +41,7 @@ from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 import paths as _paths
+import jsonfile
 
 _log = logging.getLogger("familyassist.knowking")
 
@@ -60,11 +61,7 @@ _STRIP_ENV_EXACT = {"RAPIDAPI_KEY", "JUSTONEAPI_TOKEN"}
 
 
 def _load_config() -> dict:
-    try:
-        cfg = json.loads((_ROOT / "config.json").read_text(encoding="utf-8"))
-        return cfg.get("knowking") or {}
-    except Exception:
-        return {}
+    return jsonfile.load_dict(_ROOT / "config.json").get("knowking") or {}
 
 
 def project_dir() -> Path:

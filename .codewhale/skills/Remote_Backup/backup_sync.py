@@ -19,7 +19,6 @@ Remote Backup — 同步引擎（真实实现）
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import sqlite3
 import sys
@@ -34,6 +33,7 @@ import backup_provider
 
 import members as _members
 import paths as _paths
+import jsonfile
 
 _FALLBACK_CFG = {"enabled": False, "debounce_seconds": 60}
 
@@ -43,14 +43,10 @@ def _cfg_path() -> Path:
 
 
 def _load_cfg() -> dict:
-    try:
-        raw = json.loads(_cfg_path().read_text(encoding="utf-8"))
-        cfg = raw.get("backup")
-        if isinstance(cfg, dict):
-            return {**_FALLBACK_CFG,
-                    **{k: cfg[k] for k in ("enabled", "debounce_seconds") if k in cfg}}
-    except Exception:
-        pass
+    cfg = jsonfile.load_dict(_cfg_path()).get("backup")
+    if isinstance(cfg, dict):
+        return {**_FALLBACK_CFG,
+                **{k: cfg[k] for k in ("enabled", "debounce_seconds") if k in cfg}}
     return dict(_FALLBACK_CFG)
 
 
@@ -70,11 +66,7 @@ def _data_dirname() -> str:
             return Path(env).resolve().relative_to(ROOT).as_posix()
         except (ValueError, OSError):
             pass
-    try:
-        raw = json.loads(_cfg_path().read_text(encoding="utf-8"))
-        return raw.get("data_root") or "data"
-    except Exception:
-        return "data"
+    return jsonfile.load_dict(_cfg_path()).get("data_root") or "data"
 
 
 _DATA_DIRNAME = _data_dirname()
@@ -99,15 +91,11 @@ def _now_iso() -> str:
 
 
 def _load_json(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(path)
 
 
 def _save_json(path: Path, obj: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+    jsonfile.save(path, obj, indent=1)
 
 
 def _excluded(rel: str) -> bool:

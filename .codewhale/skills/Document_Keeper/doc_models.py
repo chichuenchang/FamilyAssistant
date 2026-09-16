@@ -10,8 +10,12 @@ Family Assistant — Document Keeper 数据模型定义
 （pytest、传输层 import reminder）占用这两个模块名，避免冲突。
 """
 
-import json
+import sys as _sys
 from pathlib import Path
+
+_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
+import jsonfile
+import paths as _paths
 
 # 文档状态（结构性，固定，不放 config.json）
 DOC_STATUSES = ("active", "expired", "archived", "superseded")
@@ -21,17 +25,10 @@ _CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
 
 def _load_config_from(path: Path) -> dict:
     """解析指定 config.json；缺失或损坏时返回空 dict（回退到应急默认）。"""
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(path)
 
 
-def _load_config() -> dict:
-    return _load_config_from(_CONFIG_PATH)
-
-
-_cfg = _load_config()
+_cfg = _load_config_from(_CONFIG_PATH)
 
 # 应急回退（仅 config.json 缺失/损坏时使用；正常运行值来自 config.json）
 _FALLBACK_DOC_TYPES = ["other"]
@@ -40,11 +37,6 @@ DOC_TYPES = list(_cfg.get("doc_types") or _FALLBACK_DOC_TYPES)
 REMINDER_LEAD_DAYS = int(_cfg.get("reminder_lead_days") or 30)
 
 # 数据落盘位置经 Agent_Runtime/paths（单一事实来源）：家庭文档库 + 家庭文档目录。
-_ROOT = _CONFIG_PATH.parent
-import sys as _sys
-_sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
-import paths as _paths
-
 DB_PATH = _paths.family_documents_db()             # data/Family/documents.db
 DOCUMENTS_DIR = _paths.family_dir() / "documents"  # data/Family/documents
 

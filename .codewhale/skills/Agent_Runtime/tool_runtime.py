@@ -19,6 +19,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import paths as _paths
+import jsonfile
 
 ROOT = bootstrap.ROOT
 SKILLS_DIR = bootstrap.SKILLS_DIR
@@ -27,10 +28,7 @@ log = logging.getLogger("familyassist.agent")
 
 def load_config() -> dict:
     """项目根 config.json；缺失/损坏返回 {}（各处自带回退默认值）。"""
-    try:
-        return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(ROOT / "config.json")
 
 
 CONFIG = load_config()

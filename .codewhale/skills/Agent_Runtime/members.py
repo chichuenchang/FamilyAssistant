@@ -27,6 +27,8 @@ import re
 import tempfile
 from pathlib import Path
 
+import jsonfile
+
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -41,11 +43,7 @@ def _default_members_path() -> Path:
     env = os.environ.get("DATA_ROOT")
     if env:
         return Path(env) / "members.json"
-    try:
-        droot = json.loads((ROOT / "config.json").read_text(encoding="utf-8")) \
-                    .get("data_root") or "data"
-    except Exception:
-        droot = "data"
+    droot = jsonfile.load_dict(ROOT / "config.json").get("data_root") or "data"
     return ROOT / droot / "members.json"
 
 
@@ -56,11 +54,7 @@ CHANNELS = ("telegram", "wechat")
 
 def load_members(members_path: Path | None = None) -> dict:
     """注册表 dict；文件缺失/损坏/格式不对返回 {}（→ 锁定）。"""
-    try:
-        data = json.loads((members_path or MEMBERS_PATH).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    return jsonfile.load_dict(members_path or MEMBERS_PATH)
 
 
 def resolve(channel: str, channel_id, members_path: Path | None = None) -> str | None:

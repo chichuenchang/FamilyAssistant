@@ -17,7 +17,6 @@ Calendar Keeper — 陈旧来图清理（活动/待办的 source_image）
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from datetime import date, datetime, timedelta
@@ -29,16 +28,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); 
 import cal_db
 import members as _members
 import paths as _paths
+import jsonfile
 
 _FALLBACK = {"image_retention_years": 2, "image_prune_interval_days": 30}
 
 
 def _cfg() -> dict:
     cfg_path = Path(os.environ.get("CALENDAR_CONFIG") or (ROOT / "config.json"))
-    try:
-        cal = json.loads(cfg_path.read_text(encoding="utf-8")).get("calendar") or {}
-    except Exception:
-        cal = {}
+    cal = jsonfile.load_dict(cfg_path).get("calendar") or {}
     return {**_FALLBACK, **{k: cal[k] for k in _FALLBACK if k in cal}}
 
 
@@ -48,16 +45,11 @@ def _state_file() -> Path:
 
 
 def _load_state() -> dict:
-    try:
-        return json.loads(_state_file().read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(_state_file())
 
 
 def _save_state(st: dict) -> None:
-    p = _state_file()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+    jsonfile.save(_state_file(), st)
 
 
 def _years_ago(d: date, years: int) -> date:
