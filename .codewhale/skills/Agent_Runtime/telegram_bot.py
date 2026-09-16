@@ -263,7 +263,7 @@ def run() -> None:
 
     t = _TRANSPORT
     offset = _load_offset()
-    print(f"[tg] 等待消息... (Ctrl+C 停止)")
+    print("[tg] 等待消息... (Ctrl+C 停止)")
 
     while True:
         try:

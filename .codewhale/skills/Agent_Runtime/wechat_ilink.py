@@ -246,7 +246,7 @@ class WeChatTransport(Transport):
 
 def run_bot(relogin: bool = False) -> None:
     """扫码登录并启动长轮询 Bot。"""
-    from weixin_ilink import WeixinBot, login
+    from weixin_ilink import WeixinBot
 
     if not _acquire_single_instance_lock():
         print("[wechat_ilink] 已有 Bot 实例在运行（单实例锁被占用），本进程退出。")

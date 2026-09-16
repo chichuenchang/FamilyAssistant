@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent

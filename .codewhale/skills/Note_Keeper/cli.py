@@ -112,7 +112,7 @@ def cmd_note_delete(args):
         _mark_backup_dirty()
         print(f"已删除备忘 #{args.id}")
     else:
-        print(f"[错误] 无此备忘", file=sys.stderr)
+        print("[错误] 无此备忘", file=sys.stderr)
         sys.exit(1)
 
 
@@ -131,7 +131,7 @@ def cmd_note_pin(args):
         else:
             print(f"已取消置顶 #{args.id}")
     else:
-        print(f"[错误] 无此备忘", file=sys.stderr)
+        print("[错误] 无此备忘", file=sys.stderr)
         sys.exit(1)
 
 
