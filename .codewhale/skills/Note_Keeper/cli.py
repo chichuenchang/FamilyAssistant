@@ -22,9 +22,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把本 skill 目录加入 sys.path（同目录 note_db）+ Agent_Runtime（paths）
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import note_db
 import sheet_db
@@ -54,14 +52,7 @@ def _db_for(member: str) -> str:
     return str(_paths.member_store(member, "notes"))
 
 
-def _mark_backup_dirty() -> None:
-    """写入后通知备份引擎（失败静默，绝不影响写入本身）。"""
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
-        from backup_sync import mark_dirty
-        mark_dirty()
-    except Exception:
-        pass
+from backup_hook import mark_dirty as _mark_backup_dirty  # 写入后通知备份（失败静默）
 
 
 def _fmt_note(note: dict) -> str:
@@ -121,7 +112,7 @@ def cmd_note_delete(args):
         _mark_backup_dirty()
         print(f"已删除备忘 #{args.id}")
     else:
-        print(f"[错误] 无此备忘", file=sys.stderr)
+        print("[错误] 无此备忘", file=sys.stderr)
         sys.exit(1)
 
 
@@ -140,7 +131,7 @@ def cmd_note_pin(args):
         else:
             print(f"已取消置顶 #{args.id}")
     else:
-        print(f"[错误] 无此备忘", file=sys.stderr)
+        print("[错误] 无此备忘", file=sys.stderr)
         sys.exit(1)
 
 

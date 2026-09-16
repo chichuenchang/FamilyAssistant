@@ -32,15 +32,14 @@ import logging
 import os
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 paths
 import paths as _paths
+import jsonfile
 
 _log = logging.getLogger("familyassist.knowking")
 
@@ -60,11 +59,7 @@ _STRIP_ENV_EXACT = {"RAPIDAPI_KEY", "JUSTONEAPI_TOKEN"}
 
 
 def _load_config() -> dict:
-    try:
-        cfg = json.loads((_ROOT / "config.json").read_text(encoding="utf-8"))
-        return cfg.get("knowking") or {}
-    except Exception:
-        return {}
+    return jsonfile.load_dict(_ROOT / "config.json").get("knowking") or {}
 
 
 def project_dir() -> Path:

@@ -10,6 +10,16 @@
 .codewhale/skills/Agent_Runtime/
 ├── SKILL.md            ← 本文件
 ├── agent_core.py       ← 频道无关 Agent（共用大脑）
+├── llm_client.py       ← DeepSeek 调用 + /model /effort 每用户覆盖
+├── context_budget.py   ← 历史 token 粗估 + 整轮裁剪（纯函数）
+├── transport_base.py   ← 频道共用生命周期（闸门/投递/后台节拍）；新增频道继承它
+├── skill_registry.py   ← 发现/合并各 skill 的 agent_tools.py（manifest 契约见模块头）
+├── tool_runtime.py     ← manifest 共用：run_cli / schema 助手 / 路径闸门
+├── agent_tools.py      ← 本目录自带工具（knowking / send_file）
+├── bootstrap.py        ← sys.path 单一入口
+├── backup_hook.py      ← 各 CLI 写入后 mark_dirty
+├── jsonfile.py         ← config.json / 状态文件读写（缺失/损坏读作 {}）
+├── google_oauth.py     ← Google provider 共用 --auth 回环授权
 ├── members.py          ← 成员注册表（频道 id → 成员名；存 git 忽略的 data/members.json）
 ├── paths.py            ← 磁盘布局解析（数据落盘位置的单一事实来源）
 ├── migrate_storage.py  ← 旧单库/旧目录 → 按成员分库的一次性迁移
@@ -18,7 +28,7 @@
 └── telegram_bot.py     ← Telegram 传输层
 ```
 
-所有远程频道共用同一个大脑 —— 本目录 `agent_core.py` 里的 `Agent`。无论消息从微信还是 Telegram 进来，Agent 行为、指令、工具完全一致。频道只负责"收消息 → 转交 Agent → 回消息"，不含任何业务逻辑。业务逻辑（记账/查账）在 `.codewhale/skills/Expense_Tracker/cli.py`（Agent 经 subprocess 调用），OCR 在 `.codewhale/skills/OCR/ocr.py`（Agent 经 `sys.path` import）。
+所有远程频道共用同一个大脑 —— 本目录 `agent_core.py` 里的 `Agent`。无论消息从微信还是 Telegram 进来，Agent 行为、指令、工具完全一致。频道只负责"收消息 → 转交 Agent → 回消息"，不含任何业务逻辑。业务逻辑（记账/查账）在 `.codewhale/skills/Expense_Tracker/cli.py`（Agent 经 subprocess 调用），OCR 在 `.codewhale/skills/OCR/ocr.py`（进程内 import；全部 skill 目录经 `bootstrap.py` 一行挂上）。
 
 ```
 微信     ─┐
@@ -76,33 +86,48 @@ python .codewhale/skills/Agent_Runtime/telegram_bot.py --no-debug
 
 ## 新增频道
 
-加一个频道 = 在本目录写一个薄传输层文件，调上面的契约。骨架：
+加一个频道 = 继承 `transport_base.Transport`，实现三个 send_*，把 SDK 消息翻译成 `on_text` / `on_media`。
+闸门、节流刷新、来件落盘、哨兵拆分投递、异常兜底、到期提醒 / 懂王投递 / 备份节拍全在基类，不复制。
 
 ```python
 # .codewhale/skills/Agent_Runtime/mychannel_bot.py
 import sys
 from pathlib import Path
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))   # 同目录 agent_core
-from agent_core import Agent
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # 挂全部 skill 目录
+from transport_base import Transport
+
+class MyTransport(Transport):
+    channel = "mychannel"          # members.json 里的频道键；member-add 需支持该键
+    tag = "my"                     # 控制台前缀
+    def send_text(self, target, text): sdk.send(target, text)
+    def send_photo(self, target, path): sdk.send_image(target, path)
+    def send_document(self, target, path): sdk.send_file(target, path)
 
 def run():
-    agent = Agent()                      # 一次构造，常驻复用
-    for msg in receive_loop():           # ← 频道 SDK 的收消息循环
-        reply = agent.handle(msg.text, user=str(msg.sender_id))
-        send(msg.sender_id, reply)       # ← 频道 SDK 的发消息
+    t = MyTransport()
+    for msg in sdk.receive_loop():                       # 收消息循环
+        member = t.gate(msg.sender_id)                   # 未注册 → None，静默丢弃
+        if member is None:
+            continue
+        if msg.is_image or msg.is_pdf:
+            path = t.inbox_path(member, ".pdf" if msg.is_pdf else ".jpg")
+            msg.save(path); t.mark_dirty()
+            t.on_media(msg.sender_id, msg.sender_id, member, path)
+        else:
+            t.on_text(msg.sender_id, msg.sender_id, member, msg.text, quoted=msg.quoted_text)
+        t.background_tick()                              # 轮询型 SDK：每轮一次（跑各 manifest 的 SLOW_TICKS + FAST_TICKS）
+    # 阻塞型 SDK（无轮询钩子）：改用 t.start_background_threads() 再 sdk.run()
 
 if __name__ == "__main__":
     run()
 ```
 
 要点：
-- 每条消息先过成员闸门：`members.resolve(频道, 频道id)` 返回 None → 静默丢弃（不回复、不进 LLM）。
-- 用频道内唯一 id 作 `user`（隔离对话历史），解析出的成员名作 `member` 传给 `agent.handle(text, user, member)` / `agent.handle_image(path, user, member)`（图片或 PDF）。
-- 图片或 PDF 文件消息：先存到发送成员的 inbox `data/<成员>/inbox/YYYY-MM/`（用 `agent_core.member_inbox_dir(member)`），再调 `agent.handle_image(path, user, member)`——**PDF 与图片同一入口**，`ocr_image` 对两者一视同仁（PDF 走腾讯 IsPdf 逐页）。OCR 后 LLM 分类，agent 搬到对应位置（备忘→成员 notes，票据→Family/receipts，文档→Family/documents）。非 PDF 文件仍回复"暂不支持"。
-- 长回复需分段的频道（如 Telegram 4096 字限制）自行在传输层切分（见 `telegram_bot.py:send_message`）。
-- 引用/回复消息：传输层把被引用内容以 `[引用: <原文>]\n` 前置进正文再交 Agent（见 `wechat_ilink.py:_with_quote`）。Telegram 的 `reply_to_message` 自带原文，直接取；微信 iLink 的 `ref_msg` 只带被引消息的 `msg_id`/时间戳（无内容，实测 2026-07-10），需本地缓存反查：入站消息按 `message_id` 精确命中，bot 自己的回复按发送时间 ±15s 匹配（服务端不回传出站 id），都查不到退化为时间占位。
-- 不在传输层写任何记账/查账逻辑 —— 全部交给 Agent。
+- `on_text(target, user, member, text, quoted)`：target = 本频道 send_* 认得的投递目标，user = 频道内唯一 id（隔离对话历史）。引用内容传 `quoted`，基类前置 `[引用: …]`。
+- 图片与 PDF 同一入口 `on_media`；path 为 None 时基类回"请重发"。非 PDF 文件自行回"暂不支持"。
+- 长回复分段（如 Telegram 4096 字限制）在 send_text 里做（见 `telegram_bot.py:send_message`）。
+- 微信 iLink 的 `ref_msg` 无内容（实测 2026-07-10），需本地缓存反查——见 `wechat_ilink.py:_quoted_text`；Telegram `reply_to_message` 自带原文。
+- 不在传输层写任何业务逻辑 —— 全部交给 Agent。
 
 ## 懂王（KnowKing）跨平台舆情桥
 
@@ -115,8 +140,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 - **后台 + 推送模型**（`kk ask` 耗时数分钟，同步会卡死会话）：`knowking` 工具调
   `knowking_jobs.submit()` → 落盘 `running` 任务 + 起守护线程跑 `uv run kk ask` → 立即返回
   "已开始"给用户；出报告后由传输层轮询 `poll_and_deliver(send_fn, channel)` 把报告推回**发起人**
-  （与 `reminder.check_and_push` / `backup_tick` 同构：Telegram 挂在长轮询尾部 ~30s；微信用
-  独立 `knowking-deliver` 守护线程 ~20s）。
+  （manifest `FAST_TICKS`；Telegram 挂在长轮询尾部 ~30s，微信走 `fast-tick` 守护线程 ~20s）。
 - **频道上下文注入**：`Agent(channel=...)`（各传输层构造时传 `"wechat"`/`"telegram"`）+ handle 里
   `_apply_context` 把 `__channel`/`__user`/`member` 注入 `knowking` 工具参数（代码确定性，LLM 不得伪造投递目标）。本地测试无 channel → 工具返回"仅正式频道可用"。
 - **任务落盘** `data/.knowking_jobs/<id>.json`（运行时瞬态，已列入 `backup_sync._HARD_EXCLUDE_DIRS`

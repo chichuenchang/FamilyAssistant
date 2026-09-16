@@ -48,6 +48,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
+import google_oauth
 
 # Windows 控制台编码容错（--auth 流程要打印中文提示，cp1252 控制台会炸）
 if sys.platform == "win32":
@@ -60,7 +64,6 @@ if sys.platform == "win32":
 
 SCOPES = ("https://www.googleapis.com/auth/calendar.events "
           "https://www.googleapis.com/auth/tasks")
-AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 CAL_API = "https://www.googleapis.com/calendar/v3"
 TASKS_API = "https://tasks.googleapis.com/tasks/v1"
@@ -262,89 +265,12 @@ def delete_task(uid: str) -> None:
     _api("DELETE", _tasks_url(uid), ok_missing=True)
 
 
-# ── 一次性授权：python calendar_provider.py --auth ──────────────
-# 本地回环 OAuth：起临时 http 服务接 code，浏览器里用户批准，换 refresh token。
-
-def _run_auth() -> None:
-    import http.server
-    import threading
-    import webbrowser
-
-    client_id = os.environ.get("GCAL_CLIENT_ID", "")
-    client_secret = os.environ.get("GCAL_CLIENT_SECRET", "")
-    if not client_id or not client_secret:
-        print("先设置 GCAL_CLIENT_ID / GCAL_CLIENT_SECRET 环境变量"
-              "（Google Cloud Console → OAuth 客户端，Desktop app 类型；"
-              "可复用 Remote_Backup 的同一客户端），然后开新终端重跑。")
-        raise SystemExit(1)
-
-    code_holder: dict = {}
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            code_holder["code"] = (qs.get("code") or [""])[0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.end_headers()
-            self.wfile.write("<h2>授权完成，可以关掉这个页面回到终端。</h2>".encode())
-
-        def log_message(self, *args):
-            pass
-
-    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-    port = server.server_address[1]
-    redirect = f"http://127.0.0.1:{port}"
-    threading.Thread(target=server.handle_request, daemon=True).start()
-
-    url = AUTH_URL + "?" + urllib.parse.urlencode({
-        "client_id": client_id,
-        "redirect_uri": redirect,
-        "response_type": "code",
-        "scope": SCOPES,
-        "access_type": "offline",
-        "prompt": "consent",
-    })
-    print("浏览器即将打开 Google 授权页（只授予 日历活动 + 待办 的读写权限）…")
-    print(f"没自动打开就手动访问：\n{url}\n")
-    webbrowser.open(url)
-
-    print("等待授权回调…")
-    deadline = time.time() + 300
-    while "code" not in code_holder and time.time() < deadline:
-        time.sleep(0.5)
-    server.server_close()
-    code = code_holder.get("code")
-    if not code:
-        print("5 分钟内未收到授权回调，重跑 --auth 再试。")
-        raise SystemExit(1)
-
-    data = urllib.parse.urlencode({
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "code": code,
-        "grant_type": "authorization_code",
-        "redirect_uri": redirect,
-    }).encode()
-    status, body = _http("POST", TOKEN_URL, data,
-                         {"Content-Type": "application/x-www-form-urlencoded"})
-    if status != 200:
-        print(f"换取 token 失败 {status}: {body[:300]!r}")
-        raise SystemExit(1)
-    refresh = json.loads(body).get("refresh_token", "")
-    if not refresh:
-        print("响应里没有 refresh_token（多半是之前授权过且未带 prompt=consent）。"
-              "去 https://myaccount.google.com/permissions 移除本应用授权后重跑。")
-        raise SystemExit(1)
-
-    print("\n授权成功。在你自己的终端执行（之后开新终端生效）：\n")
-    print(f'  setx GCAL_REFRESH_TOKEN "{refresh}"')
-    print("\n然后 config.json 设 calendar.enabled: true，重启机器人即可。")
-
-
 if __name__ == "__main__":
     if "--auth" in sys.argv:
-        _run_auth()
+        google_oauth.run_loopback_auth(
+            "GCAL", SCOPES, consent="只授予 日历活动 + 待办 的读写权限",
+            client_hint="；可复用 Remote_Backup 的同一客户端",
+            next_step="然后 config.json 设 calendar.enabled: true，重启机器人即可。")
     else:
         print(__doc__)
         print(f"configured: {is_configured()}")

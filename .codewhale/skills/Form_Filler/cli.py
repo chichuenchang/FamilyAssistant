@@ -28,9 +28,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "OCR"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import form_fill
 import form_overlay
@@ -86,14 +84,7 @@ def _load_session(args, strict: bool = False, note_to_stderr: bool = False) -> d
         return s
 
 
-def _mark_backup_dirty() -> None:
-    """写入后通知备份引擎（失败静默，绝不影响写入本身）。"""
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
-        from backup_sync import mark_dirty
-        mark_dirty()
-    except Exception:
-        pass
+from backup_hook import mark_dirty as _mark_backup_dirty  # 写入后通知备份（失败静默）
 
 
 def _fmt_field_line(i: int, f: dict) -> str:

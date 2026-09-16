@@ -66,7 +66,7 @@ class TestToolBehaviour:
             return "job-1", "🔎 已开始"
 
         monkeypatch.setattr(kj, "submit", fake_submit)
-        out = ac._tool_knowking({"topic": "大家怎么看 X", "__channel": "telegram",
+        out = ac.REGISTRY.modules["Agent_Runtime"].tool_knowking({"topic": "大家怎么看 X", "__channel": "telegram",
                                  "__user": "555", "member": "Jim Zheng"})
         assert out == "🔎 已开始"
         assert seen == {"topic": "大家怎么看 X", "channel": "telegram",
@@ -77,25 +77,20 @@ class TestToolBehaviour:
         called = {"n": 0}
         monkeypatch.setattr(kj, "submit",
                             lambda *a, **k: called.__setitem__("n", called["n"] + 1) or ("x", "y"))
-        out = ac._tool_knowking({"topic": "X", "member": "Jim"})
+        out = ac.REGISTRY.modules["Agent_Runtime"].tool_knowking({"topic": "X", "member": "Jim"})
         assert out.startswith("[错误]")
         assert called["n"] == 0
 
     def test_tool_empty_topic_errors(self):
-        out = ac._tool_knowking({"topic": "  ", "__channel": "telegram", "__user": "5"})
+        out = ac.REGISTRY.modules["Agent_Runtime"].tool_knowking({"topic": "  ", "__channel": "telegram", "__user": "5"})
         assert out.startswith("[错误]")
 
 
 class TestTransportWiring:
-    """两个传输层都挂上了投递钩子（真正的 poll_and_deliver），且用各自频道名。"""
+    """投递钩子经 manifest FAST_TICKS 挂到传输层快拍，且用各自频道名。"""
 
-    def test_telegram_wires_delivery_hook(self):
-        import telegram_bot
-        assert telegram_bot._knowking_deliver is kj.poll_and_deliver
-
-    def test_wechat_wires_delivery_hook(self):
-        import wechat_ilink
-        assert wechat_ilink._knowking_deliver is kj.poll_and_deliver
+    def test_manifest_registers_delivery_hook(self):
+        assert kj.poll_and_deliver in ac.REGISTRY.fast_ticks
 
     def test_delivery_hook_routes_seeded_job(self, tmp_path, monkeypatch):
         # 端到端投递：种一个 done 任务 → 传输层引用的钩子把它发出去。
@@ -109,5 +104,5 @@ class TestTransportWiring:
             "created_at": kj._now()}), encoding="utf-8")
         monkeypatch.setattr(kj, "jobs_dir", lambda jd=None: jdir)
         sent = []
-        telegram_bot._knowking_deliver(lambda u, t: sent.append((u, t)), "telegram")
+        kj.poll_and_deliver(lambda u, t: sent.append((u, t)), "telegram")
         assert sent and sent[0][0] == "42" and "R" in sent[0][1]

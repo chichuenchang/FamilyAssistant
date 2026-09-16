@@ -9,8 +9,10 @@ SQLite 数据库表结构，用于本地个人/家庭记账。
 无需动代码（改后重启进程生效）。config.json 缺失/损坏时用下方应急回退值。
 """
 
-import json
 from pathlib import Path
+
+import jsonfile
+import paths as _paths
 
 # 交易类型（结构性，固定，不放 config.json）
 TRANSACTION_TYPES = ("expense", "income", "investment", "savings")
@@ -22,16 +24,7 @@ TAX_COUNTRIES = ("US", "CA")
 
 _CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
 
-
-def _load_config() -> dict:
-    """读取项目根 config.json；缺失或损坏时返回空 dict（回退到下方应急默认）。"""
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-_cfg = _load_config()
+_cfg = jsonfile.load_dict(_CONFIG_PATH)
 
 # 应急回退（仅 config.json 缺失/损坏时使用；正常运行值来自 config.json）
 _FALLBACK_CATEGORIES = {t: ["其他"] for t in TRANSACTION_TYPES}
@@ -43,11 +36,6 @@ SUPPORTED_CURRENCIES = tuple(_cfg.get("supported_currencies") or _FALLBACK_CURRE
 BASE_CURRENCY = _cfg.get("base_currency") or _FALLBACK_BASE
 
 # 数据落盘位置经 Agent_Runtime/paths（单一事实来源）：家庭账本 + 家庭票据目录。
-_ROOT = _CONFIG_PATH.parent
-import sys as _sys
-_sys.path.insert(0, str(_ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
-import paths as _paths
-
 DB_PATH = _paths.family_ledger()                 # data/Family/ledger.db
 RECEIPTS_DIR = _paths.family_dir() / "receipts"  # data/Family/receipts
 

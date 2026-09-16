@@ -9,18 +9,16 @@ Document Keeper — 每日到期提醒
 
 from __future__ import annotations
 
-import json
 import sys
 from datetime import date
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path.insert(0, str(HERE))                                   # 同目录 doc_db
-sys.path.insert(0, str(HERE.parent / "Agent_Runtime"))          # 成员注册表
 
 import doc_db
 import paths as _paths
+import jsonfile
 from members import load_members
 
 # 跟随 data_root；备份硬排除该文件名
@@ -45,15 +43,11 @@ def due_message(db_path: str | None = None) -> str | None:
 
 
 def _load_state() -> dict:
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(STATE_FILE)
 
 
 def _save_state(state: dict) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    jsonfile.save(STATE_FILE, state)
 
 
 def check_and_push(send_fn, channel: str, db_path: str | None = None) -> bool:

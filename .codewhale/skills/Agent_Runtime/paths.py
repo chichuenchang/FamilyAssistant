@@ -24,24 +24,19 @@ config.json：data_root（默认 data）、family_dir_name（默认 Family）。
 
 from __future__ import annotations
 
-import json
 import os
-import sys
 from datetime import date
 from pathlib import Path
 
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 members
 
+import jsonfile
 import members as _members
 
 
 def _config() -> dict:
-    try:
-        return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(ROOT / "config.json")
 
 
 def data_root() -> Path:

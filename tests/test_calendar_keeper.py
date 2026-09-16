@@ -1146,7 +1146,7 @@ class TestSourceImageRelocate:
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
         img = paths.member_inbox_dir("MemberA") / "invite.jpg"
         img.write_bytes(b"x")
-        out = agent_core._tool_add_event(
+        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_event(
             {"member": "MemberA", "title": "Party", "date": D1, "source-image": str(img)})
         assert "已添加" in out
         assert not img.exists()                       # 搬出 inbox
@@ -1198,7 +1198,7 @@ class TestForMemberRouting:
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
         img = _p.member_inbox_dir("Alex Lee") / "a.jpg"; img.write_bytes(b"x")
-        out = agent_core._tool_add_event(
+        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_event(
             {"member": "Alex Lee", "title": "关于Robin的活动", "date": D1,
              "source-image": str(img)})
         assert "已添加" in out
@@ -1213,7 +1213,7 @@ class TestForMemberRouting:
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
         img = _p.member_inbox_dir("Alex Lee") / "b.jpg"; img.write_bytes(b"x")
-        out = agent_core._tool_add_event(
+        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_event(
             {"member": "Alex Lee", "for-member": "Robin", "title": "Robin recital",
              "date": D1, "source-image": str(img)})
         assert "已添加" in out
@@ -1227,7 +1227,7 @@ class TestForMemberRouting:
         import agent_core
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        out = agent_core._tool_add_task(
+        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_task(
             {"member": "Alex Lee", "for-member": "Robin", "title": "Robin homework"})
         assert "已添加" in out
         assert len(self._rows("Robin", "tasks")) == 1
@@ -1237,7 +1237,7 @@ class TestForMemberRouting:
         import agent_core
         monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
         monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        out = agent_core._tool_add_event(
+        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_event(
             {"member": "Alex Lee", "for-member": "Stranger", "title": "X", "date": D1})
         assert "已添加" in out
         alex = self._rows("Alex Lee", "schedule")
@@ -1547,11 +1547,11 @@ class TestAgentWiring:
 
     def test_schedule_context_formats_and_empty(self, cal_db_path):
         import agent_core
-        assert agent_core._schedule_context(db_path=cal_db_path) == ""
+        assert agent_core.REGISTRY.modules["Calendar_Keeper"].schedule_context(db_path=cal_db_path) == ""
         _add_event(cal_db_path, title="游泳课",
                    start=f"{D1}T14:00", end=f"{D1}T15:00", location="泳馆")
         _add_task(cal_db_path, title="买蛋糕", due=D3)
-        block = agent_core._schedule_context(db_path=cal_db_path)
+        block = agent_core.REGISTRY.modules["Calendar_Keeper"].schedule_context(db_path=cal_db_path)
         assert "游泳课" in block and "@泳馆" in block
         assert "☐ 买蛋糕" in block
         assert "不要主动播报" in block      # 防刷屏规则随块注入

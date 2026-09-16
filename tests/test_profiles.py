@@ -139,9 +139,9 @@ class TestAgentWiring:
         db = str(tmp_path / "documents.db")
         doc_db.init_db(db)
         doc_db.set_profile("Jim Zheng", "生日", "1987-06-11", db_path=db)
-        block = agent_core._profiles_context(db_path=db)
+        block = agent_core.REGISTRY.modules["Document_Keeper"].profiles_context(db_path=db)
         assert "家庭成员资料" in block and "1987-06-11" in block
-        assert agent_core._profiles_context(db_path=str(tmp_path / "empty.db")) == ""
+        assert agent_core.REGISTRY.modules["Document_Keeper"].profiles_context(db_path=str(tmp_path / "empty.db")) == ""
 
     def test_system_prompt_mentions_profiles(self):
         import agent_core

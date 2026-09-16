@@ -33,27 +33,15 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import logging
 
-from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
-from members import resolve
-from knowking_jobs import poll_and_deliver as _knowking_deliver
+from agent_core import receipt_month_dir, member_inbox_dir, setup_logging
+from transport_base import Transport, with_quote as _with_quote
 import paths as _paths
 
 log = logging.getLogger("familyassist.telegram")
-
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
-from reminder import check_and_push as _doc_reminder_check
-
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
-from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
-
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
-from calendar_sync import calendar_tick as _calendar_tick
-from image_gc import image_gc_tick as _image_gc_tick
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
@@ -103,7 +91,7 @@ def download_photo(file_id: str, member: str = "") -> Path | None:
     dest = staging / f"{ts}_telegram.jpg"
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
-        _backup_mark_dirty()
+        Transport.mark_dirty()
         return dest
     except Exception as e:
         print(f"[tg] 图片下载失败: {e}", file=sys.stderr)
@@ -127,7 +115,7 @@ def download_document(file_id: str, file_name: str, member: str = "") -> Path | 
     dest = staging / f"{ts}_telegram{suffix}"
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
-        _backup_mark_dirty()
+        Transport.mark_dirty()
         return dest
     except Exception as e:
         print(f"[tg] 文档下载失败: {e}", file=sys.stderr)
@@ -232,35 +220,30 @@ def _tg_quoted_text(msg: dict):
     return None
 
 
-def _with_quote(text: str, quoted) -> str:
-    """把被引用内容前置注入正文（与 wechat_ilink._with_quote 同约定）。"""
-    if quoted:
-        return f"[引用: {quoted}]\n{text}"
-    return text
+class TelegramTransport(Transport):
+    """Telegram：target = chat_id。send_* 经模块级函数转发（测试 monkeypatch 这些名字）。"""
+    channel = "telegram"
+    tag = "tg"
+
+    def send_text(self, target, text: str) -> None:
+        send_message(target, text)
+
+    def send_photo(self, target, path: str) -> None:
+        send_photo(target, path)
+
+    def send_document(self, target, path: str) -> None:
+        send_document(target, path)
+
+
+_TRANSPORT = TelegramTransport()
 
 
 def _send_reply(chat_id, reply: str) -> None:
-    """拆出图片/文档哨兵：先发图，再发文档，最后发文字。失败仅记录，不影响文字。"""
-    from agent_core import split_reply
-    text, imgs, docs = split_reply(reply or "")
-    root = _paths.data_root().resolve()
-    for rel in imgs:
-        try:
-            ap = _paths.resolve_rel(rel).resolve()
-            if ap.exists() and ap.is_relative_to(root):
-                send_photo(chat_id, str(ap))
-        except Exception as e:
-            print(f"[tg] 发图失败 {rel}: {e}", file=sys.stderr)
-    for rel in docs:
-        try:
-            ap = _paths.resolve_rel(rel).resolve()
-            if ap.exists() and ap.is_relative_to(root):
-                send_document(chat_id, str(ap))
-        except Exception as e:
-            print(f"[tg] 发文件失败 {rel}: {e}", file=sys.stderr)
-    if text:
-        send_message(chat_id, text)
+    """拆出图片/文档哨兵：先发图，再发文档，最后发文字（transport_base.deliver）。"""
+    _TRANSPORT.deliver(chat_id, reply)
 
+
+# ── 主循环 ──────────────────────────────────────────────────
 
 def run() -> None:
     """长轮询主循环。"""
@@ -277,9 +260,9 @@ def run() -> None:
         return
     print(f"[tg] 已连接 — @{me['result']['username']}")
 
-    agent = Agent(channel="telegram")
+    t = _TRANSPORT
     offset = _load_offset()
-    print(f"[tg] 等待消息... (Ctrl+C 停止)")
+    print("[tg] 等待消息... (Ctrl+C 停止)")
 
     while True:
         try:
@@ -299,55 +282,39 @@ def run() -> None:
             continue
 
         for update in resp.get("result", []):
-            update_id = update["update_id"]
+            # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
+            offset = max(offset, update["update_id"])
             msg = update.get("message", {})
             if not msg:
-                offset = max(offset, update_id)
                 continue
 
             chat_id = msg["chat"]["id"]
-            # 成员闸门：未注册 id 静默丢弃（不回复、不进 LLM），本地留一行日志
-            member = resolve("telegram", str(chat_id))
+            member = t.gate(chat_id)
             if member is None:
-                print(f"[tg] 忽略未注册来源 chat_id={chat_id}")
-                offset = max(offset, update_id)
                 continue
-            # 已注册成员的消息 → 静默节流刷新远程日历 + 清理陈旧来图（内部把关，永不抛）
-            _calendar_tick()
-            _image_gc_tick()
             user_name = msg.get("from", {}).get("first_name", "unknown")
             text = msg.get("text", "")
 
-            # 处理 /start 命令
             if msg.get("entities") and msg["entities"][0].get("type") == "bot_command":
-                cmd = text.strip().split()[0]
-                if cmd == "/start":
+                if text.strip().split()[0] == "/start":
                     send_message(chat_id,
                         "👋 你好！我是 Family Assistant。\n"
                         "可以直接跟我说话，比如：\n"
                         "  • \"花了45块 午餐\" — 记账\n"
                         "  • \"这个月花了多少\" — 查账\n"
                         "  • \"美元汇率\" — 查汇率")
-                offset = max(offset, update_id)
                 continue
 
-            # 图片消息 → 下载到票据收件箱 → OCR 记账流程（与微信一致）
+            # 图片 → 下载到发送成员 inbox → OCR 分流
             photos = msg.get("photo") or []
             if photos:
                 print(f"[tg] 图片消息 from {user_name}")
                 file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
-                dest = download_photo(file_id, member) if file_id else None
-                log.debug("图片 from %s(%s) → %s", user_name, member, dest)
-                if dest:
-                    reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
-                else:
-                    reply = "图片下载失败，请重发。"
-                log.debug("图片回复 → %s", reply[:200])
-                _send_reply(chat_id, reply)
-                offset = max(offset, update_id)
+                t.on_media(chat_id, chat_id, member,
+                           download_photo(file_id, member) if file_id else None)
                 continue
 
-            # 文档消息（PDF）→ 下载到 inbox → OCR 归档流程
+            # 文档（PDF）→ 下载到 inbox → OCR 分流
             doc = msg.get("document")
             if doc:
                 name = doc.get("file_name", "") or ""
@@ -355,51 +322,19 @@ def run() -> None:
                     doc.get("mime_type") == "application/pdf"
                 if is_pdf:
                     file_id = doc.get("file_id", "")
-                    dest = download_document(file_id, name, member) if file_id else None
-                    log.debug("文件 from %s(%s) → %s", user_name, member, dest)
-                    if dest:
-                        reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
-                    else:
-                        reply = "文件下载失败，请重发。"
+                    t.on_media(chat_id, chat_id, member,
+                               download_document(file_id, name, member) if file_id else None)
                 else:
-                    reply = f"收到文件 {name}（暂不支持，PDF 可以）"
-                _send_reply(chat_id, reply)
-                offset = max(offset, update_id)
+                    send_message(chat_id, f"收到文件 {name}（暂不支持，PDF 可以）")
                 continue
 
             if not text:
                 continue
-
-            quoted = _tg_quoted_text(msg)
             print(f"[tg] {user_name}: {text[:60]}")
-            log.debug("文字 from %s(%s) 引用=%s: %s", user_name, member, quoted or "-", text)
-
-            # 处理消息
-            reply = agent.handle(_with_quote(text, quoted), user=str(chat_id), member=member)
-            log.debug("文字回复 → %s", (reply or "")[:200])
-            if reply:
-                _send_reply(chat_id, reply)
-
-            offset = max(offset, update_id)
+            t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
 
         _save_offset(offset)
-
-        # 文档到期提醒：每天最多推一次（reminder 内部按日去重）
-        try:
-            _doc_reminder_check(send_message, "telegram")
-        except Exception as e:
-            print(f"[tg] 文档提醒检查异常: {e}", file=sys.stderr)
-            log.exception("文档提醒检查异常")
-
-        # KnowKing 后台报告投递：把已出结果的懂王查询推回发起人（每轮 ~30s 检查）
-        try:
-            _knowking_deliver(send_message, "telegram")
-        except Exception as e:
-            print(f"[tg] KnowKing 投递异常: {e}", file=sys.stderr)
-            log.exception("KnowKing 投递异常")
-
-        # 用户数据备份：脏 + 静默期满则镜像一轮（backup_sync 内部把关，永不抛）
-        _backup_tick()
+        t.background_tick()   # 到期提醒 + 懂王投递 + 备份节拍（每轮 ≤30s）
 
 
 def main():

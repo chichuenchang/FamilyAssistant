@@ -23,11 +23,8 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把本 skill 目录加入 sys.path（同目录 doc_db / doc_models）
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
-# 成员注册表（Agent_Runtime skill；跨 skill 经 sys.path，与 Expense_Tracker 同模式）
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 import members as members_registry
 import paths as _paths
 
@@ -44,24 +41,7 @@ _BACKUP_WRITE_COMMANDS = {"doc-add", "doc-update", "doc-ack", "doc-remove",
                           "profile-set", "profile-unset"}
 
 
-def _mark_backup_dirty() -> None:
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
-        from backup_sync import mark_dirty
-        mark_dirty()
-    except Exception:
-        pass
-
-
-def _validate_member(name: str) -> str:
-    """非空成员名必须已登记；返回原值或抛 ValueError。空值放行（家庭级）。"""
-    if not name:
-        return ""
-    known = members_registry.member_names()
-    if name not in known:
-        raise ValueError(
-            f"未知成员 '{name}'。已登记: {', '.join(known) or '（无）'}。用 member-add 添加。")
-    return name
+from backup_hook import mark_dirty as _mark_backup_dirty  # 写入后通知备份（失败静默）
 
 
 def _store_file(src: str, doc_type: str, title: str, member: str = "") -> str:
@@ -101,7 +81,7 @@ def _fmt_due(d: dict) -> str:
 
 
 def cmd_doc_add(args):
-    member = _validate_member(args.member or "")
+    member = members_registry.require_registered(args.member or "")
     file_rel = ""
     if args.file:
         file_rel = _store_file(args.file, args.type, args.title, member)
@@ -197,7 +177,7 @@ def cmd_doc_update(args):
         if v is not None:
             fields[col] = v
     if args.member is not None:
-        fields["member"] = _validate_member(args.member)
+        fields["member"] = members_registry.require_registered(args.member)
     ok = doc_db.update_document(args.id, db_path=_DB_OVERRIDE, **fields)
     print(f"{'已更新' if ok else '未找到'} 文档 #{args.id}")
 

@@ -21,13 +21,12 @@ python .codewhale/skills/OCR/ocr.py path/to/receipt.jpg --extract
 
 ## Python 调用（进程内复用，如 Agent）
 
-把本 skill 目录加入 `sys.path`，再 `from ocr import ...`：
+经 `Agent_Runtime/bootstrap` 挂路径，再 `from ocr import ...`：
 
 ```python
 import sys
 from pathlib import Path
-ROOT = Path(__file__).resolve().parents[3]   # 调用方在某 skill 目录下时
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "OCR"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # 挂全部 skill 目录
 
 from ocr import ocr_image, ocr_extract, is_available
 

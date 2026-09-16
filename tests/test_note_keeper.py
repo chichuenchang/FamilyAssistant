@@ -333,7 +333,7 @@ class TestAgentRegistration:
         schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
         assert names <= schema_names
         assert names <= set(agent_core._TOOL_MAP)
-        assert names == agent_core._NOTE_TOOLS
+        assert names == agent_core.REGISTRY.modules["Note_Keeper"].NOTE_TOOLS
 
     def test_note_commands_allowed_and_routed(self):
         import agent_core
@@ -368,7 +368,7 @@ class TestRelocateNoteImage:
         import paths
         img = paths.member_inbox_dir("Alex Lee") / "a.jpg"
         img.write_bytes(b"x")
-        out = ac._relocate_note_image(str(img), "Alex Lee")
+        out = ac.REGISTRY.modules["Note_Keeper"].relocate_note_image(str(img), "Alex Lee")
         assert not img.exists()
         assert out.startswith("Alex/notes/") and out.endswith("a.jpg")
         assert paths.resolve_rel(out).read_bytes() == b"x"
@@ -376,20 +376,20 @@ class TestRelocateNoteImage:
     def test_leaves_outside_paths_alone(self, monkeypatch, tmp_path):
         ac = self._setup(monkeypatch, tmp_path)
         other = tmp_path / "elsewhere.jpg"; other.write_bytes(b"x")   # 不在 data_root 下
-        assert ac._relocate_note_image(str(other), "Alex Lee") == str(other)
+        assert ac.REGISTRY.modules["Note_Keeper"].relocate_note_image(str(other), "Alex Lee") == str(other)
         assert other.exists()
 
     def test_missing_file_returns_original(self, monkeypatch, tmp_path):
         ac = self._setup(monkeypatch, tmp_path)
         import paths
         ghost = str(paths.member_inbox_dir("Alex Lee") / "nope.jpg")
-        assert ac._relocate_note_image(ghost, "Alex Lee") == ghost
+        assert ac.REGISTRY.modules["Note_Keeper"].relocate_note_image(ghost, "Alex Lee") == ghost
 
     def test_no_member_returns_original(self, monkeypatch, tmp_path):
         ac = self._setup(monkeypatch, tmp_path)
         import paths
         img = paths.member_inbox_dir("Alex Lee") / "a.jpg"; img.write_bytes(b"x")
-        assert ac._relocate_note_image(str(img), "") == str(img)
+        assert ac.REGISTRY.modules["Note_Keeper"].relocate_note_image(str(img), "") == str(img)
         assert img.exists()
 
     def test_name_collision_gets_suffix(self, monkeypatch, tmp_path):
@@ -398,6 +398,6 @@ class TestRelocateNoteImage:
         taken = paths.member_notes_image_dir("Alex Lee")
         (taken / "a.jpg").write_bytes(b"old")
         img = paths.member_inbox_dir("Alex Lee") / "a.jpg"; img.write_bytes(b"new")
-        out = ac._relocate_note_image(str(img), "Alex Lee")
+        out = ac.REGISTRY.modules["Note_Keeper"].relocate_note_image(str(img), "Alex Lee")
         assert _Path(out).name == "a_1.jpg"
         assert paths.resolve_rel(out).read_bytes() == b"new"

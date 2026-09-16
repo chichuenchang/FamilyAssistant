@@ -7,12 +7,10 @@ data/<成员>/charts/，渲染前按 retention 天数清理旧图，不入备份
 """
 
 import re
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 import paths as _paths
 
 _TYPES = ("line", "bar", "pie")

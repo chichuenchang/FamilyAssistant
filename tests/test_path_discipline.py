@@ -42,7 +42,7 @@ class TestContextInjectionUsesMemberStore:
         store = self._setup(monkeypatch, tmp_path)
         note_db.add_note("Alex Lee", "wifi 密码 abcd", pinned=True,
                          db_path=str(store))
-        out = agent_core._notes_context("Alex Lee")
+        out = agent_core.REGISTRY.modules["Note_Keeper"].notes_context("Alex Lee")
         assert "wifi 密码 abcd" in out
 
     def test_worksheets_context_reads_member_store(self, monkeypatch, tmp_path):
@@ -51,7 +51,7 @@ class TestContextInjectionUsesMemberStore:
         sheet_db.set_field("Alex Lee", "护照信息", "号码", "E12345678",
                            db_path=str(store))
         sheet_db.set_pinned("Alex Lee", "护照信息", True, db_path=str(store))
-        out = agent_core._worksheets_context("Alex Lee")
+        out = agent_core.REGISTRY.modules["Note_Keeper"].worksheets_context("Alex Lee")
         assert "E12345678" in out
 
 

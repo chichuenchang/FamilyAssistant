@@ -7,12 +7,9 @@ Family Assistant — Expense Tracker 数据库操作层
 import json
 import os
 import sqlite3
-import sys
-from datetime import date, datetime, timedelta
-from pathlib import Path
+from datetime import date
 from typing import Any, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 models
 # 分类/币种/基准的值全部来自 config.json，由 models 统一读取（单一事实来源）。
 from models import (
     SCHEMA, TRANSACTION_TYPES, TAX_COUNTRIES, BASE_CURRENCY, SUPPORTED_CURRENCIES,

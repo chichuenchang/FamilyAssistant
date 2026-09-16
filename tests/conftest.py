@@ -1,68 +1,10 @@
-# tests/conftest.py — pytest fixtures + skill sys.path for the whole suite
-# (expense/doc/note/cal/backup/ocr/webreach/anysearch/agent), not just Expense_Tracker.
+# tests/conftest.py — pytest fixtures; skill sys.path via bootstrap.
 import sys
 from pathlib import Path
 
-# Make the skill directory importable from any cwd, ahead of all other imports.
-SKILL_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Expense_Tracker"
-)
-sys.path.insert(0, str(SKILL_DIR))
-
-AGENT_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Agent_Runtime"
-)
-sys.path.insert(0, str(AGENT_DIR))
-
-DOC_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Document_Keeper"
-)
-sys.path.insert(0, str(DOC_DIR))
-
-BACKUP_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Remote_Backup"
-)
-sys.path.insert(0, str(BACKUP_DIR))
-
-NOTE_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Note_Keeper"
-)
-sys.path.insert(0, str(NOTE_DIR))
-
-CAL_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Calendar_Keeper"
-)
-sys.path.insert(0, str(CAL_DIR))
-
-OCR_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "OCR"
-)
-sys.path.insert(0, str(OCR_DIR))
-
-WEBREACH_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Web_Reach"
-)
-sys.path.insert(0, str(WEBREACH_DIR))
-
-ANYSEARCH_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Any_Search"
-)
-sys.path.insert(0, str(ANYSEARCH_DIR))
-
-FORM_DIR = (
-    Path(__file__).resolve().parent.parent
-    / ".codewhale" / "skills" / "Form_Filler"
-)
-sys.path.insert(0, str(FORM_DIR))
+# 全部 skill 目录经 Agent_Runtime/bootstrap 一次挂上。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".codewhale" / "skills" / "Agent_Runtime"))
+import bootstrap  # noqa: E402,F401
 
 import pytest
 import db as dbm  # the fixture below is named ``db`` — alias avoids shadowing
