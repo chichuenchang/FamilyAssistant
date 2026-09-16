@@ -10,6 +10,11 @@
 .codewhale/skills/Agent_Runtime/
 ├── SKILL.md            ← 本文件
 ├── agent_core.py       ← 频道无关 Agent（共用大脑）
+├── skill_registry.py   ← 发现/合并各 skill 的 agent_tools.py（manifest 契约见模块头）
+├── tool_runtime.py     ← manifest 共用：run_cli / schema 助手 / 路径闸门
+├── agent_tools.py      ← 本目录自带工具（knowking / send_file）
+├── bootstrap.py        ← sys.path 单一入口
+├── backup_hook.py      ← 各 CLI 写入后 mark_dirty
 ├── members.py          ← 成员注册表（频道 id → 成员名；存 git 忽略的 data/members.json）
 ├── paths.py            ← 磁盘布局解析（数据落盘位置的单一事实来源）
 ├── migrate_storage.py  ← 旧单库/旧目录 → 按成员分库的一次性迁移

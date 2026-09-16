@@ -20,10 +20,11 @@
 
 ## 运行时提示词
 
-运行时 Agent（`Agent_Runtime/agent_core.py`）在启动时把所有技能领域的行为准则
-一次性组装进 system prompt（`_build_system_prompt()`），分类/币种/文档类型等
-合法值从 `config.json` 提取为紧凑列表。SKILL.md 与本文档是开发文档，
-不进 prompt，对运行时对话无影响。工具定义走 API 的 tools 参数（function calling）。
+每个 skill 目录的 `agent_tools.py`（manifest）声明自己的工具、schema、成员锁、
+prompt 段落与上下文注入；`Agent_Runtime/skill_registry.py` 启动时发现并合并，
+`agent_core` 只拼身份 + 通用准则。契约见 `skill_registry.py` 模块头。
+新增 skill = 放一个 `agent_tools.py`，不改 `agent_core`。
+SKILL.md 与本文档是开发文档，不进 prompt。工具定义走 API 的 tools 参数（function calling）。
 
 ## 快速开始
 
@@ -63,16 +64,16 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 | config 键 | 谁读取 |
 |-----------|--------|
-| `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验；`agent_core` 独立读取同一来源（工具 enum） |
+| `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验；`Expense_Tracker/agent_tools.py`（工具 enum + prompt 合法值） |
 | `data_root` / `family_dir_name` | `Agent_Runtime/paths.py` — 磁盘布局的单一事实来源（family_ledger / family_receipts_dir / family_documents_dir / member_store / member_domain_image_dir / to_rel）。各 skill 的 DB/票据/文档/备忘路径全经此解析 |
-| `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
+| `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`Document_Keeper/agent_tools.py`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
 | `backup`（enabled/debounce_seconds） | `Remote_Backup/backup_sync.py`（CFG，读一次）。每成员 provider/cred_prefix/remote_root/scopes 在 `data/members.json` 的 backup 块 |
-| `calendar`（enabled/lookahead_days/refresh_minutes/sync_horizon_days/sync_past_days/query_refresh_seconds/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG，含 sync_past_days~sync_horizon_days 拉取窗口、query_refresh_seconds 后台节流）；`image_gc.py`（来图清理参数）；`agent_core`（_CAL_LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
-| `notes`（chart_retention_days/worksheet_pin_row_cap） | `Note_Keeper/cli.py`（chart_retention_days，prune-on-render）；`agent_core`（_WORKSHEET_PIN_ROW_CAP，置顶 table 工作表注入行上限） |
+| `calendar`（enabled/lookahead_days/refresh_minutes/sync_horizon_days/sync_past_days/query_refresh_seconds/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG，含 sync_past_days~sync_horizon_days 拉取窗口、query_refresh_seconds 后台节流）；`image_gc.py`（来图清理参数）；`Calendar_Keeper/agent_tools.py`（LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
+| `notes`（chart_retention_days/worksheet_pin_row_cap） | `Note_Keeper/cli.py`（chart_retention_days，prune-on-render）；`Note_Keeper/agent_tools.py`（WORKSHEET_PIN_ROW_CAP，置顶 table 工作表注入行上限） |
 | `agent`（context_max_tokens/idle_clear_hours） | `agent_core`（上下文自动管理：历史 token 预算超出→从最旧一问一答成对丢弃；用户闲置超 N 小时→下一条消息前清空其历史；0=关闭。用户也可发 /clear 手动清空） |
 | ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
-| `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
+| `wechat.allowed_commands` | `Expense_Tracker/agent_tools.py`（AGENT_COMMANDS；其余 skill 的命令由各自 manifest 恒定放行） |
 | `knowking`（project_dir/timeout_s） | `Agent_Runtime/knowking_jobs.py`（懂王舆情桥：KnowKing 项目根定位 + `kk ask` 子进程超时；环境变量 `KNOWKING_DIR` 可覆盖 project_dir） |
 
 改这些值只改 `config.json`（改后重启进程生效）。config 缺失/损坏时各处有应急回退默认值。

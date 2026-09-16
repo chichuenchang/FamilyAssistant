@@ -30,14 +30,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 import time
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
 
 # Windows 控制台编码容错
 if sys.platform == "win32":
@@ -51,26 +49,18 @@ if sys.platform == "win32":
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
-# 注：CLI 经 subprocess 调用（见 _run_cli），无需加入 sys.path
 
 import members as _members_registry
 import paths as _paths
-import knowking_jobs as _knowking  # 懂王后台任务桥（独立 uv 项目 KnowKing）
+import skill_registry
+import tool_runtime as rt
 
 _log = logging.getLogger("familyassist.agent")
 
 
 # ── config.json（值的单一事实来源；不在代码里重复硬编码） ──────
 
-def _load_config_dict() -> dict:
-    """解析项目根 config.json；缺失/损坏返回 {}（用下方回退）。"""
-    try:
-        return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-_CONFIG = _load_config_dict()
+_CONFIG = rt.CONFIG
 
 # 票据/文档目录经 paths（单一事实来源）：家庭共享。
 RECEIPTS_DIR = _paths.family_dir() / "receipts"
@@ -120,90 +110,84 @@ def setup_logging(debug: bool = True) -> logging.Logger:
         logger.debug("调试日志已开启 → %s", log_dir / "bot_debug.log")
     return logger
 
-# CLI 命令白名单（config.json wechat.allowed_commands，缺失回退内置集）
-_FALLBACK_ALLOWED = {
-    "add", "list", "summary", "monthly", "delete",
-    "deposit-add", "deposit-list", "tax-add", "tax-list",
-    "fx-get", "fx-set",
-    "transfer-add", "transfer-list",
-}
-ALLOWED_COMMANDS = set(_CONFIG.get("wechat", {}).get("allowed_commands") or _FALLBACK_ALLOWED)
-
-# 子命令 → 所属 skill（未列出的归 Expense_Tracker）
-_DOC_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
-                 "doc-update", "doc-ack", "doc-remove"}
-_BACKUP_COMMANDS = {"backup-now", "backup-status", "backup-verify",
-                    "backup-restore", "backup-reorg"}
-_NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
-_SHEET_COMMANDS = {"sheet-create", "sheet-list", "sheet-show", "sheet-set",
-                   "sheet-unset", "sheet-row-add", "sheet-row-edit",
-                   "sheet-row-delete", "sheet-rename", "sheet-pin", "sheet-delete"}
-_CHART_COMMANDS = {"chart-render"}
-_DOC_FILE_COMMANDS = {"doc-file"}
-_CAL_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
-                 "cal-sync", "cal-status"}
-_REACH_COMMANDS = {"web-search", "web-read", "yt-summary"}
-_ANYSEARCH_COMMANDS = {"any-search", "any-extract", "any-subdomains"}
-_FORM_COMMANDS = {"form-scan", "form-define", "form-next", "form-set",
-                  "form-render", "form-list", "form-cancel"}
-
-# 文档/备份"管理类"里 Agent 真正会用的子集（破坏性的 doc-remove / backup-restore /
-# backup-reorg 仅限本机，永不进 Agent 白名单）。
-_DOC_AGENT_COMMANDS = {"doc-add", "doc-list", "doc-show", "doc-due",
-                       "doc-update", "doc-ack"}
-_BACKUP_AGENT_COMMANDS = {"backup-now", "backup-status", "backup-verify"}
-_PROFILE_COMMANDS = {"profile-set", "profile-unset", "profile-list"}
-
-# 备忘/工作表/文档/日程/备份/联网命令始终允许（Agent 核心能力，不随 wechat 白名单
-# 配置开关）。否则 config.json 缺失/损坏 → _CONFIG={} → 这些工具非对称失效（返回
-# "命令不允许"），而 schema 与 system prompt 仍无条件暴露它们。
-ALLOWED_COMMANDS |= _NOTE_COMMANDS
-ALLOWED_COMMANDS |= _SHEET_COMMANDS
-ALLOWED_COMMANDS |= _CHART_COMMANDS
-ALLOWED_COMMANDS |= _DOC_FILE_COMMANDS
-ALLOWED_COMMANDS |= _DOC_AGENT_COMMANDS
-ALLOWED_COMMANDS |= _CAL_COMMANDS
-ALLOWED_COMMANDS |= _BACKUP_AGENT_COMMANDS
-ALLOWED_COMMANDS |= _REACH_COMMANDS
-ALLOWED_COMMANDS |= _ANYSEARCH_COMMANDS
-ALLOWED_COMMANDS |= _FORM_COMMANDS
-ALLOWED_COMMANDS |= _PROFILE_COMMANDS
 
 
-def _cli_path(cmd: str) -> Path:
-    """子命令 → 所属 skill 的 CLI 路径。"""
-    if cmd in _DOC_COMMANDS or cmd in _DOC_FILE_COMMANDS or cmd in _PROFILE_COMMANDS:
-        skill = "Document_Keeper"
-    elif cmd in _BACKUP_COMMANDS:
-        skill = "Remote_Backup"
-    elif cmd in _NOTE_COMMANDS or cmd in _SHEET_COMMANDS or cmd in _CHART_COMMANDS:
-        skill = "Note_Keeper"
-    elif cmd in _CAL_COMMANDS:
-        skill = "Calendar_Keeper"
-    elif cmd in _REACH_COMMANDS:
-        skill = "Web_Reach"
-    elif cmd in _ANYSEARCH_COMMANDS:
-        skill = "Any_Search"
-    elif cmd in _FORM_COMMANDS:
-        skill = "Form_Filler"
-    else:
-        skill = "Expense_Tracker"
-    return ROOT / ".codewhale" / "skills" / skill / "cli.py"
+# ── 技能注册表：各 skill 的 agent_tools.py 合并（新增 skill 零改动本文件） ──
+# 契约见 skill_registry.py。命令白名单/路由/超时住在 tool_runtime，此处只转发同一对象。
+
+_REGISTRY = skill_registry.load()
+
+ALLOWED_COMMANDS = rt.ALLOWED
+_CLI_TIMEOUTS = rt.CLI_TIMEOUTS
+_cli_path = rt.cli_path
+_run_cli = rt.run_cli
+_relocate_image = rt.relocate_image
+_resolve_sendable = rt.resolve_sendable
+_TOOL_MAP = _REGISTRY.tool_map
+TOOL_SCHEMAS = _REGISTRY.schemas
+_MEMBER_LOCKED = _REGISTRY.member_locked
+_CONTEXT_TOOLS = _REGISTRY.context_tools
+_IMAGE_TOOLS = _REGISTRY.image_tools
+_DOC_TOOLS = _REGISTRY.doc_tools
+
+
+def _from_skill(skill: str, name: str, default=None):
+    """某 skill manifest 的内部符号（历史别名用；skill 缺席返回 default，不炸启动）。"""
+    return getattr(_REGISTRY.modules.get(skill), name, default)
+
+
+# 历史别名：测试与旧调用方直引这些名字；实现已迁入各 skill 的 agent_tools.py
+_NOTE_TOOLS = _from_skill("Note_Keeper", "NOTE_TOOLS", set())
+_relocate_note_image = _from_skill("Note_Keeper", "relocate_note_image")
+_notes_context = _from_skill("Note_Keeper", "notes_context")
+_worksheets_context = _from_skill("Note_Keeper", "worksheets_context")
+_profiles_context = _from_skill("Document_Keeper", "profiles_context")
+_schedule_context = _from_skill("Calendar_Keeper", "schedule_context")
+_tool_add_event = _from_skill("Calendar_Keeper", "tool_add_event")
+_tool_add_task = _from_skill("Calendar_Keeper", "tool_add_task")
+_tool_knowking = _from_skill("Agent_Runtime", "tool_knowking")
+
+
+def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
+    """MEMBER_LOCKED 工具：剥离 LLM 给的 member，注入解析出的成员名（写入归属 /
+    按成员私有的读写皆强制，LLM 不得跨成员）。其余工具原样放行。"""
+    if tool_name in _MEMBER_LOCKED:
+        targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
+        if member:
+            targs["member"] = member
+    return targs
+
+
+def _apply_context(tool_name: str, targs: dict, channel: str, user: str,
+                   member: str) -> dict:
+    """CONTEXT_TOOLS：注入发起频道 + 发起人 id + 成员名（异步投递需要），
+    确定性来自代码而非 LLM。其余工具原样放行。"""
+    if tool_name in _CONTEXT_TOOLS:
+        targs = dict(targs)
+        targs["__channel"] = channel or ""
+        targs["__user"] = str(user) if user else ""
+        if member:
+            targs["member"] = member
+    return targs
 
 
 # ── system prompt ───────────────────────────────────────────
 
+# 与具体 skill 无关的准则；各 skill 自己的条目由 manifest PROMPT_RULES 提供，排在前面
+_CORE_RULES = [
+    "用户闲聊/问候 → 直接友好回复，不用调工具",
+    "需要精确信息时（金额、日期）才调工具，闲聊不调",
+    "工具执行后会返回结果，你基于结果用自然语言回复",
+    '如果用户没有指定日期，默认今天（见"当前时间"块）；用户问现在几点/今天几号，直接按该块回答',
+    "回复中不要暴露技术细节（如 SQLite、CLI 等）",
+]
+
+
 def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
-    """组装 system prompt：身份 + config 提取的事实 + 行为准则。
+    """组装 system prompt：身份 + 成员 + 各 skill 段落（manifest）+ 通用准则。
 
-    工具定义走 API tools 参数。FamilyAssistant.md 是开发文档（文件路径、
-    CLI 示例），对运行时对话无用，不进 prompt——省每条消息的 token。
-    分类/币种从 config.json 提取为紧凑列表，不嵌原始 JSON。
+    工具定义走 API tools 参数。SKILL.md / FamilyAssistant.md 是开发文档，不进 prompt。
     """
-    tx_types = "/".join(_TX_TYPES)
-    currencies = "/".join(_CURRENCIES)
-    doc_types = "/".join(_DOC_TYPES)
-
     # 家庭成员 + 别名/法定名（data/members.json；空注册表则整段省略）
     members_cfg = _members_registry.load_members()
     member_block = ""
@@ -223,62 +207,16 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
     idle_note = (f"；用户闲置超过 {idle_hours:g} 小时后也会自动清空"
                  if idle_hours > 0 else "")
 
+    sections = "\n\n".join(_REGISTRY.prompt_sections)
+    rules = "\n".join(f"- {r}" for r in [*_REGISTRY.prompt_rules, *_CORE_RULES])
+
     return f"""你是 Family Assistant，一个运行在微信/Telegram 等远程频道里的个人/家庭 AI 助手。
 
 ## 你是谁
 - 你可以帮用户记账、查账、汇总开销、管理定期存款、查询汇率、OCR 票据、记私人备忘等
 - 你友好、简洁、直接——回复不用太长{member_block}
 
-## 记账合法值（来自配置，必须从中选）
-- 交易类型: {tx_types}
-- 币种: {currencies}（默认基准 {_BASE_CUR}）
-- 各类型分类: {_CATS_DESC}
-
-## 文档管理（家庭重要文档归档与到期提醒）
-- 文档类型: {doc_types}
-- 用户发来 合同/保单/证件 等重要文档，或说"存一下这个文件"→ add_document（尽量带 expiry 到期日和 action-note 到期动作）
-- 用户问"租约什么时候到期""我们有哪些保险""找一下XX保单"→ list_documents / show_document
-- 用户问"有什么要到期的""最近有什么要办的"→ due_documents
-- 用户说"续约了""换新证了"→ update_document 改到期日；旧文档另存时把旧的 status 改 superseded
-- 用户说"知道了""别再提醒"→ ack_document
-
-## 日程与待办（与远程日历静默同步，按成员私有）
-- 未来{_CAL_LOOKAHEAD}天**你（当前成员）的**日程/待办会自动注入上下文（每人只见自己的，活动与待办分库）
-- **不要主动播报日程**：仅当用户问到（"接下来有什么安排""待办清单"）或与当前话题直接相关时才提及
-- **加日程前先查重**：调 add_event/add_task 前，先比对已注入的未来日程（窗口外可先 list_schedule）。
-  判定重复看"同一件事"——同一天 + 同一活动，标题措辞不同也算（如"游泳烧烤"vs"Hotdog Roast & Swim"）。
-  对每条疑似重复按下面三种情况处理，**任何一种都必须明确告诉用户你做了什么，绝不静默**：
-  1) 已有的更详细（有时间/地点/备注而新的没有）→ 丢弃新的，不 add；告诉用户"已存在更详细的同名日程，未重复添加"。
-  2) 新的更详细（补了时间/地点/备注等有用信息）→ 先 remove_schedule_item 删旧（会同步删远端），再 add_event 加新的；
-     告诉用户"发现重复，已用信息更全的版本替换旧的"。
-  3) 新旧基本一致、新的没补任何有用信息 → 丢弃新的；告诉用户"已存在相同日程，未重复添加"。
-  拿不准是不是同一件事，或替换会丢用户可能在意的东西时 → 先问用户，别擅自删。
-  无重复 → 正常添加。报告里点明每条的处理（已加/已跳过重复/已替换），让用户能纠正或补特殊要求。
-- 用户说"安排/约了/X号要做Y/加个日程/活动"→ add_event（活动必须有日期；有具体时间则给 start/end）
-- 用户说"要做X/记个待办/任务"→ add_task（有截止日给 due）
-- **必须先调工具再回复**：用户的话只要听起来是要加/记一件事——给了日期、时间、"几点去X""X号做Y""帮我加/记/设个提醒/约了/安排"等——你**这一轮就必须立即调用对应写工具**（活动→add_event，待办→add_task），拿到返回结果后再回复。绝不能只用自然语言说"已加上/搞定/记好了"而不调工具；没调工具=这件事根本没做。拿不准是活动还是待办、或缺日期时间，就先调最合适的工具用默认值，或一句话问清后再调——但不要假装已完成
-- **calendar_status 现在核对真伪**：它会实时查询远端并与本地对账，可用于回答"同步了吗/本地和日历一致吗"；但某条新日程是否创建成功，仍以你 add_event 的返回为准
-- **归属默认发送者**：活动/待办默认进**你（当前成员）**的日历/待办，即使内容关于别的家庭成员
-  （如你发 Robin 的活动，默认进你的日历）；从图片建的，原始图也存你名下。仅当用户**明确**说
-  "加到 X 的日历/记到 X 的待办"时，才用 for-member 路由到该成员。备忘不跨成员（按成员私有）。
-- 用户问"接下来有什么安排/这周有什么事/我的待办"→ **必须调 list_schedule 再回答**（它会先与远端核对同步——家人可能刚在手机日历上加了事、或直接划掉了待办）；注入的上下文只是快照，可能过期，仅作话题参考
-- **历史日程一样能查**：问"上个月/7月/去年 X 了几次""那次是哪天"→ list_schedule 传 `from`/`to`
-  框住那段时间（`from` 可以是任意久远的过去，会实拉远端历史），数次数时再传 `all: true`
-  把已取消/已完成的也带出来。**绝不能说"我只能看到未来日程/查不到历史"**——那是错的
-- 用户说"做完了/办完了"→ complete_task；"取消/不去了/删掉"→ remove_schedule_item，
-  **必须带 kind**（活动传 event、待办传 task，按该条在列表/上下文里显示的 [活动]/[待办] 判定）：
-  活动与待办 id 会撞号，不带 kind 且两边都有这个号时工具会报错拒删，会删错对象
-- 用户说"刷新日历/同步日历"→ sync_calendar；问同步状态 → calendar_status
-- 新增/完成/取消会自动同步到远程日历；"待同步"= 暂未推送会自动重试，无需向用户解释技术细节
-- 日程工具结果末尾的"校验"行 = 本地↔远端实时核对结论：一致/已自动修复时一笔带过即可；出现"本地≠远端/校验失败"时必须明确转告用户哪里不一致，绝不隐瞒
-
-## 数据备份（可选功能）
-- 用户问"备份了吗""上次备份什么时候"→ backup_status
-- 用户说"立刻备份""把数据同步到云盘"→ backup_now
-- 用户问"云端和本地一致吗"→ backup_verify
-- backup_status 显示未启用/未配置时：告知备份是可选功能，需要在电脑上按
-  Remote_Backup/SKILL.md 完成 Google Drive 授权并启用；不要反复推销
-- 数据恢复（backup-restore）只能在电脑上手动执行，你调不到
+{sections}
 
 ## 对话上下文
 - 用户随时可发 /clear（或"清除上下文"）清空与你的对话上下文{idle_note}
@@ -297,67 +235,8 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 - 列表只在确实有多条并列信息时用（如多笔账单汇总），且每条尽量一行
 
 ## 行为准则
-- 用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction
-- 用户说"查账""这个月花了多少"→ list_transactions 或 get_summary（可给 year+month 看某一个月）；要全年逐月对比→get_monthly（只按年，无月参数）；记错要删→delete_transaction
-- 用户说"存了定期""买了理财"→ add_deposit；"我有哪些定期"→ list_deposits
-- 用户说"报税""今年报了多少税"→ add_tax / list_tax
-- 用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）
-- 用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）
-- 用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate
-- 用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned
-- 用户提供长期个人事实（法定名/生日/电话/邮箱/住址/证件卡号等）→ set_profile_field 存到家庭成员资料（member-name 填事实属于谁，家庭层面如住址用 Family），不要存成备忘；这类信息全家共享
-- 填 PDF 表格时建议值优先取自"家庭成员资料"块（仍然逐字段问用户确认）
-- 用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes；删某条→delete_note；置顶/取消置顶→pin_note
-- 工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet；列我所有表→list_worksheets；删字段→unset_worksheet_field、删行→delete_worksheet_row、改表名→rename_worksheet、置顶表→pin_worksheet、删整表→delete_worksheet
-- 用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明
-- 用户说"把我的租约/保单发给我""发我那个文件/那张图"→ send_document（先 list/show 拿 id）或 send_file（data 内相对路径）；文件会自动发给用户
-- 填 PDF 表格：用户发来表格并要求填写 → fill_form_scan（file 传保存路径）。平面/扫描表先按 OCR 布局推断字段（fill_form_define_fields）。之后进入逐字段问答：每次 fill_form_next 取一个字段，一条消息只问一个字段——即使你从成员注册表/备忘/文档里知道答案，也必须问，把已知值作为建议给出（"回复'对'或给出正确值"）。绝不擅自替用户填任何值，绝不编造。用户答一个记一个（fill_form_set_answer；用户说"跳过/留空"传空字符串）。全部答完（或用户说"剩下都留空"时把余下字段逐个置空）再 fill_form_render，PDF 会自动发给用户。中断的填表用 fill_form_list 恢复
-- 备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释
-- 用户问"最新新闻/外面在发生什么/帮我查一下X" → 优先 anysearch_search（更准，可选 domain 垂直搜索：finance/health/academic/travel/code 等，先 anysearch_subdomains 发现子域）；web_search 为备选。发链接让看/总结文章 → anysearch_extract（备选 web_read）；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造
-- 用户**明确说出 knowking / kk / 懂王**（如"用 knowking 查大家怎么看 X""kk 一下 Y"）→ 调 knowking 做跨社交平台舆情搜集（topic 去掉触发词只留要查的内容）。这是**唯一**触发条件：没说这几个词就别用它，普通查事实/新闻用 anysearch_search。它耗时数分钟、后台跑、出报告自动推送——把返回的"已开始"提示原样转达即可，别等待、别自己编报告
-- 用户闲聊/问候 → 直接友好回复，不用调工具
-- 需要精确信息时（金额、日期）才调工具，闲聊不调
-- 工具执行后会返回结果，你基于结果用自然语言回复
-- 如果用户没有指定日期，默认今天（见"当前时间"块）；用户问现在几点/今天几号，直接按该块回答
-- 回复中不要暴露技术细节（如 SQLite、CLI 等）
+{rules}
 """
-
-
-# ── CLI 执行器 ──────────────────────────────────────────────
-
-# 个别命令超时加长：form-scan 平面表要逐页渲染+OCR，form-render 要重组 PDF。
-_CLI_TIMEOUTS = {"form-scan": 120, "form-render": 120}
-
-
-def _run_cli(cmd: str, args: dict[str, Any] = None) -> str:
-    """执行 CLI 命令并返回 stdout。"""
-    if cmd not in ALLOWED_COMMANDS:
-        return f"[错误] 命令不允许: {cmd}"
-
-    cli_args = [cmd]
-    if args:
-        for k, v in args.items():
-            flag = k if k.startswith("-") else f"--{k}"  # 容忍裸键（type→--type）
-            if v is True:
-                cli_args.append(flag)                     # 布尔开关，无值（如 --force）
-            elif v is False or v is None or v == "":
-                continue                                  # 未设置则跳过
-            else:
-                cli_args.append(flag)
-                cli_args.append(str(v))
-
-    cli_path = _cli_path(cmd)
-    try:
-        result = subprocess.run(
-            [sys.executable, str(cli_path)] + cli_args,
-            capture_output=True, text=True, cwd=str(ROOT),
-            timeout=_CLI_TIMEOUTS.get(cmd, 30), encoding="utf-8", errors="replace",
-        )
-        return result.stdout.strip() or result.stderr.strip()
-    except subprocess.TimeoutExpired:
-        return "[错误] 超时"
-    except Exception as e:
-        return f"[错误] {e}"
 
 
 IMG_SENTINEL = "\x01IMG:"
@@ -381,776 +260,12 @@ def split_reply(reply: str) -> tuple[str, list[str], list[str]]:
     return "\n".join(keep).strip(), imgs, docs
 
 
-# ── 工具实现 ────────────────────────────────────────────────
 
-def _tool_add_transaction(args): return _run_cli("add", args)
-def _tool_list_transactions(args): return _run_cli("list", args)
-def _tool_get_summary(args): return _run_cli("summary", args)
-def _tool_get_monthly(args): return _run_cli("monthly", args)
-def _tool_list_deposits(args): return _run_cli("deposit-list", args)
-def _tool_add_deposit(args): return _run_cli("deposit-add", args)
-def _tool_get_fx_rate(args): return _run_cli("fx-get", args)
-def _tool_set_fx_rate(args): return _run_cli("fx-set", args)
-def _tool_add_tax(args): return _run_cli("tax-add", args)
-def _tool_list_tax(args): return _run_cli("tax-list", args)
-def _tool_add_transfer(args): return _run_cli("transfer-add", args)
-def _tool_list_transfers(args): return _run_cli("transfer-list", args)
-def _tool_delete_transaction(args): return _run_cli("delete", args)
-def _tool_add_document(args): return _run_cli("doc-add", args)
-def _tool_list_documents(args): return _run_cli("doc-list", args)
-def _tool_show_document(args): return _run_cli("doc-show", args)
-def _tool_due_documents(args): return _run_cli("doc-due", args)
-def _tool_update_document(args): return _run_cli("doc-update", args)
-def _tool_ack_document(args): return _run_cli("doc-ack", args)
-def _tool_set_profile_field(args): return _run_cli("profile-set", args)
-def _tool_remove_profile_field(args): return _run_cli("profile-unset", args)
-def _tool_backup_now(args): return _run_cli("backup-now", args)
-def _tool_backup_status(args): return _run_cli("backup-status", args)
-def _tool_backup_verify(args): return _run_cli("backup-verify", args)
-def _relocate_image(src: str, member: str, domain: str) -> str:
-    """来图从暂存（成员 inbox，data_root 内）搬到该成员某域 YYYY-MM/，返回 data 相对路径。
-
-    domain ∈ notes/schedule/tasks。传输层把来图先存 data/<成员>/inbox/，分类后搬到对应域。
-    代码确定性执行（不交给 LLM 决定）。失败保留原路径，绝不丢图。
-    仅处理 data_root 内的文件 + 已知成员；否则原样返回。"""
-    try:
-        if not member:
-            return src
-        p = Path(src)
-        resolved = (p if p.is_absolute() else ROOT / p).resolve()
-        droot = _paths.data_root().resolve()
-        if not (resolved.exists() and resolved.is_relative_to(droot)):
-            return src
-        dest_dir = _paths.member_domain_image_dir(member, domain)
-        dest = dest_dir / resolved.name
-        i = 1
-        while dest.exists():
-            dest = dest_dir / f"{resolved.stem}_{i}{resolved.suffix}"
-            i += 1
-        resolved.rename(dest)
-        _log.debug("来图已移动 %s → %s", resolved, dest)
-        return _paths.to_rel(dest)
-    except Exception:
-        _log.exception("来图移动失败（保留原路径）")
-        return src
-
-
-def _relocate_note_image(src: str, member: str) -> str:
-    """备忘图片搬到成员 notes/（_relocate_image 的 notes 域包装）。"""
-    return _relocate_image(src, member, "notes")
-
-
-def _tool_save_note(args):
-    src = args.get("source-image", "")
-    if src:
-        member = args.get("member", "") or args.get("--member", "")
-        args = {**args, "source-image": _relocate_note_image(src, member)}
-    return _run_cli("note-add", args)
-def _tool_list_notes(args): return _run_cli("note-list", args)
-def _tool_search_notes(args): return _run_cli("note-search", args)
-def _tool_delete_note(args): return _run_cli("note-delete", args)
-def _tool_pin_note(args): return _run_cli("note-pin", args)
-
-
-def _tool_create_worksheet(args): return _run_cli("sheet-create", args)
-def _tool_list_worksheets(args): return _run_cli("sheet-list", args)
-def _tool_show_worksheet(args): return _run_cli("sheet-show", args)
-def _tool_set_worksheet_field(args): return _run_cli("sheet-set", args)
-def _tool_unset_worksheet_field(args): return _run_cli("sheet-unset", args)
-def _tool_delete_worksheet_row(args): return _run_cli("sheet-row-delete", args)
-def _tool_rename_worksheet(args): return _run_cli("sheet-rename", args)
-def _tool_pin_worksheet(args): return _run_cli("sheet-pin", args)
-def _tool_delete_worksheet(args): return _run_cli("sheet-delete", args)
-
-
-def _tool_add_worksheet_row(args):
-    args = dict(args)
-    data = args.pop("data", None)
-    if isinstance(data, (dict, list)):
-        args["data"] = json.dumps(data, ensure_ascii=False)
-    elif data is not None:
-        args["data"] = str(data)
-    return _run_cli("sheet-row-add", args)
-
-
-def _tool_edit_worksheet_row(args):
-    args = dict(args)
-    data = args.pop("data", None)
-    if isinstance(data, (dict, list)):
-        args["data"] = json.dumps(data, ensure_ascii=False)
-    elif data is not None:
-        args["data"] = str(data)
-    return _run_cli("sheet-row-edit", args)
-
-
-def _tool_visualize_data(args):
-    args = dict(args)
-    spec = args.pop("spec", None)
-    if isinstance(spec, (dict, list)):
-        args["spec"] = json.dumps(spec, ensure_ascii=False)
-    elif spec is not None:
-        args["spec"] = str(spec)
-    return _run_cli("chart-render", args)
-
-
-def _resolve_sendable(path: str, member: str) -> str | None:
-    """送文件闸门：路径须存在、是文件、在 data_root 内，且属家庭共享或本成员目录。
-    通过 → 返回 data 相对路径；否则 None。"""
-    try:
-        p = Path(path)
-        ap = (p if p.is_absolute() else _paths.resolve_rel(str(path))).resolve()
-        root = _paths.data_root().resolve()
-        if not (ap.exists() and ap.is_file() and ap.is_relative_to(root)):
-            return None
-        allowed = [_paths.family_dir().resolve()]
-        if member:
-            allowed.append(_paths.member_dir(member).resolve())
-        if not any(ap.is_relative_to(a) for a in allowed):
-            return None
-        return _paths.to_rel(ap)
-    except (ValueError, OSError):
-        return None
-
-
-def _tool_send_document(args):
-    return _run_cli("doc-file", {"id": args.get("id")})
-
-
-def _tool_send_file(args):
-    member = args.get("member", "")
-    rel = _resolve_sendable(args.get("path", ""), member)
-    return rel if rel else "[错误] 路径不允许或文件不存在"
-
-
-def _target_member(args: dict, sender: str) -> str:
-    """日程/待办的目标成员：显式 for-member（须已登记）覆盖，否则归发送者。
-
-    默认归发送者（即使内容关于别人），仅当用户明确指定别的成员时路由过去；
-    未登记的 for-member 退回发送者（不凭空建目录）。备忘不走此路（按成员私有）。
-    """
-    target = (args.pop("for-member", "") or "").strip() or sender
-    if target != sender and target not in _members_registry.member_names():
-        return sender
-    return target
-
-
-def _tool_add_event(args):
-    args = dict(args)
-    sender = args.get("member", "")
-    target = _target_member(args, sender)
-    src = args.get("source-image", "")
-    if src:                                   # 原始图始终归发送者名下
-        args["source-image"] = _relocate_image(src, sender, "schedule")
-    args["member"] = target                   # 活动入目标成员日历
-    return _run_cli("cal-add", {**args, "kind": "event"})
-
-
-def _tool_add_task(args):
-    # LLM 用 due 表达截止日，CLI 统一收 --date
-    args = dict(args)
-    due = args.pop("due", "")
-    if due:
-        args["date"] = due
-    sender = args.get("member", "")
-    target = _target_member(args, sender)
-    src = args.get("source-image", "")
-    if src:
-        args["source-image"] = _relocate_image(src, sender, "tasks")
-    args["member"] = target
-    return _run_cli("cal-add", {**args, "kind": "task"})
-
-
-def _tool_list_schedule(args): return _run_cli("cal-list", args)
-def _tool_complete_task(args): return _run_cli("cal-done", args)
-def _tool_remove_schedule_item(args): return _run_cli("cal-delete", args)
-def _tool_sync_calendar(args): return _run_cli("cal-sync", args)
-def _tool_calendar_status(args): return _run_cli("cal-status", args)
-
-def _tool_web_search(args): return _run_cli("web-search", args)
-def _tool_web_read(args): return _run_cli("web-read", args)
-def _tool_youtube_summarize(args): return _run_cli("yt-summary", args)
-def _tool_anysearch_search(args): return _run_cli("any-search", args)
-def _tool_anysearch_extract(args): return _run_cli("any-extract", args)
-def _tool_anysearch_subdomains(args): return _run_cli("any-subdomains", args)
-
-
-def _tool_knowking(args):
-    """懂王：跨社交平台舆情搜集。后台跑（数分钟），出报告后由传输层推给发起人。
-    仅在正式频道（注入了 __channel/__user 上下文）可用。"""
-    topic = (args.get("topic") or "").strip()
-    if not topic:
-        return "[错误] 缺少查询主题"
-    channel = args.get("__channel", "")
-    user = args.get("__user", "")
-    if not (channel and user):
-        return "[错误] KnowKing 仅在微信/Telegram 频道可用，当前无频道上下文（如本地测试）。"
-    _job_id, ack = _knowking.submit(topic, channel, user, args.get("member", ""))
-    return ack
-
-
-def _tool_fill_form_scan(args): return _run_cli("form-scan", args)
-
-
-def _tool_fill_form_define(args):
-    args = dict(args)
-    fields = args.get("fields")
-    if isinstance(fields, (list, dict)):
-        args["fields"] = json.dumps(fields, ensure_ascii=False)
-    return _run_cli("form-define", args)
-
-
-def _tool_fill_form_next(args): return _run_cli("form-next", args)
-def _tool_fill_form_set(args): return _run_cli("form-set", args)
-def _tool_fill_form_render(args): return _run_cli("form-render", args)
-def _tool_fill_form_list(args): return _run_cli("form-list", args)
-def _tool_fill_form_cancel(args): return _run_cli("form-cancel", args)
-
-def _tool_ocr_image(args):
-    path = args.get("path", "")
-    # 安全：path 来自 LLM（间接来自用户消息），只允许数据根 data/ 内的文件
-    # （票据/文档/成员 inbox/备忘图片皆在其下），防止把任意本地文件 base64 后
-    # 发给腾讯云/DeepSeek（数据外泄）。
-    try:
-        p = Path(path)
-        resolved = (p if p.is_absolute() else ROOT / p).resolve()
-        allowed_root = _paths.data_root().resolve()
-        if not resolved.is_relative_to(allowed_root):
-            return f"[错误] 只允许识别数据目录内的图片: {allowed_root}"
-    except (OSError, ValueError):
-        return "[错误] 无效的图片路径"
-    try:
-        from ocr import ocr_extract, is_available
-        if is_available():
-            info = ocr_extract(str(resolved))
-            return json.dumps(info, ensure_ascii=False) if info else "[未识别到文字]"
-        return "[OCR 未配置]"
-    except Exception as e:
-        return f"[OCR 错误] {e}"
-
-
-_TOOL_MAP = {
-    "add_transaction": _tool_add_transaction,
-    "list_transactions": _tool_list_transactions,
-    "get_summary": _tool_get_summary,
-    "get_monthly": _tool_get_monthly,
-    "list_deposits": _tool_list_deposits,
-    "add_deposit": _tool_add_deposit,
-    "get_fx_rate": _tool_get_fx_rate,
-    "set_fx_rate": _tool_set_fx_rate,
-    "add_tax": _tool_add_tax,
-    "list_tax": _tool_list_tax,
-    "add_transfer": _tool_add_transfer,
-    "list_transfers": _tool_list_transfers,
-    "delete_transaction": _tool_delete_transaction,
-    "ocr_image": _tool_ocr_image,
-    "add_document": _tool_add_document,
-    "list_documents": _tool_list_documents,
-    "show_document": _tool_show_document,
-    "due_documents": _tool_due_documents,
-    "update_document": _tool_update_document,
-    "ack_document": _tool_ack_document,
-    "backup_now": _tool_backup_now,
-    "backup_status": _tool_backup_status,
-    "backup_verify": _tool_backup_verify,
-    "save_note": _tool_save_note,
-    "list_notes": _tool_list_notes,
-    "search_notes": _tool_search_notes,
-    "delete_note": _tool_delete_note,
-    "pin_note": _tool_pin_note,
-    "create_worksheet": _tool_create_worksheet,
-    "list_worksheets": _tool_list_worksheets,
-    "show_worksheet": _tool_show_worksheet,
-    "set_worksheet_field": _tool_set_worksheet_field,
-    "unset_worksheet_field": _tool_unset_worksheet_field,
-    "add_worksheet_row": _tool_add_worksheet_row,
-    "edit_worksheet_row": _tool_edit_worksheet_row,
-    "delete_worksheet_row": _tool_delete_worksheet_row,
-    "rename_worksheet": _tool_rename_worksheet,
-    "pin_worksheet": _tool_pin_worksheet,
-    "delete_worksheet": _tool_delete_worksheet,
-    "visualize_data": _tool_visualize_data,
-    "send_document": _tool_send_document,
-    "send_file": _tool_send_file,
-    "add_event": _tool_add_event,
-    "add_task": _tool_add_task,
-    "list_schedule": _tool_list_schedule,
-    "complete_task": _tool_complete_task,
-    "remove_schedule_item": _tool_remove_schedule_item,
-    "sync_calendar": _tool_sync_calendar,
-    "calendar_status": _tool_calendar_status,
-    "web_search": _tool_web_search,
-    "web_read": _tool_web_read,
-    "youtube_summarize": _tool_youtube_summarize,
-    "anysearch_search": _tool_anysearch_search,
-    "anysearch_extract": _tool_anysearch_extract,
-    "anysearch_subdomains": _tool_anysearch_subdomains,
-    "knowking": _tool_knowking,
-    "set_profile_field": _tool_set_profile_field,
-    "remove_profile_field": _tool_remove_profile_field,
-    "fill_form_scan": _tool_fill_form_scan,
-    "fill_form_define_fields": _tool_fill_form_define,
-    "fill_form_next": _tool_fill_form_next,
-    "fill_form_set_answer": _tool_fill_form_set,
-    "fill_form_render": _tool_fill_form_render,
-    "fill_form_list": _tool_fill_form_list,
-    "fill_form_cancel": _tool_fill_form_cancel,
-}
-
-# 写工具集合：归属强制由代码注入（防 LLM 冒名记到别人头上）
-_MEMBER_WRITE_TOOLS = {"add_transaction", "add_deposit", "add_transfer", "add_tax",
-                       "add_document", "add_event", "add_task"}
-
-# 备忘工具全部强制注入 member（读写皆是 — 备忘按成员私有，LLM 不得跨成员读写）
-_NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note"}
-
-# 工作表工具同样按成员私有，读写一律强制注入 member（LLM 不得跨成员读写）
-_SHEET_TOOLS = {"create_worksheet", "list_worksheets", "show_worksheet",
-                "set_worksheet_field", "unset_worksheet_field", "add_worksheet_row",
-                "edit_worksheet_row", "delete_worksheet_row", "rename_worksheet",
-                "pin_worksheet", "delete_worksheet", "visualize_data",
-                "send_document", "send_file"}
-
-# 日程工具按成员私有：完成/取消/查询/同步/状态一律强制注入发送者 member。
-# 不注入则 CLI member="" → 命中空库（cal-done）或 _member_stores 抛错（cal-delete/cal-list），
-# 工具形同失效；且供 member 即读他人私有日历。统一强制锁到发送者，与备忘/工作表一致。
-_CAL_MEMBER_TOOLS = {"complete_task", "remove_schedule_item", "list_schedule",
-                     "sync_calendar", "calendar_status"}
-
-# 填表工具按成员私有（会话在 data/<成员>/forms/），一律强制注入发送者 member
-_FORM_TOOLS = {"fill_form_scan", "fill_form_define_fields", "fill_form_next",
-               "fill_form_set_answer", "fill_form_render", "fill_form_list",
-               "fill_form_cancel"}
-
-# 工具按产出附件分类：成功调用时 handle() 收集路径，尾部追加对应哨兵
-_IMAGE_TOOLS = {"visualize_data"}
-_DOC_TOOLS = {"send_document", "send_file", "fill_form_render"}
-
-
-def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
-    """写工具：剥离 LLM 给的 member，注入解析出的成员名。读工具原样放行。
-    备忘/工作表/日程工具（含读/删/完成/取消）一律强制注入，保证按成员隔离。"""
-    if (tool_name in _MEMBER_WRITE_TOOLS or tool_name in _NOTE_TOOLS
-            or tool_name in _SHEET_TOOLS or tool_name in _CAL_MEMBER_TOOLS
-            or tool_name in _FORM_TOOLS):
-        targs = {k: v for k, v in targs.items() if k.lstrip("-") != "member"}
-        if member:
-            targs["member"] = member
-    return targs
-
-
-# 需要频道上下文（把结果异步推回发起人）的工具：代码注入 __channel/__user/member，
-# LLM 拿不到也不该拿这些（防伪造投递目标）。目前仅 knowking。
-_CONTEXT_TOOLS = {"knowking"}
-
-
-def _apply_context(tool_name: str, targs: dict, channel: str, user: str,
-                   member: str) -> dict:
-    """给 _CONTEXT_TOOLS 注入发起频道 + 发起人 id + 成员名（异步投递需要），
-    确定性来自代码而非 LLM。其余工具原样放行。"""
-    if tool_name in _CONTEXT_TOOLS:
-        targs = dict(targs)
-        targs["__channel"] = channel or ""
-        targs["__user"] = str(user) if user else ""
-        if member:
-            targs["member"] = member
-    return targs
-
-
-# ── 工具 JSON Schema（DeepSeek function calling，OpenAI 兼容格式） ──
-# 参数名与 CLI 标志一致（含连字符），_run_cli 直接转 --flag。
-# 枚举值来自 config.json（单一事实来源）。
-
-_TX_TYPES = list(_CONFIG.get("categories", {}).keys()) or [
-    "expense", "income", "investment", "savings"]
-_CURRENCIES = _CONFIG.get("supported_currencies") or ["USD", "CNY", "CAD"]
-_BASE_CUR = _CONFIG.get("base_currency") or "USD"
-_CATS_DESC = json.dumps(_CONFIG.get("categories", {}), ensure_ascii=False)
-_DOC_TYPES = list(_CONFIG.get("doc_types") or ["other"])
-_DOC_STATUSES = ["active", "expired", "archived", "superseded"]
-_CAL_LOOKAHEAD = int((_CONFIG.get("calendar") or {}).get("lookahead_days") or 10)
-_WORKSHEET_PIN_ROW_CAP = int((_CONFIG.get("notes") or {}).get("worksheet_pin_row_cap") or 80)
 
 # Agent 上下文管理旋钮（config.json "agent" 块；键缺失用默认值，显式 0 = 关闭该机制）
 _AGENT_CFG = _CONFIG.get("agent") or {}
 _CTX_MAX_TOKENS = int(_AGENT_CFG.get("context_max_tokens", 30000) or 0)
 _IDLE_CLEAR_HOURS = float(_AGENT_CFG.get("idle_clear_hours", 4) or 0)
-
-
-def _fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
-    return {"type": "function", "function": {
-        "name": name, "description": desc,
-        "parameters": {"type": "object", "properties": props,
-                       "required": required or []},
-    }}
-
-
-def _s(desc: str, **kw) -> dict:
-    return {"type": "string", "description": desc, **kw}
-
-
-def _num(desc: str) -> dict:
-    return {"type": "number", "description": desc}
-
-
-def _int(desc: str) -> dict:
-    return {"type": "integer", "description": desc}
-
-
-TOOL_SCHEMAS = [
-    _fn("add_transaction", "记一笔账（支出/收入/投资/储蓄）", {
-        "type": _s("交易类型", enum=_TX_TYPES),
-        "amount": _num("金额，正数"),
-        "currency": _s(f"币种，默认 {_BASE_CUR}", enum=_CURRENCIES),
-        "date": _s("日期 YYYY-MM-DD"),
-        "category": _s(f"分类，必须从合法分类中选: {_CATS_DESC}"),
-        "desc": _s("描述，如 午餐"),
-        "notes": _s("备注"),
-        "force": {"type": "boolean", "description": "跳过重复检查强制写入（仅在用户确认非重复后用）"},
-    }, ["type", "amount", "date"]),
-    _fn("list_transactions", "查询交易流水", {
-        "type": _s("交易类型", enum=_TX_TYPES),
-        "category": _s("分类"),
-        "currency": _s("币种", enum=_CURRENCIES),
-        "start": _s("开始日期 YYYY-MM-DD"),
-        "end": _s("结束日期 YYYY-MM-DD"),
-        "limit": _int("最多返回条数"),
-        "member": _s("按成员过滤，如只看某个家庭成员的账"),
-    }),
-    _fn("get_summary", "按分类汇总金额（分币种）", {
-        "type": _s("交易类型，默认 expense", enum=_TX_TYPES),
-        "year": _int("年份"),
-        "month": _int("月份 1-12"),
-        "member": _s("按成员过滤，如只看某个家庭成员的账"),
-        "by-member": {"type": "boolean", "description": "按成员汇总（谁花了多少）"},
-    }),
-    _fn("get_monthly", "按月汇总金额（分币种）", {
-        "type": _s("交易类型，默认 expense", enum=_TX_TYPES),
-        "year": _int("年份"),
-        "member": _s("按成员过滤，如只看某个家庭成员的账"),
-    }),
-    _fn("list_deposits", "查询定期存款", {
-        "currency": _s("币种", enum=_CURRENCIES),
-        "active": {"type": "boolean", "description": "只看未到期的"},
-    }),
-    _fn("add_deposit", "新增定期存款记录", {
-        "amount": _num("本金"),
-        "currency": _s("币种", enum=_CURRENCIES),
-        "bank": _s("银行名"),
-        "account": _s("账号"),
-        "term": _int("期限（月）"),
-        "rate": _num("年利率(%)"),
-        "start-date": _s("起存日 YYYY-MM-DD"),
-        "maturity": _s("到期日 YYYY-MM-DD"),
-        "notes": _s("备注"),
-    }, ["amount", "start-date"]),
-    _fn("get_fx_rate", "查询汇率", {
-        "from": _s("源币种", enum=_CURRENCIES),
-        "to": _s("目标币种", enum=_CURRENCIES),
-    }, ["from", "to"]),
-    _fn("set_fx_rate", "设置汇率", {
-        "from": _s("源币种", enum=_CURRENCIES),
-        "to": _s("目标币种", enum=_CURRENCIES),
-        "rate": _num("汇率：1 源币种 = rate 目标币种"),
-    }, ["from", "to", "rate"]),
-    _fn("add_tax", "新增报税记录", {
-        "year": _int("税务年度"),
-        "country": _s("国家", enum=["US", "CA"]),
-        "data": _s('报税数据，JSON 字符串，如 {"total_income": 100000, "tax_paid": 20000}'),
-        "filing-date": _s("申报日期 YYYY-MM-DD"),
-        "notes": _s("备注"),
-    }, ["year", "country"]),
-    _fn("list_tax", "查询报税记录", {
-        "year": _int("税务年度"),
-        "country": _s("国家", enum=["US", "CA"]),
-    }),
-    _fn("add_transfer", "记录资金划转/换汇（溯源；目标为定期时自动建定期存款）", {
-        "from-amount": _num("源金额"),
-        "from-currency": _s("源币种", enum=_CURRENCIES),
-        "to-amount": _num("目标金额"),
-        "to-currency": _s("目标币种", enum=_CURRENCIES),
-        "to-type": _s("目标账户类型：活期/定期"),
-        "from-desc": _s("源账户描述，如 活期/工行"),
-        "from-type": _s("源账户类型：活期/定期"),
-        "from-deposit-id": _int("源若为已记录定期存款，其 id"),
-        "rate": _num("换汇汇率；不填按 to/from 计算"),
-        "exchange-date": _s("换汇日期 YYYY-MM-DD"),
-        "to-bank": _s("目标银行"),
-        "to-account": _s("目标账号"),
-        "transfer-date": _s("到账/转账日期 YYYY-MM-DD"),
-        "to-term": _int("目标定期期限（月）"),
-        "to-rate": _num("目标定期年利率(%)"),
-        "to-maturity": _s("目标定期到期日 YYYY-MM-DD"),
-        "notes": _s("备注"),
-    }, ["from-amount", "from-currency", "to-amount", "to-currency", "to-type"]),
-    _fn("list_transfers", "查询划转记录/溯源资金来源", {
-        "currency": _s("匹配源或目标币种", enum=_CURRENCIES),
-        "to-bank": _s("目标银行"),
-        "type": _s("匹配源或目标类型 活期/定期"),
-        "start": _s("开始日期 YYYY-MM-DD"),
-        "end": _s("结束日期 YYYY-MM-DD"),
-        "to-deposit-id": _int("查某定期存款的资金来源"),
-        "from-deposit-id": _int("查某定期存款的去向"),
-        "trace": _s("模糊匹配 描述/银行/账号/备注"),
-        "limit": _int("最多返回条数"),
-    }),
-    _fn("ocr_image", "OCR 识别票据/账单图片，逐笔提取交易明细（返回 transactions 数组，"
-        "非账单总额）。拿到后逐笔调 add_transaction 记账", {
-        "path": _s("图片路径"),
-    }, ["path"]),
-    _fn("delete_transaction", "删除一条交易", {
-        "id": _int("交易 id"),
-    }, ["id"]),
-    _fn("add_document", "归档一份家庭重要文档（合同/保单/证件等），登记到期日以便提醒", {
-        "type": _s("文档类型", enum=_DOC_TYPES),
-        "title": _s("文档名称，如 2026公寓租约"),
-        "issuer": _s("签发方：房东/保险公司/政府机构"),
-        "number": _s("编号：保单号/证件号"),
-        "issue-date": _s("签发日期 YYYY-MM-DD"),
-        "expiry": _s("到期日期 YYYY-MM-DD；长期有效不填"),
-        "action-note": _s("到期要做什么，如 提前60天通知房东"),
-        "remind-days": _int("提前几天提醒（不填用默认值）"),
-        "file": _s("原始文件路径（图片已保存的路径）"),
-        "ocr-text": _s("OCR 识别全文，用于日后关键词检索"),
-        "notes": _s("备注"),
-        "force": {"type": "boolean", "description": "跳过重复检查强制写入（仅在用户确认非重复后用）"},
-    }, ["type", "title"]),
-    _fn("list_documents", "查询已归档的家庭文档", {
-        "type": _s("文档类型", enum=_DOC_TYPES),
-        "member": _s("按成员过滤"),
-        "keyword": _s("关键词，匹配标题/OCR全文/备注"),
-        "status": _s("状态（默认隐藏 archived/superseded）", enum=_DOC_STATUSES),
-        "limit": _int("最多返回条数"),
-    }),
-    _fn("show_document", "查看某文档完整信息（含文件路径）", {
-        "id": _int("文档 id"),
-    }, ["id"]),
-    _fn("due_documents", "查询即将到期/已过期的文档", {
-        "days": _int("查看几天内到期（不填按各文档默认提前量）"),
-    }),
-    _fn("update_document", "更新文档信息（续约改到期日、改状态归档等）", {
-        "id": _int("文档 id"),
-        "type": _s("文档类型", enum=_DOC_TYPES),
-        "title": _s("文档名称"),
-        "issuer": _s("签发方"),
-        "number": _s("编号"),
-        "issue-date": _s("签发日期 YYYY-MM-DD"),
-        "expiry": _s("新到期日 YYYY-MM-DD（改后重新进入提醒）"),
-        "action-note": _s("到期要做什么"),
-        "remind-days": _int("提前几天提醒"),
-        "status": _s("状态", enum=_DOC_STATUSES),
-        "notes": _s("备注"),
-    }, ["id"]),
-    _fn("ack_document", "确认某文档的到期提醒（之后不再每日重复提醒）", {
-        "id": _int("文档 id"),
-    }, ["id"]),
-    _fn("backup_now", "立即把用户数据镜像到云盘（需用户已配置 backup provider）", {}),
-    _fn("backup_status", "查看云盘备份状态（是否启用/已配置/待同步/上次同步/错误）", {}),
-    _fn("backup_verify", "校验云端镜像与本地清单是否一致", {}),
-    _fn("save_note", "保存一条个人备忘（杂项信息：车位号/wifi密码/课表/名片等）。"
-        "仅本人可见", {
-        "content": _s("备忘内容（图片来源时传 OCR 出的关键信息）"),
-        "source-image": _s("来源图片路径（图片备忘时填已保存路径）"),
-        "pinned": {"type": "boolean", "description": "置顶：重要长期信息每次对话自动带上"},
-    }, ["content"]),
-    _fn("list_notes", "列出本人最近的备忘", {
-        "limit": _int("最多返回条数（默认 20）"),
-    }),
-    _fn("search_notes", "按关键词搜索本人的备忘（用户问\"我记过什么\"\"XX是什么来着\"）", {
-        "keyword": _s("关键词，匹配备忘内容"),
-    }, ["keyword"]),
-    _fn("delete_note", "删除本人的一条备忘", {
-        "id": _int("备忘 id"),
-    }, ["id"]),
-    _fn("pin_note", "置顶/取消置顶本人的一条备忘", {
-        "id": _int("备忘 id"),
-        "unpin": {"type": "boolean", "description": "true=取消置顶"},
-    }, ["id"]),
-    _fn("create_worksheet", "创建一张工作表，用于长期跟踪结构化信息。仅当用户明确要求"
-        "\"建个表/做个 worksheet/长期记录这些\"时才用；普通杂事用 save_note。"
-        "kind=kv 是事实清单（字段→值，如房贷利率/到期）；kind=table 是流水记录"
-        "（多行，每行动态列，如血压/体重打卡）", {
-        "title": _s("工作表名（唯一，作为后续引用的句柄）"),
-        "kind": _s("kv=事实清单 / table=流水记录", enum=["kv", "table"]),
-        "pinned": {"type": "boolean", "description": "置顶：每次对话自动带上全表内容"},
-    }, ["title", "kind"]),
-    _fn("list_worksheets", "列出本人的工作表（名称/类型/规模）", {}),
-    _fn("show_worksheet", "显示一张工作表的完整内容", {
-        "title": _s("工作表名"),
-    }, ["title"]),
-    _fn("set_worksheet_field", "在 kv 工作表上设置/覆盖一个字段", {
-        "title": _s("工作表名"),
-        "field": _s("字段名"),
-        "value": _s("字段值"),
-    }, ["title", "field", "value"]),
-    _fn("unset_worksheet_field", "从 kv 工作表删除一个字段", {
-        "title": _s("工作表名"),
-        "field": _s("字段名"),
-    }, ["title", "field"]),
-    _fn("add_worksheet_row", "向 table 工作表追加一行（列名→值，列可动态新增）", {
-        "title": _s("工作表名"),
-        "data": {"type": "object", "description": "一行数据，键=列名 值=单元格值"},
-    }, ["title", "data"]),
-    _fn("edit_worksheet_row", "覆盖 table 工作表的某一行（按行 id）", {
-        "title": _s("工作表名"),
-        "row-id": _int("行 id（见 show_worksheet 的 #号）"),
-        "data": {"type": "object", "description": "整行新数据（覆盖式）"},
-    }, ["title", "row-id", "data"]),
-    _fn("delete_worksheet_row", "删除 table 工作表的某一行（按行 id）", {
-        "title": _s("工作表名"),
-        "row-id": _int("行 id"),
-    }, ["title", "row-id"]),
-    _fn("rename_worksheet", "重命名一张工作表", {
-        "title": _s("当前名"),
-        "new-title": _s("新名"),
-    }, ["title", "new-title"]),
-    _fn("pin_worksheet", "置顶/取消置顶工作表（置顶=每次对话自动带上全表）", {
-        "title": _s("工作表名"),
-        "unpin": {"type": "boolean", "description": "true=取消置顶"},
-    }, ["title"]),
-    _fn("delete_worksheet", "删除整张工作表（含所有行）", {
-        "title": _s("工作表名"),
-    }, ["title"]),
-    _fn("visualize_data", "把工作表里的数字画成图表（折线/柱状/饼图）并发给用户。"
-        "你先从相关工作表取出对应数字（必要时先 show_worksheet），再调本工具。"
-        "用户说\"画个图/可视化/看看趋势/show me the chart\"时用", {
-        "spec": {
-            "type": "object",
-            "description": "图表规格：type(line/bar/pie), title, 可选 x_label/y_label, "
-                           "x_labels(类别/X轴数组), series(数组，每项 {name, values})。"
-                           "line/bar 可多 series；pie 只能一个 series，values 对应 x_labels",
-        },
-    }, ["spec"]),
-    _fn("send_document", "把已归档的文档原件（租约/保单/证件等）发给用户。"
-        "先用 list_documents/show_document 找到对应文档的 id", {
-        "id": _int("文档 id"),
-    }, ["id"]),
-    _fn("send_file", "把 data 目录内的一个文件发给用户（path 为 data 相对路径）。"
-        "只能发家庭共享文件或你自己的文件", {
-        "path": _s("文件的 data 相对路径"),
-    }, ["path"]),
-    _fn("add_event", "添加家庭日程/活动/安排（自动同步到远程日历）", {
-        "title": _s("活动标题，如 孩子游泳课"),
-        "date": _s("日期 YYYY-MM-DD"),
-        "start": _s("开始时间 HH:MM（不知道具体时间就不填=全天）"),
-        "end": _s("结束时间 HH:MM"),
-        "all-day": {"type": "boolean", "description": "全天活动"},
-        "location": _s("地点"),
-        "notes": _s("备注"),
-        "source-image": _s("从图片（邀请函/海报/截图）建活动时，传那张已保存图片的路径，"
-                           "留存原始材料；纯文字建活动不填"),
-        "for-member": _s("默认归你（当前成员）自己的日历，即使活动关于别人也是。仅当用户"
-                         "明确说\"加到 X 的日历\"时，传该家庭成员名；否则不填"),
-    }, ["title", "date"]),
-    _fn("add_task", "添加待办/任务（自动同步到远程待办清单）", {
-        "title": _s("待办内容，如 买生日蛋糕"),
-        "due": _s("截止日期 YYYY-MM-DD（没有就不填）"),
-        "notes": _s("备注"),
-        "source-image": _s("从图片（账单/发票/截图）建待办时，传那张已保存图片的路径，"
-                           "留存原始材料；纯文字建待办不填"),
-        "for-member": _s("默认归你自己的待办清单。仅当用户明确说\"记到 X 的待办\"时，"
-                         "传该家庭成员名；否则不填"),
-    }, ["title"]),
-    _fn("list_schedule", "查询日程与待办，**未来和历史都能查**（查询前自动与远端核对/拉取；"
-        "用户问\"接下来有什么安排\"\"待办清单\"\"上个月去了几次X\"\"7月的日程\"）", {
-        "days": _int(f"未来窗口天数（默认 {_CAL_LOOKAHEAD}）；查历史请改用 from/to"),
-        "from": _s("窗口起始日 YYYY-MM-DD，**可以是过去任意日期**（查历史必填；"
-                   "省略 from 与 to = 只看未来 days 天）"),
-        "to": _s("窗口结束日 YYYY-MM-DD（给了 from 而省略 to，则到今天+days）"),
-        "kind": _s("只看活动或待办", enum=["event", "task"]),
-        "all": {"type": "boolean", "description": "包含已完成/已取消。数历史次数时通常要传 true，"
-                                                  "否则取消掉的那几次看不到"},
-    }),
-    _fn("complete_task", "标记一条待办完成（同步到远程）", {
-        "id": _int("日程 id"),
-    }, ["id"]),
-    _fn("remove_schedule_item", "取消一条日程/待办（已上云的同步删除远端）", {
-        "id": _int("日程 id"),
-        "kind": _s("活动(event)或待办(task)。活动与待办 id 会撞号，"
-                   "务必按 list_schedule 里该条显示的 [活动]/[待办] 一并传入", enum=["event", "task"]),
-    }, ["id"]),
-    _fn("sync_calendar", "立即与远程日历强制同步一轮（用户说\"刷新/同步日历\"）", {}),
-    _fn("calendar_status", "查看日历同步状态并实时核对本地↔远端一致性（启用/配置/上次刷新/校验结论）", {}),
-    _fn("web_search", "联网搜索最新资讯/新闻/动态（用户问\"最新新闻\"\"外面在发生什么\"\"帮我查一下X\"）。"
-        "返回抓取到的网页结果原文，你据此用中文总结报告", {
-        "query": _s("搜索关键词/问题"),
-    }, ["query"]),
-    _fn("web_read", "抓取并阅读一个网页链接（用户发链接让看/总结文章时）。返回网页正文，你据此总结", {
-        "url": _s("网页 URL"),
-    }, ["url"]),
-    _fn("youtube_summarize", "获取 YouTube 视频字幕转写（用户发 YouTube 链接让总结时）。"
-        "返回字幕全文（无字幕则返回标题+简介），你据此用中文总结视频内容", {
-        "url": _s("YouTube 视频 URL"),
-    }, ["url"]),
-    _fn("anysearch_search", "高质量实时联网搜索（AnySearch）。比 web_search 更准，"
-        "查最新资讯/事实/股价/学术/健康等首选。需要垂直领域结构化结果时（finance/health/"
-        "academic/travel/code 等），先用 anysearch_subdomains 拿到 sub_domain 再传 domain/sub_domain。"
-        "返回结果原文，你据此用中文总结报告", {
-        "query": _s("搜索关键词/问题"),
-        "domain": _s("垂直领域（可选）", enum=[
-            "general", "resource", "social_media", "finance", "academic", "legal",
-            "health", "business", "security", "ip", "code", "energy",
-            "environment", "agriculture", "travel", "film", "gaming"]),
-        "sub_domain": _s("子域路由键（如 finance.quote），垂直搜索时配 domain；先用 anysearch_subdomains 发现"),
-        "sub_domain_params": _s("子域参数，key=value,key2=value2 或 JSON（schema 见 anysearch_subdomains 输出）"),
-        "max_results": _int("返回结果数 1-10（默认 10）"),
-    }, ["query"]),
-    _fn("anysearch_extract", "抓取并提取一个网页链接的全文（AnySearch，markdown）。"
-        "用户发链接让看/总结、或搜索摘要不够需读全文时用。返回正文，你据此总结", {
-        "url": _s("网页 URL"),
-    }, ["url"]),
-    _fn("anysearch_subdomains", "查某垂直领域的可用子域及参数 schema（垂直 anysearch_search 前的发现步骤）。"
-        "返回 domain/sub_domain/query_format/params_schema 表", {
-        "domains": _s("单个或逗号分隔的多个领域，如 finance 或 finance,health"),
-    }, ["domains"]),
-    _fn("knowking", "懂王（KnowKing / kk）：跨社交平台（YouTube/X/Reddit/TikTok/Instagram/"
-        "Bilibili/Zhihu）搜集\"大家在怎么说某话题\"，出中立第三方舆情报告。"
-        "**仅当用户明确说出触发词 knowking / kk / 懂王 时才用**（如\"用 knowking 查 X\""
-        "\"kk 一下大家怎么看 X\"）；普通查事实/新闻/股价仍用 anysearch_search/web_search，不要用它。"
-        "耗时数分钟，后台运行，出报告会自动推送给用户——你只需把本工具返回的\"已开始\"提示原样转达，"
-        "不要等待、不要编造报告内容。", {
-        "topic": _s("要查的主题：去掉 knowking/kk/懂王 触发词，保留真正要查的内容 + 用户给的额外背景/角度/时间范围"),
-    }, ["topic"]),
-    _fn("fill_form_scan", "识别 PDF 表格的可填字段并创建填表会话（用户要求填表时用）。"
-        "可填写 PDF 直接列出字段；平面/扫描 PDF 返回逐页 OCR 文本+坐标，"
-        "需再调 fill_form_define_fields 提交你推断的字段。"
-        "同一 PDF 已有进行中会话时直接续用该会话（不会重建）。", {
-        "file": _s("PDF 路径（用户发来的保存路径，data 内）"),
-    }, ["file"]),
-    _fn("fill_form_define_fields", "平面表专用：把你从 OCR 布局推断出的待填字段提交给会话。"
-        "anchor 是填写区域（标签右侧或下方的空白处），页面像素坐标。", {
-        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
-        "fields": _s('JSON 数组: [{"name","label","type":"text|checkbox|choice",'
-                     '"options":[],"page":0,"anchor":{"x","y","w","h"}}]'),
-    }, ["session", "fields"]),
-    _fn("fill_form_next", "取会话中下一个未回答字段（问用户前调它）。", {
-        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
-    }, ["session"]),
-    _fn("fill_form_set_answer", "记录用户对某字段的回答。留空传空字符串。", {
-        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
-        "field": _s("字段 name"),
-        "value": _s("用户给的值；checkbox 用 on/off；留空传 \"\""),
-    }, ["session", "field", "value"]),
-    _fn("fill_form_render", "所有字段回答完后生成填好的 PDF 并自动发给用户。", {
-        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
-    }, ["session"]),
-    _fn("fill_form_list", "列出我的填表会话（恢复中断的填表用）。", {}),
-    _fn("set_profile_field", "写/改一条家庭成员资料（法定名/生日/电话/邮箱/住址/证件卡号等"
-        "长期个人事实，全家共享，全家可见可改）。用户提供这类信息时随手存这里，别存备忘。", {
-        "member-name": _s("这条事实属于谁：登记成员显示名；家庭层面（住址等）用 Family"),
-        "field": _s("字段名，如 生日 / 电话 / LAP卡号"),
-        "value": _s("值"),
-    }, ["member-name", "field", "value"]),
-    _fn("remove_profile_field", "删一条家庭成员资料。", {
-        "member-name": _s("成员显示名或 Family"),
-        "field": _s("字段名"),
-    }, ["member-name", "field"]),
-    _fn("fill_form_cancel", "取消一个填表会话。", {
-        "session": _s("会话 id（fill_form_scan 返回的，形如 20260713_222813_2b73；不确定就先 fill_form_list 查，别自己编）"),
-    }, ["session"]),
-]
-
-
-# ── 备忘上下文注入 ──────────────────────────────────────────
 
 
 
@@ -1164,132 +279,6 @@ def _now_context() -> str:
     return (f"\n\n## 当前时间\n{now:%Y-%m-%d %H:%M}"
             f"（星期{_WEEKDAYS_ZH[now.weekday()]}，本地时间）")
 
-
-def _notes_context(member: str, recent_limit: int = 5, clip: int = 100,
-                   db_path: str | None = None) -> str:
-    """取该成员置顶 + 最近备忘，拼成 system prompt 附加块。
-
-    进程内直调 note_db（每条消息都要取，subprocess 太重）。
-    任何失败返回空串 —— 备忘注入绝不能拖垮 handle()。
-    """
-    try:
-        import note_db
-        notes = note_db.pinned_and_recent(
-            member, recent_limit=recent_limit,
-            db_path=db_path or str(_paths.member_store(member, "notes")))
-        if not notes:
-            return ""
-        lines = []
-        for n in notes:
-            content = n["content"][:clip] + ("…" if len(n["content"]) > clip else "")
-            mark = "📌" if n.get("pinned") else "·"
-            lines.append(f"{mark} #{n['id']} {content}")
-        return (f"\n\n## 已存备忘（仅 {member} 可见；内容超长已截断，"
-                f"完整内容用 search_notes 查）\n" + "\n".join(lines))
-    except Exception:
-        _log.exception("备忘上下文注入失败（已跳过）")
-        return ""
-
-
-def _profiles_context(db_path: str | None = None) -> str:
-    """家庭成员资料块（家庭共享，注入所有成员对话）。失败/为空返回空串。"""
-    try:
-        import doc_db as _doc_db
-        rows = _doc_db.list_profiles(db_path=db_path)
-        if not rows:
-            return ""
-        lines, cur = [], None
-        for r in rows:
-            if r["member"] != cur:
-                cur = r["member"]
-                lines.append(f"【{cur}】")
-            lines.append(f"  {r['field']}: {r['value']}")
-        return ("\n\n## 家庭成员资料（全家共享，可用 set_profile_field 更新）\n"
-                + "\n".join(lines))
-    except Exception:
-        _log.exception("成员资料上下文注入失败（已跳过）")
-        return ""
-
-
-def _worksheets_context(member: str, db_path: str | None = None) -> str:
-    """取该成员置顶工作表，整表渲染进 system prompt（选择 B：全量注入）。
-
-    进程内直调 sheet_db。table 超 _WORKSHEET_PIN_ROW_CAP 行截断并提示。
-    任何失败返回空串 —— 工作表注入绝不能拖垮 handle()。
-    """
-    try:
-        import sheet_db
-        sheets = sheet_db.pinned_sheets(
-            member,
-            db_path=db_path or str(_paths.member_store(member, "notes")))
-        if not sheets:
-            return ""
-        blocks = []
-        for s in sheets:
-            if s is None:
-                continue
-            lines = [f"### {s['title']}（{s['kind']}）"]
-            if s["kind"] == "kv":
-                for k, v in s["kv_data"].items():
-                    lines.append(f"- {k}: {v}")
-            else:
-                rows = s["rows"]
-                shown = rows[:_WORKSHEET_PIN_ROW_CAP]
-                for row in shown:
-                    cells = "  ".join(f"{k}={v}" for k, v in row["row_data"].items())
-                    lines.append(f"- #{row['id']} {cells}")
-                if len(rows) > _WORKSHEET_PIN_ROW_CAP:
-                    lines.append(f"- …还有 {len(rows) - _WORKSHEET_PIN_ROW_CAP} 行，"
-                                 f"用 show_worksheet 看全部")
-            blocks.append("\n".join(lines))
-        if not blocks:
-            return ""
-        return (f"\n\n## 已存工作表（仅 {member} 可见，置顶项全量带上）\n"
-                + "\n\n".join(blocks))
-    except Exception:
-        _log.exception("工作表上下文注入失败（已跳过）")
-        return ""
-
-
-def _schedule_context(member: str | None = None, db_path: str | None = None,
-                      clip: int = 60, max_lines: int = 15) -> str:
-    """成员未来 N 天日程 + 待办，拼成 system prompt 附加块（按成员私有，分活动/待办两库）。
-
-    db_path 给定 → 直读该单库（测试/兼容）；否则按 member 读其 schedule + tasks 两库。
-    进程内直调 cal_db（每条消息都要取，subprocess 太重）。
-    任何失败返回空串 —— 日程注入绝不能拖垮 handle()。
-    """
-    try:
-        import cal_db
-        if db_path:
-            rows = cal_db.list_upcoming(days=_CAL_LOOKAHEAD, db_path=db_path)
-        elif member:
-            rows = []
-            for domain in ("schedule", "tasks"):
-                rows.extend(cal_db.list_upcoming(
-                    days=_CAL_LOOKAHEAD,
-                    db_path=str(_paths.member_store(member, domain))))
-            rows.sort(key=lambda r: (r["start_at"] == "", r["start_at"], r["id"]))
-        else:
-            return ""
-        if not rows:
-            return ""
-        lines = []
-        for r in rows[:max_lines]:
-            title = r["title"][:clip] + ("…" if len(r["title"]) > clip else "")
-            if r["kind"] == "event":
-                s = r["start_at"]
-                when = (s[5:10] + (" " + s[11:16] if len(s) > 10 else " 全天")) if s else ""
-                loc = f" @{r['location']}" if r["location"] else ""
-                lines.append(f"- {when} {title}{loc}".strip())
-            else:
-                due = f"（截止 {r['start_at'][5:10]}）" if r["start_at"] else ""
-                lines.append(f"- ☐ {title}{due}")
-        return (f"\n\n## 你未来{_CAL_LOOKAHEAD}天的日程与待办（按成员私有，已静默同步自你的远程日历；"
-                f"不要主动播报，仅在用户问到或相关时使用）\n" + "\n".join(lines))
-    except Exception:
-        _log.exception("日程上下文注入失败（已跳过）")
-        return ""
 
 
 # ── Agent ───────────────────────────────────────────────────
@@ -1440,9 +429,7 @@ class Agent:
         msgs = [{"role": "system",
                  "content": self.system_prompt + _now_context() + member_note
                  + self._llm_status_note(user)
-                 + _profiles_context()
-                 + _notes_context(member) + _worksheets_context(member)
-                 + _schedule_context(member)}]
+                 + _REGISTRY.context(member)}]
         # 历史（含跨轮保留的工具调用/结果）由 _save_history 控制长度，这里全量带上
         msgs.extend(self.history[user])
         msgs.append({"role": "user", "content": text})
