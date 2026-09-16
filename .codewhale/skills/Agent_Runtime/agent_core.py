@@ -115,7 +115,8 @@ def setup_logging(debug: bool = True) -> logging.Logger:
 # ── 技能注册表：各 skill 的 agent_tools.py 合并（新增 skill 零改动本文件） ──
 # 契约见 skill_registry.py。命令白名单/路由/超时住在 tool_runtime，此处只转发同一对象。
 
-_REGISTRY = skill_registry.load()
+REGISTRY = skill_registry.load()
+_REGISTRY = REGISTRY
 
 ALLOWED_COMMANDS = rt.ALLOWED
 _CLI_TIMEOUTS = rt.CLI_TIMEOUTS

@@ -38,6 +38,7 @@ def tool_send_file(args):
 
 
 TOOLS = {"knowking": tool_knowking, "send_file": tool_send_file}
+FAST_TICKS = [_knowking.poll_and_deliver]
 
 MEMBER_LOCKED = {"send_file"}
 CONTEXT_TOOLS = {"knowking"}

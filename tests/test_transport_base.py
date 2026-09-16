@@ -87,8 +87,8 @@ def test_one_failed_attachment_does_not_block_text(tmp_path, monkeypatch):
 
 def test_on_text_ticks_quotes_and_delivers(monkeypatch):
     ticks = []
-    monkeypatch.setattr(tb, "calendar_tick", lambda: ticks.append("cal"))
-    monkeypatch.setattr(tb, "image_gc_tick", lambda: ticks.append("gc"))
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks",
+                        [lambda: ticks.append("cal"), lambda: ticks.append("gc")])
     agent = FakeAgent(reply="回")
     t = FakeTransport(agent=agent)
     t.on_text("tgt", 42, "Alex", "你好", quoted="上一条")
@@ -98,16 +98,14 @@ def test_on_text_ticks_quotes_and_delivers(monkeypatch):
 
 
 def test_on_text_agent_exception_reports_not_crashes(monkeypatch):
-    monkeypatch.setattr(tb, "calendar_tick", lambda: None)
-    monkeypatch.setattr(tb, "image_gc_tick", lambda: None)
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
     t = FakeTransport(agent=FakeAgent(boom=True))
     t.on_text("tgt", 1, "Alex", "x")
     assert t.calls and t.calls[0][2].startswith("处理出错")
 
 
 def test_on_media_none_path_asks_resend(monkeypatch):
-    monkeypatch.setattr(tb, "calendar_tick", lambda: None)
-    monkeypatch.setattr(tb, "image_gc_tick", lambda: None)
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
     agent = FakeAgent()
     t = FakeTransport(agent=agent)
     t.on_media("tgt", 1, "Alex", None)
@@ -116,8 +114,7 @@ def test_on_media_none_path_asks_resend(monkeypatch):
 
 
 def test_on_media_routes_to_handle_image(monkeypatch, tmp_path):
-    monkeypatch.setattr(tb, "calendar_tick", lambda: None)
-    monkeypatch.setattr(tb, "image_gc_tick", lambda: None)
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
     agent = FakeAgent(reply="收到")
     t = FakeTransport(agent=agent)
     t.on_media("tgt", 1, "Alex", tmp_path / "a.jpg")
@@ -148,12 +145,20 @@ def test_inbox_path_uses_member_inbox_and_channel(tmp_path, monkeypatch):
 
 def test_background_tick_isolates_failures(monkeypatch):
     order = []
-    monkeypatch.setattr(tb, "doc_reminder_check", lambda send, ch: (_ for _ in ()).throw(RuntimeError("r")))
-    monkeypatch.setattr(tb, "knowking_deliver", lambda send, ch: order.append(("kk", ch)))
-    monkeypatch.setattr(tb, "backup_tick", lambda: order.append("backup"))
+    monkeypatch.setattr(tb.REGISTRY, "slow_ticks", [
+        lambda send, ch: (_ for _ in ()).throw(RuntimeError("r")),
+        lambda send, ch: order.append(("backup", ch))])
+    monkeypatch.setattr(tb.REGISTRY, "fast_ticks", [lambda send, ch: order.append(("kk", ch))])
     t = FakeTransport(agent=FakeAgent())
     t.background_tick()
-    assert order == [("kk", "telegram"), "backup"]
+    assert order == [("backup", "telegram"), ("kk", "telegram")]
+
+
+def test_real_manifests_register_ticks():
+    names = lambda fns: {getattr(f, "__name__", "") for f in fns}
+    assert {"calendar_tick", "image_gc_tick"} <= names(tb.REGISTRY.message_ticks)
+    assert {"check_and_push", "backup_tick"} <= names(tb.REGISTRY.slow_ticks)
+    assert "poll_and_deliver" in names(tb.REGISTRY.fast_ticks)
 
 
 def test_agent_is_lazy():

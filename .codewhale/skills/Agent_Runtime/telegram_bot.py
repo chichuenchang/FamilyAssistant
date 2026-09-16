@@ -38,8 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); 
 import logging
 
 from agent_core import receipt_month_dir, member_inbox_dir, setup_logging
-from transport_base import (Transport, with_quote as _with_quote,
-                            knowking_deliver as _knowking_deliver)
+from transport_base import Transport, with_quote as _with_quote
 import paths as _paths
 
 log = logging.getLogger("familyassist.telegram")

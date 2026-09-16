@@ -56,8 +56,7 @@ import logging
 
 from agent_core import Agent, setup_logging, split_reply as _split_reply
 from members import resolve
-from transport_base import (Transport, with_quote as _with_quote,
-                            knowking_deliver as _knowking_deliver)
+from transport_base import Transport, with_quote as _with_quote
 import paths as _paths
 
 log = logging.getLogger("familyassist.wechat")

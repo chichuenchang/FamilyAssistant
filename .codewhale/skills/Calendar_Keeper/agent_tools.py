@@ -193,3 +193,8 @@ def schedule_context(member: str | None = None, db_path: str | None = None,
 
 
 CONTEXT_FNS = [schedule_context]
+
+from calendar_sync import calendar_tick  # noqa: E402
+from image_gc import image_gc_tick  # noqa: E402
+
+MESSAGE_TICKS = [calendar_tick, image_gc_tick]

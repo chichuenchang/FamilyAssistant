@@ -2,8 +2,9 @@
 
 子类只做三件事：实现 send_text / send_photo / send_document，把 SDK 收到的消息
 翻译成 on_text / on_media 调用，以及决定后台节拍怎么跑（轮询循环内调 background_tick，
-或 start_background_threads 起守护线程）。闸门、节流刷新、来图落盘、哨兵拆分投递、
-异常兜底、到期提醒 / 懂王投递 / 备份节拍全在这里，各频道零复制。
+或 start_background_threads 起守护线程）。闸门、来图落盘、哨兵拆分投递、异常兜底在这里，
+各频道零复制。节拍钩子来自各 skill manifest（MESSAGE_TICKS / SLOW_TICKS / FAST_TICKS，
+契约见 skill_registry.py）；本模块不 import 任何 skill。
 
 target = 子类 send_* 认得的投递目标（Telegram 是 chat_id；微信可为 msg 或 wxid）。
 """
@@ -21,13 +22,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); 
 
 import backup_hook
 import paths as _paths
-from agent_core import Agent, member_inbox_dir, split_reply
+from agent_core import Agent, REGISTRY, member_inbox_dir, split_reply
 from members import resolve
-from knowking_jobs import poll_and_deliver as knowking_deliver
-from reminder import check_and_push as doc_reminder_check
-from backup_sync import backup_tick
-from calendar_sync import calendar_tick
-from image_gc import image_gc_tick
+from skill_registry import run_ticks
 
 log = logging.getLogger("familyassist.transport")
 
@@ -87,9 +84,8 @@ class Transport:
         return member
 
     def tick(self) -> None:
-        """已注册成员来消息 → 静默节流刷新远程日历 + 清理陈旧来图（内部把关，永不抛）。"""
-        calendar_tick()
-        image_gc_tick()
+        """已注册成员来消息 → 各 skill 的 MESSAGE_TICKS（节流各自把关）。"""
+        run_ticks(REGISTRY.message_ticks)
 
     def inbox_path(self, member: str, ext: str) -> Path:
         """来件暂存路径 data/<成员>/inbox/YYYY-MM/<ts>_<channel><ext>。"""
@@ -160,41 +156,25 @@ class Transport:
         """后台推送（提醒/懂王报告）：按频道内用户 id 发。默认与 send_text 同；微信覆写。"""
         self.send_text(user, text)
 
-    def background_tick(self, backup: bool = True) -> None:
-        """一轮后台工作：文档到期提醒（按日去重）+ 懂王报告投递 + 备份节拍。各自兜底。"""
-        try:
-            doc_reminder_check(self.push_text, self.channel)
-        except Exception as e:
-            print(f"[{self.tag}] 文档提醒检查异常: {e}", file=sys.stderr)
-            log.exception("文档提醒检查异常")
-        try:
-            knowking_deliver(self.push_text, self.channel)
-        except Exception as e:
-            print(f"[{self.tag}] KnowKing 投递异常: {e}", file=sys.stderr)
-            log.exception("KnowKing 投递异常")
-        if backup:
-            backup_tick()
+    def slow_tick(self) -> None:
+        run_ticks(REGISTRY.slow_ticks, self.push_text, self.channel)
+
+    def fast_tick(self) -> None:
+        run_ticks(REGISTRY.fast_ticks, self.push_text, self.channel)
+
+    def background_tick(self) -> None:
+        """一轮后台工作：全部 SLOW_TICKS + FAST_TICKS（轮询型 SDK 每轮调一次）。"""
+        self.slow_tick()
+        self.fast_tick()
 
     def start_background_threads(self, slow_every: int = 600, fast_every: int = 20) -> None:
-        """SDK 自带阻塞事件循环（无轮询钩子）时用：慢线程跑提醒+备份，快线程跑懂王投递。"""
-        def _slow():
+        """SDK 自带阻塞事件循环（无轮询钩子）时用：慢/快各一条守护线程。"""
+        def _loop(fn, every):
             while True:
-                try:
-                    doc_reminder_check(self.push_text, self.channel)
-                except Exception as e:
-                    print(f"[{self.tag}] 文档提醒检查异常: {e}", file=sys.stderr)
-                    log.exception("文档提醒检查异常")
-                backup_tick()
-                time.sleep(slow_every)
+                fn()
+                time.sleep(every)
 
-        def _fast():
-            while True:
-                try:
-                    knowking_deliver(self.push_text, self.channel)
-                except Exception as e:
-                    print(f"[{self.tag}] KnowKing 投递异常: {e}", file=sys.stderr)
-                    log.exception("KnowKing 投递异常")
-                time.sleep(fast_every)
-
-        threading.Thread(target=_slow, daemon=True, name="doc-reminder").start()
-        threading.Thread(target=_fast, daemon=True, name="knowking-deliver").start()
+        threading.Thread(target=_loop, args=(self.slow_tick, slow_every),
+                         daemon=True, name="slow-tick").start()
+        threading.Thread(target=_loop, args=(self.fast_tick, fast_every),
+                         daemon=True, name="fast-tick").start()

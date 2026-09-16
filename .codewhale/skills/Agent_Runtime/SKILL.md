@@ -113,7 +113,7 @@ def run():
             t.on_media(msg.sender_id, msg.sender_id, member, path)
         else:
             t.on_text(msg.sender_id, msg.sender_id, member, msg.text, quoted=msg.quoted_text)
-        t.background_tick()                              # 轮询型 SDK：每轮一次
+        t.background_tick()                              # 轮询型 SDK：每轮一次（跑各 manifest 的 SLOW_TICKS + FAST_TICKS）
     # 阻塞型 SDK（无轮询钩子）：改用 t.start_background_threads() 再 sdk.run()
 
 if __name__ == "__main__":
@@ -138,8 +138,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 - **后台 + 推送模型**（`kk ask` 耗时数分钟，同步会卡死会话）：`knowking` 工具调
   `knowking_jobs.submit()` → 落盘 `running` 任务 + 起守护线程跑 `uv run kk ask` → 立即返回
   "已开始"给用户；出报告后由传输层轮询 `poll_and_deliver(send_fn, channel)` 把报告推回**发起人**
-  （与 `reminder.check_and_push` / `backup_tick` 同构：Telegram 挂在长轮询尾部 ~30s；微信用
-  独立 `knowking-deliver` 守护线程 ~20s）。
+  （manifest `FAST_TICKS`；Telegram 挂在长轮询尾部 ~30s，微信走 `fast-tick` 守护线程 ~20s）。
 - **频道上下文注入**：`Agent(channel=...)`（各传输层构造时传 `"wechat"`/`"telegram"`）+ handle 里
   `_apply_context` 把 `__channel`/`__user`/`member` 注入 `knowking` 工具参数（代码确定性，LLM 不得伪造投递目标）。本地测试无 channel → 工具返回"仅正式频道可用"。
 - **任务落盘** `data/.knowking_jobs/<id>.json`（运行时瞬态，已列入 `backup_sync._HARD_EXCLUDE_DIRS`

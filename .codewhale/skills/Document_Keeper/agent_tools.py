@@ -144,3 +144,7 @@ def profiles_context(member: str | None = None, db_path: str | None = None) -> s
 
 
 CONTEXT_FNS = [profiles_context]
+
+from reminder import check_and_push as doc_reminder_check  # noqa: E402
+
+SLOW_TICKS = [doc_reminder_check]

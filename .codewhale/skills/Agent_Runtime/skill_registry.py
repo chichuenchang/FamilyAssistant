@@ -14,6 +14,9 @@ manifest 是普通模块，模块级属性即契约（全部可选，缺省为�
     PROMPT_SECTIONS list[str]  system prompt 独立段落（"## 标题" 开头）
     PROMPT_RULES    list[str]  并入 "## 行为准则" 的条目（不带 "- "）
     CONTEXT_FNS     list[callable(member)->str]  每条消息注入 system prompt 的动态块
+    MESSAGE_TICKS   list[callable()]  已注册成员每条消息到达时跑（节流自理）
+    SLOW_TICKS      list[callable(push_text, channel)]  后台慢拍（~10 分钟）：提醒/备份
+    FAST_TICKS      list[callable(push_text, channel)]  后台快拍（~20 秒）：异步结果投递
 
 新增 skill = 在其目录放 agent_tools.py；agent_core 零改动。
 """
@@ -46,6 +49,9 @@ class Registry:
     prompt_sections: list[str] = field(default_factory=list)
     prompt_rules: list[str] = field(default_factory=list)
     context_fns: list[Callable[[str], str]] = field(default_factory=list)
+    message_ticks: list[Callable] = field(default_factory=list)
+    slow_ticks: list[Callable] = field(default_factory=list)
+    fast_ticks: list[Callable] = field(default_factory=list)
 
     def context(self, member: str) -> str:
         """全部动态块拼接；单块失败只记日志，绝不拖垮 handle()。"""
@@ -56,6 +62,15 @@ class Registry:
             except Exception:
                 log.exception("上下文注入失败（已跳过）: %s", getattr(f, "__name__", f))
         return "".join(out)
+
+
+def run_ticks(fns: list[Callable], *args) -> None:
+    """逐个跑节拍钩子；单个失败只记日志，不影响其余。"""
+    for f in fns:
+        try:
+            f(*args)
+        except Exception:
+            log.exception("节拍钩子异常（已跳过）: %s", getattr(f, "__name__", f))
 
 
 def _import_manifest(skill: str, path) -> ModuleType:
@@ -102,4 +117,7 @@ def load() -> Registry:
         reg.prompt_sections.extend(getattr(m, "PROMPT_SECTIONS", ()))
         reg.prompt_rules.extend(getattr(m, "PROMPT_RULES", ()))
         reg.context_fns.extend(getattr(m, "CONTEXT_FNS", ()))
+        reg.message_ticks.extend(getattr(m, "MESSAGE_TICKS", ()))
+        reg.slow_ticks.extend(getattr(m, "SLOW_TICKS", ()))
+        reg.fast_ticks.extend(getattr(m, "FAST_TICKS", ()))
     return reg

@@ -11,6 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 from tool_runtime import fn
+from backup_sync import backup_tick as _backup_tick
 
 ORDER = 40
 
@@ -38,3 +39,11 @@ PROMPT_SECTIONS = [
   Remote_Backup/SKILL.md 完成 Google Drive 授权并启用；不要反复推销
 - 数据恢复（backup-restore）只能在电脑上手动执行，你调不到""",
 ]
+
+
+def backup_tick(push_text, channel) -> None:
+    """慢拍：脏 + 去抖到期才真正上传（backup_sync 自理）。"""
+    _backup_tick()
+
+
+SLOW_TICKS = [backup_tick]
