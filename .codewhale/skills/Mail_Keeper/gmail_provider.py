@@ -8,6 +8,8 @@ Mail Keeper — Gmail REST v1 provider（零外部依赖，仅标准库 urllib�
 scope：gmail.readonly（搜/读）+ gmail.send（只发，不能删改信件）。
 网络/API 错误抛 RuntimeError。代码里不得出现字面 token/key。
 
+附件：get_message 的 attachments 字段（元数据），字节走 get_attachment(msg_id, attachment_id, prefix)。
+
 新邮件播报（mail_watch 用）要的三件：
     profile_history_id(prefix) -> str                       当前游标（首次起点）
     history_since(cursor, prefix) -> (rows | None, 新游标)   rows=[{id, thread_id, labels}]（新进收件箱）；
@@ -140,6 +142,35 @@ def _html_to_text(s: str) -> str:
     return re.sub(r"\n\s*\n+", "\n\n", s).strip()
 
 
+def attachments(payload: dict) -> list[dict]:
+    """MIME 树取附件：带 filename 且 body 有 attachmentId 的 part。
+
+    [{filename, mime, size, attachment_id}]。内容不取——要字节再 get_attachment。
+    """
+    out: list[dict] = []
+
+    def walk(p: dict):
+        body = p.get("body") or {}
+        if p.get("filename") and body.get("attachmentId"):
+            out.append({"filename": p["filename"], "mime": p.get("mimeType", ""),
+                        "size": int(body.get("size") or 0),
+                        "attachment_id": body["attachmentId"]})
+        for c in p.get("parts") or []:
+            walk(c)
+
+    walk(payload)
+    return out
+
+
+def get_attachment(msg_id: str, attachment_id: str, prefix: str = DEFAULT_PREFIX) -> bytes:
+    """一个附件的原始字节。"""
+    r = _api(prefix, "GET",
+             f"/messages/{urllib.parse.quote(msg_id, safe='')}"
+             f"/attachments/{urllib.parse.quote(attachment_id, safe='')}")
+    data = r.get("data") or ""
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+
+
 def body_text(payload: dict) -> str:
     """MIME 树取正文：优先 text/plain，无则 text/html 去标签。附件忽略。"""
     plain, rich = [], []
@@ -258,7 +289,8 @@ def get_message(msg_id: str, prefix: str = DEFAULT_PREFIX) -> dict:
             "from": h.get("from", ""), "to": h.get("to", ""), "cc": h.get("cc", ""),
             "reply_to": h.get("reply-to", ""), "subject": h.get("subject", ""),
             "date": h.get("date", ""), "message_id": h.get("message-id", ""),
-            "references": h.get("references", ""), "body": body_text(payload)}
+            "references": h.get("references", ""), "body": body_text(payload),
+            "attachments": attachments(payload)}
 
 
 def reply_recipient(msg: dict) -> str:

@@ -41,6 +41,9 @@ Testing，refresh token 7 天后失效需重授权；生产未验证状态个人
 ## 边界
 
 - ❌ 主动查邮箱（工具只在用户开口时动；播报是独立的 `watch` 开关，且只给发件人+主题）
-- ❌ 新开一封信、指定收件人、抄送、附件（只能回原发件人，纯文本）
+- ❌ 新开一封信、指定收件人、抄送、发件带附件（只能回原发件人，纯文本）
 - ❌ 删信/改标签/标已读（scope 就没给）
-- 附件不解析；正文优先 `text/plain`，只有 HTML 时去标签取文本，截断 `BODY_CAP` 6000 字
+- 正文优先 `text/plain`，只有 HTML 时去标签取文本，截断 `BODY_CAP` 6000 字
+- 收件附件：`read_mail` 列名字，`download_attachment` 才落盘到 `data/<成员>/inbox/YYYY-MM/`，
+  内容要 OCR 的 `ocr_read`（OCR skill）。只收图片与 PDF、上限 `ATTACH_MAX_BYTES` 10 MB
+  （exe/zip/office 宏不落盘）；文件名洗成末段、同名不覆盖

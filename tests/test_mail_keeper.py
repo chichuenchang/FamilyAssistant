@@ -11,6 +11,7 @@ import pytest
 import agent_core as ac
 import gmail_provider as gp
 import mail_draft as md
+import paths as _paths
 
 
 PREFIX = "TESTMAIL"
@@ -63,6 +64,22 @@ class _Stub:
             return 200, json.dumps({"messages": ids}).encode()
         mid = url.split("/messages/")[1].split("?")[0]
         return 200, json.dumps(self.messages[mid]).encode()
+
+
+class _AttachStub(_Stub):
+    """_Stub + attachments 端点（attachment_id → 原始字节）。"""
+
+    def __init__(self, messages, blobs):
+        super().__init__(messages)
+        self.blobs = blobs
+
+    def __call__(self, method, url, data=None, headers=None):
+        if "/attachments/" in url:
+            self.calls.append((method, url, None))
+            aid = url.split("/attachments/")[1].split("?")[0]
+            body = base64.urlsafe_b64encode(self.blobs[aid]).decode().rstrip("=")
+            return 200, json.dumps({"size": len(self.blobs[aid]), "data": body}).encode()
+        return super().__call__(method, url, data, headers)
 
 
 @pytest.fixture
@@ -777,3 +794,94 @@ class TestMuteTools:
 
     def test_rules_tool_on_empty_list(self):
         assert "没有" in at.tool_mail_rules({"member": "MemberA"})
+
+
+class TestAttachments:
+    """附件：信里列出 → 用户要了才下载 → 只落 data/<成员>/inbox/ 内。"""
+
+    def _msg_with_pdf(self, *, filename="bill.pdf", mime="application/pdf", size=1234):
+        m = _msg()
+        m["payload"] = {"mimeType": "multipart/mixed", "headers": m["payload"]["headers"],
+                        "parts": [{"mimeType": "text/plain", "body": {"data": _b64("see attached")}},
+                                  {"mimeType": mime, "filename": filename,
+                                   "body": {"attachmentId": "a1", "size": size}}]}
+        return m
+
+    @pytest.fixture
+    def pdf_stub(self, monkeypatch):
+        s = _AttachStub([self._msg_with_pdf()], {"a1": b"%PDF-bytes"})
+        monkeypatch.setattr(gp, "_http", s)
+        monkeypatch.setattr(at, "_provider", lambda member: ((gp, PREFIX), ""))
+        return s
+
+    def test_get_message_lists_attachments(self, pdf_stub):
+        att = gp.get_message("m1", PREFIX)["attachments"]
+        assert att == [{"filename": "bill.pdf", "mime": "application/pdf",
+                        "size": 1234, "attachment_id": "a1"}]
+
+    def test_body_ignores_attachment_parts(self, pdf_stub):
+        assert gp.get_message("m1", PREFIX)["body"] == "see attached"
+
+    def test_get_attachment_decodes_base64url(self, pdf_stub):
+        assert gp.get_attachment("m1", "a1", PREFIX) == b"%PDF-bytes"
+
+    def test_read_mail_shows_attachment_list(self, pdf_stub):
+        out = at.tool_read_mail({"member": "MemberA", "id": "m1"})
+        assert "bill.pdf" in out and "附件" in out
+
+    def test_download_writes_into_member_inbox(self, pdf_stub):
+        out = at.tool_download_attachment({"member": "MemberA", "id": "m1",
+                                           "filename": "bill.pdf"})
+        rel = out.splitlines()[0].strip()
+        p = _paths.data_root() / rel
+        assert p.read_bytes() == b"%PDF-bytes"
+        assert p.parent == _paths.member_inbox_dir("MemberA")
+
+    def test_download_defaults_to_the_only_attachment(self, pdf_stub):
+        out = at.tool_download_attachment({"member": "MemberA", "id": "m1"})
+        assert (_paths.data_root() / out.splitlines()[0].strip()).exists()
+
+    def test_second_download_does_not_overwrite(self, pdf_stub):
+        first = at.tool_download_attachment({"member": "MemberA", "id": "m1"}).splitlines()[0]
+        second = at.tool_download_attachment({"member": "MemberA", "id": "m1"}).splitlines()[0]
+        assert first != second
+        assert (_paths.data_root() / second.strip()).exists()
+
+    def test_traversal_filename_stays_in_inbox(self, monkeypatch):
+        s = _AttachStub([self._msg_with_pdf(filename="../../evil.pdf")], {"a1": b"%PDF"})
+        monkeypatch.setattr(gp, "_http", s)
+        monkeypatch.setattr(at, "_provider", lambda member: ((gp, PREFIX), ""))
+        out = at.tool_download_attachment({"member": "MemberA", "id": "m1"})
+        p = _paths.data_root() / out.splitlines()[0].strip()
+        assert p.parent == _paths.member_inbox_dir("MemberA")
+
+    def test_refuses_non_image_pdf(self, monkeypatch):
+        s = _AttachStub([self._msg_with_pdf(filename="setup.exe",
+                                            mime="application/octet-stream")],
+                        {"a1": b"MZ"})
+        monkeypatch.setattr(gp, "_http", s)
+        monkeypatch.setattr(at, "_provider", lambda member: ((gp, PREFIX), ""))
+        out = at.tool_download_attachment({"member": "MemberA", "id": "m1",
+                                          "filename": "setup.exe"})
+        assert out.startswith("[错误]") and "setup.exe" in out
+        assert not any("/attachments/" in c[1] for c in s.calls)
+
+    def test_refuses_oversize(self, monkeypatch):
+        s = _AttachStub([self._msg_with_pdf(size=at.ATTACH_MAX_BYTES + 1)], {"a1": b"%PDF"})
+        monkeypatch.setattr(gp, "_http", s)
+        monkeypatch.setattr(at, "_provider", lambda member: ((gp, PREFIX), ""))
+        out = at.tool_download_attachment({"member": "MemberA", "id": "m1"})
+        assert out.startswith("[错误]")
+        assert not any("/attachments/" in c[1] for c in s.calls)
+
+    def test_no_attachment_says_so(self, monkeypatch):
+        monkeypatch.setattr(gp, "_http", _AttachStub([_msg()], {}))
+        monkeypatch.setattr(at, "_provider", lambda member: ((gp, PREFIX), ""))
+        out = at.tool_download_attachment({"member": "MemberA", "id": "m1"})
+        assert out.startswith("[错误]") and "附件" in out
+
+    def test_tool_registered_member_locked_and_untrusted(self):
+        names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
+        assert "download_attachment" in names
+        assert "download_attachment" in ac._TOOL_MAP
+        assert "download_attachment" in ac._MEMBER_LOCKED
