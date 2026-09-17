@@ -333,7 +333,8 @@ class Agent:
         if not text:
             return "收到空消息。"
         # 每条用户消息 = 一轮（/clear、/model 这类也算，中间插一条就断掉待确认草稿的链）
-        turn_id = self._turn_seq[user] = self._turn_seq.get(user, 0) + 1
+        turn_id = self._turn_seq.get(user, 0) + 1
+        self._turn_seq[user] = turn_id
 
         # 闲置自动清空：距该用户上次消息超过 idle_clear_hours → 旧话题上下文作废
         now = time.time()
