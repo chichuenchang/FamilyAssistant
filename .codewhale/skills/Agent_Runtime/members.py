@@ -28,23 +28,13 @@ import tempfile
 from pathlib import Path
 
 import jsonfile
+import paths as _paths
 
-# 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
-ROOT = Path(__file__).resolve().parents[3]
 
 
 def _default_members_path() -> Path:
-    """members.json 位置：data_root/members.json。
-
-    data_root 规则与 paths.data_root() 一致（DATA_ROOT 环境变量优先，
-    再 config.data_root，回退 data/）；paths.py import 本模块，
-    规则在此内联以免循环 import。仅 import 时求值一次（测试改后需 reload）。
-    """
-    env = os.environ.get("DATA_ROOT")
-    if env:
-        return Path(env) / "members.json"
-    droot = jsonfile.load_dict(ROOT / "config.json").get("data_root") or "data"
-    return ROOT / droot / "members.json"
+    """members.json 位置：data_root/members.json。仅 import 时求值一次（测试改后需 reload）。"""
+    return _paths.data_root() / "members.json"
 
 
 MEMBERS_PATH = _default_members_path()
