@@ -107,8 +107,8 @@ def preview(draft: dict) -> str:
     """给用户看的草稿全文（起草工具在 SHOW_TOOLS：代码直接附给用户，不经 LLM 转述）。"""
     att = draft.get("attachments") or []
     head = "待确认回信" if draft.get("kind", "reply") == "reply" else "待确认新邮件"
-    att_block = ("附件（{n} 个）：\n{rows}\n".format(
-        n=len(att), rows="\n".join(f"  {a}" for a in att)) if att else "")
+    rows = "".join(f"  {a}\n" for a in att)
+    att_block = f"附件（{len(att)} 个）：\n{rows}" if att else ""
     return (f"{head}：\n收件人：{draft.get('to', '')}\n"
             f"主题：{draft.get('subject', '')}\n{att_block}---\n{draft.get('body', '')}\n---\n"
             f"回复\"确认发送\"我就发出；改内容就直接说怎么改（30 分钟内有效）。")
