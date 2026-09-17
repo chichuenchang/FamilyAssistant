@@ -152,6 +152,19 @@ class TestDraftGate:
         draft, why = md.check("MemberA", turn_at=time.time(), text="那封账单多少钱？")
         assert draft is None and "没有明确确认" in why
 
+    @pytest.mark.parametrize("text", [
+        "不行，先别发送", "帮我看下银行那封", "不确定", "不同意", "don't send", "token",
+        "ok", "好的谢谢", "确认一下内容再说"])
+    def test_negations_substrings_and_bare_acks_are_not_consent(self, text):
+        self._put(age_s=5)
+        draft, why = md.check("MemberA", turn_at=time.time(), text=text)
+        assert draft is None and "没有明确确认" in why
+
+    @pytest.mark.parametrize("text", ["确认", "好的，发送吧", "可以发", "OK, send it!"])
+    def test_whole_sentence_confirmations_pass(self, text):
+        self._put(age_s=5)
+        assert md.check("MemberA", turn_at=time.time(), text=text)[1] == ""
+
     def test_expired_draft_refused_and_dropped(self):
         self._put(age_s=md.TTL_S + 1)
         draft, why = md.check("MemberA", turn_at=time.time(), text="确认发送")
