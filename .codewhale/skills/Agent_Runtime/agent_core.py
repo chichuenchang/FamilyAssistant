@@ -151,15 +151,16 @@ def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
 
 
 def _apply_context(tool_name: str, targs: dict, channel: str, user: str,
-                   member: str, turn_at: float = 0.0, text: str = "") -> dict:
+                   member: str, turn_id: int = 0, text: str = "") -> dict:
     """CONTEXT_TOOLS：注入发起频道 + 发起人 id + 成员名（异步投递需要）
-    + 本轮开始时间 __turn_at 与用户原话 __text（对外不可撤回动作的两轮确认闸门，
-    见 Mail_Keeper/mail_draft.check）。确定性来自代码而非 LLM。其余工具原样放行。"""
+    + 本轮序号 __turn_id（每用户单调递增）与用户原话 __text（对外不可撤回动作的
+    两轮确认闸门，见 Mail_Keeper/mail_draft.check）。确定性来自代码而非 LLM。
+    其余工具原样放行。"""
     if tool_name in _CONTEXT_TOOLS:
         targs = dict(targs)
         targs["__channel"] = channel or ""
         targs["__user"] = str(user) if user else ""
-        targs["__turn_at"] = turn_at
+        targs["__turn_id"] = int(turn_id)
         targs["__text"] = text
         if member:
             targs["member"] = member
@@ -317,6 +318,7 @@ class Agent:
         self.idle_clear_seconds = float(hours) * 3600
         self.history: dict[str, list[dict]] = defaultdict(list)
         self._last_active: dict[str, float] = {}
+        self._turn_seq: dict[str, int] = {}   # 用户 → 轮次序号（两轮确认闸门用，进程内单调）
         self._llm_overrides: dict[str, dict] = _load_llm_overrides()
 
     def handle(self, text: str, user: str = "default", member: str = "", *,
@@ -330,6 +332,8 @@ class Agent:
         text = text.strip()
         if not text:
             return "收到空消息。"
+        # 每条用户消息 = 一轮（/clear、/model 这类也算，中间插一条就断掉待确认草稿的链）
+        turn_id = self._turn_seq[user] = self._turn_seq.get(user, 0) + 1
 
         # 闲置自动清空：距该用户上次消息超过 idle_clear_hours → 旧话题上下文作废
         now = time.time()
@@ -400,7 +404,7 @@ class Agent:
                 fn = _TOOL_MAP.get(name)
                 targs = _apply_member(name, targs, member)
                 targs = _apply_context(name, targs, self.channel, user, member,
-                                       turn_at=now, text=said)
+                                       turn_id=turn_id, text=said)
                 result = fn(targs) if fn else f"[错误] 未知工具: {name}"
                 # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())

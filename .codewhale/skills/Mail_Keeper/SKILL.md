@@ -3,7 +3,7 @@
 > 按成员私有的邮箱：查收、读全文、**两轮确认**后回信或发新信（可带附件）。只读 + 只发，不能删改信件。
 > 当前 provider = Gmail REST v1（契约见 `gmail_provider.py` 文件头）。
 
-无 `cli.py`：发信闸门要 `__turn_at` / `__text`（`agent_core._apply_context` 注入），
+无 `cli.py`：发信闸门要 `__turn_id` / `__user` / `__text`（`agent_core._apply_context` 注入），
 子进程拿不到 → 工具在 bot 进程内跑。
 
 发信闸门：`mail_draft.py` 文件头。草稿预览必达用户：`SHOW_TOOLS`（`skill_registry.py` 文件头）。

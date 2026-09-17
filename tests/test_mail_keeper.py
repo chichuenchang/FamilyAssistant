@@ -173,29 +173,49 @@ class TestReplyAddressing:
 class TestDraftGate:
     """Send is gated by code, not by the LLM's good behaviour."""
 
-    def _put(self, member="MemberA", *, age_s=0.0):
+    def _put(self, member="MemberA", *, age_s=0.0, turn_id=7, user="u1"):
         return md.put(member, {"to": "s@example.com", "subject": "Re: Invoice",
-                               "body": "ok"}, now=time.time() - age_s)
+                               "body": "ok"}, turn_id=turn_id, user=user,
+                      now=time.time() - age_s)
+
+    def _check(self, member="MemberA", *, turn_id=8, user="u1", text="确认发送"):
+        return md.check(member, turn_id=turn_id, user=user, text=text)
 
     def test_no_draft_refuses(self):
         md.drop("MemberA")
-        draft, why = md.check("MemberA", turn_at=time.time(), text="确认发送")
+        draft, why = self._check()
         assert draft is None and "没有待发送" in why
 
     def test_same_turn_send_refused(self):
-        turn_at = time.time()
-        self._put()                                  # drafted during this turn
-        draft, why = md.check("MemberA", turn_at=turn_at, text="确认发送")
-        assert draft is None and "这一轮" in why
+        self._put()                                  # drafted during turn 7
+        draft, why = self._check(turn_id=7)
+        assert draft is None and "不是上一轮" in why
+
+    def test_stale_draft_from_an_earlier_turn_refused(self):
+        """An "确认" two turns later answers something else — not this preview."""
+        self._put(age_s=5)                           # drafted during turn 7
+        draft, why = self._check(turn_id=9)
+        assert draft is None and "不是上一轮" in why
+
+    def test_another_users_turn_cannot_confirm(self):
+        self._put(age_s=5, user="u1")
+        draft, why = self._check(user="u2")
+        assert draft is None and "不是上一轮" in why
+
+    def test_missing_turn_context_refuses(self):
+        """Injection failing open would send; it must fail closed."""
+        self._put(age_s=5)
+        draft, why = self._check(turn_id=0, user="")
+        assert draft is None and "不是上一轮" in why
 
     def test_next_turn_with_confirmation_passes(self):
         self._put(age_s=5)
-        draft, why = md.check("MemberA", turn_at=time.time(), text="确认发送")
+        draft, why = self._check()
         assert why == "" and draft["to"] == "s@example.com"
 
     def test_next_turn_without_confirmation_refused(self):
         self._put(age_s=5)
-        draft, why = md.check("MemberA", turn_at=time.time(), text="那封账单多少钱？")
+        draft, why = self._check(text="那封账单多少钱？")
         assert draft is None and "没有明确确认" in why
 
     @pytest.mark.parametrize("text", [
@@ -203,17 +223,17 @@ class TestDraftGate:
         "ok", "好的谢谢", "确认一下内容再说"])
     def test_negations_substrings_and_bare_acks_are_not_consent(self, text):
         self._put(age_s=5)
-        draft, why = md.check("MemberA", turn_at=time.time(), text=text)
+        draft, why = self._check(text=text)
         assert draft is None and "没有明确确认" in why
 
     @pytest.mark.parametrize("text", ["确认", "好的，发送吧", "可以发", "OK, send it!"])
     def test_whole_sentence_confirmations_pass(self, text):
         self._put(age_s=5)
-        assert md.check("MemberA", turn_at=time.time(), text=text)[1] == ""
+        assert self._check(text=text)[1] == ""
 
     def test_expired_draft_refused_and_dropped(self):
         self._put(age_s=md.TTL_S + 1)
-        draft, why = md.check("MemberA", turn_at=time.time(), text="确认发送")
+        draft, why = self._check()
         assert draft is None and "过期" in why
         assert md.get("MemberA") is None
 
@@ -237,15 +257,25 @@ class TestAgentWiring:
         out = ac._apply_member("check_mail", {"member": "Other"}, "MemberA")
         assert out["member"] == "MemberA"
 
-    def test_send_draft_gets_turn_context_injected(self):
-        out = ac._apply_context("send_draft", {}, "wechat", "u1", "MemberA",
-                                turn_at=123.0, text="确认发送")
-        assert out["__turn_at"] == 123.0 and out["__text"] == "确认发送"
+    @pytest.mark.parametrize("tool", ["draft_reply", "compose_mail", "send_draft"])
+    def test_draft_tools_get_turn_context_injected(self, tool):
+        out = ac._apply_context(tool, {}, "wechat", "u1", "MemberA",
+                                turn_id=7, text="确认发送")
+        assert out["__turn_id"] == 7 and out["__user"] == "u1"
+        assert out["__text"] == "确认发送"
 
     def test_other_tools_get_no_turn_context(self):
         out = ac._apply_context("check_mail", {}, "wechat", "u1", "MemberA",
-                                turn_at=123.0, text="x")
-        assert "__turn_at" not in out and "__text" not in out
+                                turn_id=7, text="x")
+        assert "__turn_id" not in out and "__text" not in out
+
+    def test_each_user_message_is_a_new_turn(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+        agent = ac.Agent(idle_clear_hours=0)
+        monkeypatch.setattr(agent, "_call_llm", lambda msgs, user="": {"content": "ok"})
+        agent.handle("一", user="u", member="MemberA")
+        agent.handle("二", user="u", member="MemberA")
+        assert agent._turn_seq["u"] == 2 and agent._turn_seq.get("other") is None
 
 
 class TestGateSeesOnlyTheUsersOwnWords:
@@ -328,6 +358,11 @@ class TestToolsRefuseWithoutMailBlock:
         assert at.tool_check_mail({"member": "MemberA"}).startswith("[错误]")
 
 
+# agent_core._apply_context 注入的本轮身份：起草一轮，确认必须落在紧接着的下一轮
+TURN = {"__turn_id": 3, "__user": "u1"}
+NEXT_TURN = {"__turn_id": 4, "__user": "u1", "__text": "确认发送"}
+
+
 class TestToolFlow:
     @pytest.fixture(autouse=True)
     def _mail_member(self, monkeypatch):
@@ -336,34 +371,39 @@ class TestToolFlow:
         md.drop("MemberA")
 
     def test_draft_then_confirmed_send(self, stub):
-        preview = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "my answer"})
+        preview = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "my answer",
+                                       **TURN})
         assert "s@example.com" in preview and "my answer" in preview
         assert not any("/messages/send" in c[1] for c in stub.calls)   # nothing sent yet
-        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
-                                  "__text": "确认发送"})
+        out = at.tool_send_draft({"member": "MemberA", **NEXT_TURN})
         assert out.startswith("已发送")
         assert any("/messages/send" in c[1] for c in stub.calls)
         assert md.get("MemberA") is None                               # draft consumed
 
     def test_send_in_same_turn_does_not_hit_the_api(self, stub):
-        turn_at = time.time()
-        at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x"})
-        out = at.tool_send_draft({"member": "MemberA", "__turn_at": turn_at,
-                                  "__text": "确认发送"})
+        at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x", **TURN})
+        out = at.tool_send_draft({"member": "MemberA", **TURN, "__text": "确认发送"})
         assert out.startswith("[错误]")
+        assert not any("/messages/send" in c[1] for c in stub.calls)
+
+    def test_confirmation_two_turns_later_does_not_hit_the_api(self, stub):
+        """"确认" answering some later question must not fire a stale draft."""
+        at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x", **TURN})
+        out = at.tool_send_draft({"member": "MemberA", "__turn_id": TURN["__turn_id"] + 2,
+                                  "__user": "u1", "__text": "确认发送"})
+        assert out.startswith("[错误]") and md.get("MemberA") is not None
         assert not any("/messages/send" in c[1] for c in stub.calls)
 
     def test_llm_cannot_choose_the_recipient(self, stub):
         at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
-                             "to": "attacker@evil.example"})
+                             "to": "attacker@evil.example", **TURN})
         assert md.get("MemberA")["to"] == "s@example.com"
 
     def test_failed_send_keeps_the_draft(self, monkeypatch, stub):
-        at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x"})
+        at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x", **TURN})
         monkeypatch.setattr(gp, "send_mail",
                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
-                                  "__text": "确认"})
+        out = at.tool_send_draft({"member": "MemberA", **NEXT_TURN, "__text": "确认"})
         assert out.startswith("[错误]") and md.get("MemberA") is not None
 
     def test_check_mail_lists_ids(self, stub):
@@ -405,11 +445,11 @@ class TestOutboundAttachments:
 
     def test_reply_carries_family_and_own_files(self, stub, files):
         preview = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "see attached",
-                                       "attachments": f"{files['lease']}, {files['shot']}"})
+                                       "attachments": f"{files['lease']}, {files['shot']}",
+                                       **TURN})
         assert files["lease"] in preview and files["shot"] in preview
         assert md.get("MemberA")["attachments"] == [files["lease"], files["shot"]]
-        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
-                                  "__text": "确认发送"})
+        out = at.tool_send_draft({"member": "MemberA", **NEXT_TURN})
         assert out.startswith("已发送") and "附件 2 个" in out
         raw, payload = _sent_raw(stub)
         assert payload["threadId"] == "t-m1"
@@ -418,32 +458,31 @@ class TestOutboundAttachments:
 
     def test_other_members_file_is_refused_and_nothing_is_drafted(self, stub, files):
         out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
-                                   "attachments": files["secret"]})
+                                   "attachments": files["secret"], **TURN})
         assert out.startswith("[错误]") and md.get("MemberA") is None
 
     def test_missing_path_is_refused(self, stub, files):
         out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
-                                   "attachments": "Family/documents/lease/nope.pdf"})
+                                   "attachments": "Family/documents/lease/nope.pdf", **TURN})
         assert out.startswith("[错误]") and md.get("MemberA") is None
 
     def test_too_many_attachments_refused(self, stub, files):
         many = ",".join([files["lease"]] * (at.SEND_ATTACH_MAX_N + 1))
         out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
-                                   "attachments": many})
+                                   "attachments": many, **TURN})
         assert out.startswith("[错误]") and str(at.SEND_ATTACH_MAX_N) in out
 
     def test_total_size_cap(self, stub, files, monkeypatch):
         monkeypatch.setattr(at, "SEND_ATTACH_MAX_BYTES", 4)
         out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
-                                   "attachments": files["lease"]})
+                                   "attachments": files["lease"], **TURN})
         assert out.startswith("[错误]") and md.get("MemberA") is None
 
     def test_file_vanishing_after_draft_blocks_send_and_keeps_draft(self, stub, files):
         at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
-                             "attachments": files["shot"]})
+                             "attachments": files["shot"], **TURN})
         _paths.resolve_rel(files["shot"]).unlink()
-        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
-                                  "__text": "确认发送"})
+        out = at.tool_send_draft({"member": "MemberA", **NEXT_TURN})
         assert out.startswith("[错误]") and md.get("MemberA") is not None
         assert not any("/messages/send" in c[1] for c in stub.calls)
 
@@ -457,36 +496,33 @@ class TestComposeNewMail:
 
     def test_compose_then_confirmed_send(self, stub):
         preview = at.tool_compose_mail({"member": "MemberA", "to": "Teacher <t@school.example>",
-                                        "subject": "请假", "body": "明天请假一天"})
+                                        "subject": "请假", "body": "明天请假一天", **TURN})
         assert "t@school.example" in preview and "请假" in preview
         assert not any("/messages/send" in c[1] for c in stub.calls)
-        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
-                                  "__text": "确认发送"})
+        out = at.tool_send_draft({"member": "MemberA", **NEXT_TURN})
         assert out.startswith("已发送")
         raw, payload = _sent_raw(stub)
         assert "threadId" not in payload
         assert b"To: t@school.example" in raw
 
     def test_same_turn_send_refused(self, stub):
-        turn_at = time.time()
         at.tool_compose_mail({"member": "MemberA", "to": "t@school.example",
-                              "subject": "s", "body": "b"})
-        out = at.tool_send_draft({"member": "MemberA", "__turn_at": turn_at,
-                                  "__text": "确认发送"})
+                              "subject": "s", "body": "b", **TURN})
+        out = at.tool_send_draft({"member": "MemberA", **TURN, "__text": "确认发送"})
         assert out.startswith("[错误]")
         assert not any("/messages/send" in c[1] for c in stub.calls)
 
     @pytest.mark.parametrize("to", ["", "not-an-address", "a@b", "a@b.c, c@d.e", "a b@c.de"])
     def test_bad_recipient_refused(self, stub, to):
         out = at.tool_compose_mail({"member": "MemberA", "to": to,
-                                    "subject": "s", "body": "b"})
+                                    "subject": "s", "body": "b", **TURN})
         assert out.startswith("[错误]") and md.get("MemberA") is None
 
     def test_subject_and_body_required(self, stub):
         assert at.tool_compose_mail({"member": "MemberA", "to": "t@school.example",
-                                     "subject": "", "body": "b"}).startswith("[错误]")
+                                     "subject": "", "body": "b", **TURN}).startswith("[错误]")
         assert at.tool_compose_mail({"member": "MemberA", "to": "t@school.example",
-                                     "subject": "s", "body": ""}).startswith("[错误]")
+                                     "subject": "s", "body": "", **TURN}).startswith("[错误]")
 
 
 # ── 新邮件播报（mail_watch）────────────────────────────────
