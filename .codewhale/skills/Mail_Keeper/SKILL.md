@@ -49,7 +49,8 @@ Testing，refresh token 7 天后失效需重授权；生产未验证状态个人
 - 收件附件：`read_mail` 列名字，`download_attachment` 才落盘到 `data/<成员>/inbox/YYYY-MM/`，
   内容要 OCR 的 `ocr_read`（OCR skill）。只收图片与 PDF、上限 `ATTACH_MAX_BYTES` 10 MB
   （exe/zip/office 宏不落盘）；文件名洗成末段、同名不覆盖
-- 发件附件：`draft_reply` / `compose_mail` 的 `attachments`（data 相对路径，逗号分隔）。
+- 发件附件：`draft_reply` / `compose_mail` 的 `attachments`（data 相对路径，**换行**分隔或数组；
+  不按逗号切——落盘文件名留得住逗号，`Document_Keeper/cli.py` 的 sanitizer 不洗它）。
   类型不限（发的是自家文件），闸门是 `tool_runtime.resolve_sendable`（家庭共享或本成员目录内
   的现存文件），起草与发送各过一次 —— 起草后文件被删/移走则拒发、草稿留着。
   上限 `SEND_ATTACH_MAX_N` 5 个 / `SEND_ATTACH_MAX_BYTES` 3 MB：走 `messages.send` 的

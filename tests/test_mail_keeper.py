@@ -440,12 +440,14 @@ class TestOutboundAttachments:
         theirs = _paths.member_inbox_dir("MemberB")
         secret = theirs / "secret.png"
         secret.write_bytes(b"\x89PNG secret")
+        comma = fam / "租约, 2024.pdf"          # 落盘时逗号不会被洗掉
+        comma.write_bytes(b"%PDF-1.4 comma")
         return {k: _paths.to_rel(v) for k, v in
-                (("lease", lease), ("shot", shot), ("secret", secret))}
+                (("lease", lease), ("shot", shot), ("secret", secret), ("comma", comma))}
 
     def test_reply_carries_family_and_own_files(self, stub, files):
         preview = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "see attached",
-                                       "attachments": f"{files['lease']}, {files['shot']}",
+                                       "attachments": f"{files['lease']}\n{files['shot']}",
                                        **TURN})
         assert files["lease"] in preview and files["shot"] in preview
         assert md.get("MemberA")["attachments"] == [files["lease"], files["shot"]]
@@ -455,6 +457,13 @@ class TestOutboundAttachments:
         assert payload["threadId"] == "t-m1"
         assert b'filename="lease.pdf"' in raw and b'filename="shot.png"' in raw
         assert base64.b64encode(b"%PDF-1.4 lease") in raw
+
+    def test_filename_with_a_comma_is_one_attachment(self, stub, files):
+        """逗号是合法文件名字符：按逗号切会把一个附件切成两条发不出去的路径。"""
+        preview = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
+                                       "attachments": files["comma"], **TURN})
+        assert md.get("MemberA")["attachments"] == [files["comma"]]
+        assert files["comma"] in preview
 
     def test_other_members_file_is_refused_and_nothing_is_drafted(self, stub, files):
         out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
@@ -467,7 +476,7 @@ class TestOutboundAttachments:
         assert out.startswith("[错误]") and md.get("MemberA") is None
 
     def test_too_many_attachments_refused(self, stub, files):
-        many = ",".join([files["lease"]] * (at.SEND_ATTACH_MAX_N + 1))
+        many = "\n".join([files["lease"]] * (at.SEND_ATTACH_MAX_N + 1))
         out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
                                    "attachments": many, **TURN})
         assert out.startswith("[错误]") and str(at.SEND_ATTACH_MAX_N) in out
