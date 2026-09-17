@@ -113,40 +113,83 @@ class TestSummarizeYoutube:
         assert "Has Title" in out
 
 
+_V2 = {"status": "OK", "data": {"organic_results": [
+    {"title": "T1", "url": "https://a.example/1", "snippet": "S1"},
+    {"title": "T2", "url": "https://b.example/2", "snippet": ""},
+]}}
+
+
 class TestWebSearch:
-    def test_returns_trimmed_results(self):
-        out = reach.web_search("latest news", fetch=lambda url: "result markdown here")
-        assert "result markdown here" in out
+    def test_formats_organic_results(self):
+        out = reach.web_search("latest news", search=lambda q: _V2)
+        assert out.startswith("1. T1\nhttps://a.example/1\nS1")
+        assert "2. T2\nhttps://b.example/2" in out
 
-    def test_routes_search_through_keyless_reader(self):
+    def test_accepts_flat_data_list(self):
+        out = reach.web_search("q", search=lambda q: {"status": "OK", "data": _V2["data"]["organic_results"]})
+        assert "T1" in out and "T2" in out
+
+    def test_passes_stripped_query(self):
         seen = {}
-        reach.web_search("hello world", fetch=lambda url: seen.update(url=url) or "x")
-        # keyless: Jina reader (r.jina.ai) wrapping a DuckDuckGo results page.
-        # s.jina.ai (Jina search) requires an API key — 401 keyless — so avoid it.
-        assert "r.jina.ai" in seen["url"]
-        assert "duckduckgo" in seen["url"]
-        assert "hello" in seen["url"]
-        assert " " not in seen["url"]  # query url-encoded
+        reach.web_search("  hello world ", search=lambda q: seen.update(q=q) or _V2)
+        assert seen["q"] == "hello world"
 
-    def test_empty_query_errors_without_fetching(self):
+    def test_empty_query_errors_without_searching(self):
         called = {"n": 0}
 
-        def fetch(url):
+        def search(q):
             called["n"] += 1
-            return "x"
+            return _V2
 
-        out = reach.web_search("   ", fetch=fetch)
+        out = reach.web_search("   ", search=search)
         assert out.startswith("[错误]")
         assert called["n"] == 0
 
-    def test_fetch_failure_returns_error(self):
-        def boom(url):
+    def test_search_failure_returns_error(self):
+        def boom(q):
             raise RuntimeError("net down")
 
-        assert reach.web_search("q", fetch=boom).startswith("[错误]")
+        assert reach.web_search("q", search=boom) == "[错误] 搜索失败：net down"
+
+    def test_non_ok_status_returns_error(self):
+        out = reach.web_search("q", search=lambda q: {"status": "ERROR", "error": "quota"})
+        assert out == "[错误] 搜索失败：quota"
 
     def test_empty_result_returns_error(self):
-        assert reach.web_search("q", fetch=lambda url: "   ").startswith("[错误]")
+        out = reach.web_search("q", search=lambda q: {"status": "OK", "data": {"organic_results": []}})
+        assert out.startswith("[错误]")
+
+
+class TestRapidapiSearch:
+    def test_missing_key_raises(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("RAPIDAPI_KEY", raising=False)
+        monkeypatch.setattr(reach, "_load_env", lambda: None)
+        with pytest.raises(RuntimeError, match="RAPIDAPI_KEY"):
+            reach.rapidapi_search("q")
+
+    def test_sends_rapidapi_headers_and_query(self, monkeypatch):
+        import io
+        import json as _json
+        monkeypatch.setenv("RAPIDAPI_KEY", "k123")
+        seen = {}
+
+        class Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout):
+            seen["url"], seen["headers"] = req.full_url, dict(req.header_items())
+            return Resp(_json.dumps(_V2).encode())
+
+        monkeypatch.setattr(reach.urllib.request, "urlopen", fake_urlopen)
+        assert reach.rapidapi_search("hello world") == _V2
+        assert seen["url"].startswith("https://real-time-web-search.p.rapidapi.com/search?")
+        assert "q=hello+world" in seen["url"] and "num=10" in seen["url"]
+        assert seen["headers"]["X-rapidapi-key"] == "k123"
+        assert seen["headers"]["X-rapidapi-host"] == "real-time-web-search.p.rapidapi.com"
 
 
 class TestWebRead:

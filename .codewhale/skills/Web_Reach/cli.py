@@ -2,7 +2,7 @@
 """Web_Reach CLI — 只读联网读取/搜索/YouTube 总结。
 
 子命令:
-  web-search --query "..."   联网搜索最新资讯（DuckDuckGo 结果页经 Jina r.jina.ai 读取，无需 key）
+  web-search --query "..."   联网搜索最新资讯（RapidAPI Real-Time Web Search，需 RAPIDAPI_KEY）
   web-read   --url "..."     抓取并清洗单个网页正文（Jina r.jina.ai）
   yt-summary --url "..."     YouTube 取字幕转文字（无字幕回退标题+简介）
 
@@ -45,7 +45,7 @@ def main() -> int:
     args = p.parse_args()
 
     if args.cmd == "web-search":
-        out = reach.web_search(args.query, fetch=reach.jina_fetch)
+        out = reach.web_search(args.query, search=reach.rapidapi_search)
     elif args.cmd == "web-read":
         out = reach.web_read(args.url, fetch=reach.jina_fetch)
     elif args.cmd == "yt-summary":
