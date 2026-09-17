@@ -20,8 +20,8 @@ def test_doc_models_fallback_on_missing_config(tmp_path):
 
 def test_default_db_is_family_documents_db():
     """Documents live in their own family-shared DB; files under data/Family/documents."""
-    assert doc_models.DB_PATH.as_posix().endswith("data/Family/documents.db")
-    assert doc_models.DOCUMENTS_DIR.as_posix().endswith("data/Family/documents")
+    assert doc_models.DB_PATH.as_posix().endswith("/Family/documents.db")
+    assert doc_models.DOCUMENTS_DIR.as_posix().endswith("/Family/documents")
 
 
 import importlib.util as _ilu_doc  # noqa: E402

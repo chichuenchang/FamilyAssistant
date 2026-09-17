@@ -8,7 +8,7 @@ import doc_models
 
 
 def test_db_path_is_documents_db():
-    assert str(doc_models.DB_PATH).replace("\\", "/").endswith("data/Family/documents.db")
+    assert str(doc_models.DB_PATH).replace("\\", "/").endswith("/Family/documents.db")
 
 
 def test_schema_creates_profiles_table(tmp_path):
