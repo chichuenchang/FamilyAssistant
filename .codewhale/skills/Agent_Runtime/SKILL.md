@@ -178,6 +178,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 | `TELEGRAM_BOT_TOKEN` | Telegram 频道 | Telegram 时必需 |
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 图片 OCR（见 [OCR Skill](../OCR/SKILL.md)） | 收图片时 |
 | `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` / `GDRIVE_REFRESH_TOKEN` | 云盘备份（`backup_tick` 在传输层轮询里跑，见 [Remote Backup](../Remote_Backup/SKILL.md)） | backup.enabled 时 |
+| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN` | 成员邮箱（前缀取自 members.json `mail.cred_prefix`，见 [Mail Keeper](../Mail_Keeper/SKILL.md)） | 该成员有 mail 块时 |
 | `DATA_ROOT` | 数据根目录覆盖（优先于 config `data_root`；测试隔离用，见 `paths.py`） | ❌ |
 | `KNOWKING_DIR` | KnowKing 项目根覆盖（优先于 config `knowking.project_dir`） | ❌ |
 

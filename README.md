@@ -125,6 +125,12 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 #   python .codewhale/skills/Calendar_Keeper/calendar_provider.py --auth  # 一次性授权，按提示设 GCAL_REFRESH_TOKEN
 #   config.json 设 calendar.enabled: true
 
+# （可选）邮箱读写（当前为 Gmail 实现；步骤详见 Mail_Keeper/SKILL.md）：
+#   setx GMAIL_CLIENT_ID "xxx"       # 可复用上面的同一个 OAuth 客户端（需启用 Gmail API）
+#   setx GMAIL_CLIENT_SECRET "xxx"
+#   python .codewhale/skills/Mail_Keeper/gmail_provider.py --auth  # 一次性授权，按提示设 GMAIL_REFRESH_TOKEN
+#   data/members.json 给该成员加 mail 块
+
 # ── 或用 Telegram（多人，推荐） ──
 #   setx TELEGRAM_BOT_TOKEN "xxx"
 #   python .codewhale/skills/Agent_Runtime/telegram_bot.py   # 同样默认写调试日志，--no-debug 关闭
@@ -161,7 +167,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | 代码 | git 仓库 | `git clone` |
 | 家庭数据（账本/票据/文档/备忘/日程/成员注册表） | 你的 Google Drive 备份 | `backup-restore` |
 | `config.json` | 随 git 克隆（也在备份里） | 自带 |
-| 凭据（GDRIVE_* / GCAL_* / 微信 / Telegram / OCR / DeepSeek） | **只在环境变量，不在备份** | 手动重设 / 重新授权 |
+| 凭据（GDRIVE_* / GCAL_* / GMAIL_* / 微信 / Telegram / OCR / DeepSeek） | **只在环境变量，不在备份** | 手动重设 / 重新授权 |
 
 **步骤**
 
@@ -251,6 +257,11 @@ FamilyAssistant/
 │       │   ├── providers.py       ← provider 注册表（(域,名)→实现）
 │       │   ├── image_gc.py        ← 陈旧来图清理（N 年前的 source_image）
 │       │   └── cli.py            ← 日程 CLI 入口
+│       ├── Mail_Keeper/      ← 按成员私有邮箱（读 + 两轮确认回信）
+│       │   ├── SKILL.md
+│       │   ├── gmail_provider.py ← Gmail REST 实现（可按契约换）
+│       │   ├── mail_draft.py     ← 待确认草稿 + 发信闸门
+│       │   └── mail_watch.py     ← 新邮件播报（可选，按成员开）
 │       ├── Web_Reach/        ← 只读联网：搜索 / 网页摘要 / YouTube 转写
 │       │   ├── SKILL.md
 │       │   ├── .env.example       ← RAPIDAPI_KEY 模板

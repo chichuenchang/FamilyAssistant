@@ -150,13 +150,16 @@ def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
 
 
 def _apply_context(tool_name: str, targs: dict, channel: str, user: str,
-                   member: str) -> dict:
-    """CONTEXT_TOOLS：注入发起频道 + 发起人 id + 成员名（异步投递需要），
-    确定性来自代码而非 LLM。其余工具原样放行。"""
+                   member: str, turn_at: float = 0.0, text: str = "") -> dict:
+    """CONTEXT_TOOLS：注入发起频道 + 发起人 id + 成员名（异步投递需要）
+    + 本轮开始时间 __turn_at 与用户原话 __text（对外不可撤回动作的两轮确认闸门，
+    见 Mail_Keeper/mail_draft.check）。确定性来自代码而非 LLM。其余工具原样放行。"""
     if tool_name in _CONTEXT_TOOLS:
         targs = dict(targs)
         targs["__channel"] = channel or ""
         targs["__user"] = str(user) if user else ""
+        targs["__turn_at"] = turn_at
+        targs["__text"] = text
         if member:
             targs["member"] = member
     return targs
@@ -390,7 +393,8 @@ class Agent:
                     targs = {}
                 fn = _TOOL_MAP.get(name)
                 targs = _apply_member(name, targs, member)
-                targs = _apply_context(name, targs, self.channel, user, member)
+                targs = _apply_context(name, targs, self.channel, user, member,
+                                       turn_at=now, text=text)
                 result = fn(targs) if fn else f"[错误] 未知工具: {name}"
                 # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
