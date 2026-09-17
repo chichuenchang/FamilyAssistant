@@ -71,6 +71,7 @@ TOOLS = {
 }
 
 MEMBER_LOCKED = set(TOOLS)
+UNTRUSTED_TOOLS = {"list_schedule"}   # 含远程日历拉下来的条目（外人发邀请即可写入）
 
 SCHEMAS = [
     fn("add_event", "添加家庭日程/活动/安排（自动同步到远程日历）", {
@@ -183,7 +184,7 @@ def schedule_context(member: str | None = None, db_path: str | None = None,
                 due = f"（截止 {r['start_at'][5:10]}）" if r["start_at"] else ""
                 lines.append(f"- ☐ {title}{due}")
         return (f"\n\n## 你未来{LOOKAHEAD}天的日程与待办（按成员私有，已静默同步自你的远程日历；"
-                f"不要主动播报，仅在用户问到或相关时使用）\n" + "\n".join(lines))
+                f"不要主动播报，仅在用户问到或相关时使用）\n" + rt.fence("\n".join(lines), "calendar"))
     except Exception:
         _log.exception("日程上下文注入失败（已跳过）")
         return ""

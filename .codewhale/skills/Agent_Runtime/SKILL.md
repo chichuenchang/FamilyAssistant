@@ -123,7 +123,7 @@ if __name__ == "__main__":
 ```
 
 要点：
-- `on_text(target, user, member, text, quoted)`：target = 本频道 send_* 认得的投递目标，user = 频道内唯一 id（隔离对话历史）。引用内容传 `quoted`，基类前置 `[引用: …]`。
+- `on_text(target, user, member, text, quoted)`：target = 本频道 send_* 认得的投递目标，user = 频道内唯一 id（隔离对话历史）。引用内容传 `quoted`，基类套围栏前置（`with_quote`）。
 - 图片与 PDF 同一入口 `on_media`；path 为 None 时基类回"请重发"。非 PDF 文件自行回"暂不支持"。
 - 长回复分段（如 Telegram 4096 字限制）在 send_text 里做（见 `telegram_bot.py:send_message`）。
 - 微信 iLink 的 `ref_msg` 无内容（实测 2026-07-10），需本地缓存反查——见 `wechat_ilink.py:_quoted_text`；Telegram `reply_to_message` 自带原文。
@@ -163,6 +163,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 - **命令白名单**：`config.json` 的 `wechat.allowed_commands` 是**记账族**命令白名单（`agent_core.ALLOWED_COMMANDS` 读取，config 缺失才回退内置集）；改它只影响记账族。备忘(note-*)/工作表(sheet-*)/图表(chart-render)/日程(cal-*)/文档(doc-* 除 doc-remove)/备份(backup-now/status/verify)/联网(web-*/any-*) 是 Agent 核心能力，`agent_core` 在装载时**恒定并入** `ALLOWED_COMMANDS`，不受本白名单增删影响。成员增删、doc-remove、backup-restore/reorg 等敏感命令既不在白名单也不并入 → Agent 调不到，仅限本机。
 - **磁盘布局**：所有数据落盘位置经 `Agent_Runtime/paths.py`（单一事实来源）。`config.json` `data_root`(默认 data)+`family_dir_name`(默认 Family) 定根。家庭共享在 `data/Family/`（ledger.db 财务、documents.db 文档+成员资料、receipts/、documents/）；成员私有在 `data/<成员>/`（notes/、schedule/、tasks/、inbox/、forms/）。来图先存发送者 `data/<成员>/inbox/`，分类后搬到对应位置。`agent_core.RECEIPTS_DIR`/`DOCUMENTS_DIR` 由 `paths` 计算，不硬编码。
 - **成员注册表**：`data/members.json`（git 不跟踪 — 姓名/频道 id 属隐私）只在本机用 `Expense_Tracker/cli.py member-add/list/remove` 管理（成员命令挂在记账 CLI 上，非本目录；不在命令白名单内，Agent 调不到）。未注册频道 id 一律静默丢弃；写入类账目的归属由 `agent_core` 注入解析出的成员名，LLM 给的 member 一律剥离（防冒名）。
+- **外部内容围栏**：非本地来源文本经 `tool_runtime.fence` 才进 LLM——manifest `UNTRUSTED_TOOLS` 的工具结果、来件 OCR、引用消息、日程注入块的数据行。软防线：降低注入命中率，不限制损害；备忘/工作表/成员资料（本地库）未套。
 - **凭据本地化**：所有频道凭据（微信扫码态、Telegram token）只存本地，不外传。
 - Telegram token 走环境变量，不写进仓库。
 

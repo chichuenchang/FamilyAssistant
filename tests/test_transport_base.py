@@ -1,5 +1,6 @@
 """transport_base：频道共用生命周期（闸门 / 投递 / 异常兜底 / 后台节拍）。"""
 import agent_core
+import tool_runtime as rt
 import transport_base as tb
 
 
@@ -50,7 +51,7 @@ def _seed(tmp_path):
 
 
 def test_with_quote():
-    assert tb.with_quote("hi", "prev") == "[引用: prev]\nhi"
+    assert tb.with_quote("hi", "prev") == f"[引用]\n{rt.fence('prev', 'quote')}\nhi"
     assert tb.with_quote("hi", None) == "hi"
 
 
@@ -93,7 +94,7 @@ def test_on_text_ticks_quotes_and_delivers(monkeypatch):
     t = FakeTransport(agent=agent)
     t.on_text("tgt", 42, "Alex", "你好", quoted="上一条")
     assert ticks == ["cal", "gc"]
-    assert agent.seen == [("text", "[引用: 上一条]\n你好", "42", "Alex")]
+    assert agent.seen == [("text", tb.with_quote("你好", "上一条"), "42", "Alex")]
     assert ("text", "tgt", "回") in t.calls
 
 

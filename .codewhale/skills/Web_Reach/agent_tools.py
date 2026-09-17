@@ -17,6 +17,8 @@ TOOLS = {
     "youtube_summarize": "yt-summary",
 }
 
+UNTRUSTED_TOOLS = set(TOOLS)
+
 SCHEMAS = [
     fn("web_search", "联网搜索最新资讯/新闻/动态（用户问\"最新新闻\"\"外面在发生什么\"\"帮我查一下X\"）。"
        "返回抓取到的网页结果原文，你据此用中文总结报告", {

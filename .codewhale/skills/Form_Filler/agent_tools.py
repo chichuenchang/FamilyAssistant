@@ -35,6 +35,7 @@ TOOLS = {
 
 MEMBER_LOCKED = set(TOOLS)
 DOC_TOOLS = {"fill_form_render"}
+UNTRUSTED_TOOLS = {"fill_form_scan"}   # 来件 PDF 的 OCR/字段文本
 
 SCHEMAS = [
     fn("fill_form_scan", "识别 PDF 表格的可填字段并创建填表会话（用户要求填表时用）。"
