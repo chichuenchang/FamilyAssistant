@@ -152,9 +152,10 @@ class Transport:
             log.exception("发送失败: %s", text[:80])
 
     # ── 后台节拍 ────────────────────────────────────────────
-    def push_text(self, user, text: str) -> None:
-        """后台推送（提醒/懂王报告）：按频道内用户 id 发。默认与 send_text 同；微信覆写。"""
-        self.send_text(user, text)
+    def push_text(self, user, text: str) -> bool:
+        """后台推送（提醒/懂王报告/新邮件）：按频道内用户 id 发。没送达 = 返回 False 或抛错
+        （send_text 吞错只回 False 的频道如 Telegram 靠返回值；mail_watch 据此决定游标动不动）。"""
+        return self.send_text(user, text) is not False
 
     def slow_tick(self) -> None:
         run_ticks(REGISTRY.slow_ticks, self.push_text, self.channel)
