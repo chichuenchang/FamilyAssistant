@@ -11,7 +11,7 @@ Calendar Keeper — 陈旧来图清理（活动/待办的 source_image）
     image_prune_interval_days  默认 30（节流：约每月扫一次）
 
 传输层在已注册成员消息到达后调 image_gc_tick()（节流 + 静默，永不抛）。
-节流状态：data/.image_gc_state.json（不入备份）。
+节流状态：data/.state/.image_gc_state.json（不入备份）。
 测试钩子：CALENDAR_CONFIG（替代 config.json）、IMAGE_GC_STATE_DIR、DATA_ROOT。
 """
 
@@ -28,6 +28,7 @@ import members as _members
 import paths as _paths
 import jsonfile
 
+_STATE_NAME = ".image_gc_state.json"
 _FALLBACK = {"image_retention_years": 2, "image_prune_interval_days": 30}
 
 
@@ -38,8 +39,8 @@ def _cfg() -> dict:
 
 
 def _state_file() -> Path:
-    return Path(os.environ.get("IMAGE_GC_STATE_DIR") or _paths.data_root()) \
-        / ".image_gc_state.json"
+    env = os.environ.get("IMAGE_GC_STATE_DIR")
+    return Path(env) / _STATE_NAME if env else _paths.state_file(_STATE_NAME)
 
 
 def _load_state() -> dict:

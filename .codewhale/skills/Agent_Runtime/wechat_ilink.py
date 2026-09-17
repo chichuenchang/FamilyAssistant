@@ -21,12 +21,12 @@
     # 重新扫码（切换账号）
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 
-    # 调试日志默认开（写 data/bot_debug.log）；关闭用 --no-debug
+    # 调试日志默认开（写 data/.state/bot_debug.log）；关闭用 --no-debug
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --no-debug
 
 安全:
     所有 CLI 调用受同目录 agent_core.py 白名单约束。
-    凭据加密存储在 data/wechat_creds.json，不对外传输。
+    凭据加密存储在 data/.state/wechat_creds.json，不对外传输。
 """
 
 from __future__ import annotations
@@ -62,7 +62,8 @@ import paths as _paths
 log = logging.getLogger("familyassist.wechat")
 
 # 凭据存储路径（跟随 data_root；备份硬排除任何含 "creds" 的文件名）
-CREDS_FILE = _paths.data_root() / "wechat_creds.json"
+CREDS_FILE = _paths.state_file("wechat_creds.json")
+_paths.state_file("wechat_creds.json.sync")  # SDK 的 cursor 文件紧贴凭据，随之迁入 .state/
 
 
 _LOCK_PORT = 47831  # 单实例锁端口（仅 localhost，不对外）
@@ -86,7 +87,7 @@ def _acquire_single_instance_lock(port: int = _LOCK_PORT) -> bool:
 
 _RECENT_MSGS: "OrderedDict[str, str]" = OrderedDict()
 _RECENT_MSGS_CAP = 200
-_RECENT_MSGS_FILE = ROOT / "data" / "wechat_recent_msgs.json"
+_RECENT_MSGS_FILE = _paths.state_file("wechat_recent_msgs.json")
 
 
 def _remember_msg(message_id, text, persist_file=None) -> None:
@@ -129,7 +130,7 @@ def _load_recent_msgs(path=None) -> None:
 # 均实测 2026-07-10），引用 bot 回复只能按时间对齐 —— 记录每次发送的时间戳+文本。
 _SENT_REPLIES: list = []          # [[ts_ms, text], ...] 按发送顺序
 _SENT_REPLIES_CAP = 100
-_SENT_REPLIES_FILE = ROOT / "data" / "wechat_sent_msgs.json"
+_SENT_REPLIES_FILE = _paths.state_file("wechat_sent_msgs.json")
 _SENT_MATCH_WINDOW_MS = 15_000    # 引用时间戳与发送时间允许的最大偏差
 
 
@@ -386,7 +387,7 @@ def main():
     parser.add_argument("--relogin", action="store_true",
                         help="重新扫码登录（忽略已有凭据）")
     parser.add_argument("--debug", action="store_true", default=True,
-                        help="开启调试日志（写 data/bot_debug.log，默认开）")
+                        help="开启调试日志（写 data/.state/bot_debug.log，默认开）")
     parser.add_argument("--no-debug", dest="debug", action="store_false",
                         help="关闭调试日志")
     args = parser.parse_args()

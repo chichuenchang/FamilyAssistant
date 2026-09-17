@@ -26,7 +26,7 @@
   任一成员失败保留脏，下轮重试。本地永远是事实源。
 - 镜像 = 该成员 scope 内文件哈希比对增量上传 + 本地删除同步删远端。
   SQLite 用一致性快照上传。
-- **全局防抖时钟** `data/.backup_state.json` 一份（共享）；**每成员独立清单与状态**
+- **全局防抖时钟** `data/.state/.backup_state.json` 一份（共享）；**每成员独立清单与状态**
   `data/<Member>/.backup_manifest.json` + `.backup_state.json`。
 - 凭据类文件硬排除，永不上传。
 - 测试隔离环境变量（生产不用设）：`BACKUP_CONFIG`（替代 config.json）、

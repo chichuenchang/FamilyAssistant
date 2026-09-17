@@ -16,7 +16,7 @@ KnowKing 后台任务桥 — 把独立项目 KnowKing（懂王）的 `kk ask` �
 投递复用现有模式（与 Document_Keeper/reminder.check_and_push、backup_tick 同构）：
     传输层轮询里调 poll_and_deliver(send_fn, channel) → 把该频道已完成的任务发回发起人。
 
-任务落盘 data/.knowking_jobs/<id>.json（点前缀 = 运行时瞬态，不进备份）：
+任务落盘 data/.state/.knowking_jobs/<id>.json（点前缀 = 运行时瞬态，不进备份）：
     {id, channel, user, member, topic, status, report, error, created_at}
     status ∈ running / done / error。投递成功即删文件（避免重复推送与堆积）。
 
@@ -78,7 +78,7 @@ def _timeout_s() -> int:
 def jobs_dir(jdir: Optional[Path] = None) -> Path:
     if jdir is not None:
         return Path(jdir)
-    d = _paths.data_root() / ".knowking_jobs"
+    d = _paths.state_file(".knowking_jobs")
     d.mkdir(parents=True, exist_ok=True)
     return d
 

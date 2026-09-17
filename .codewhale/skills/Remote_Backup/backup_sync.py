@@ -12,7 +12,7 @@ Remote Backup — 同步引擎（真实实现）
 
 状态文件（均不入备份、不入 git）：
     data/.backup_manifest.json  引擎认为云端已有的内容 {rel: {sha256,size,uploaded_at}}
-    data/.backup_state.json     {dirty_since, last_write, last_sync, last_error}
+    data/.state/.backup_state.json     {dirty_since, last_write, last_sync, last_error}
 测试钩子：环境变量 BACKUP_STATE_DIR 重定位这两个文件（仅测试用）。
 """
 
@@ -58,19 +58,17 @@ def _data_dirname() -> str:
     指到 ROOT 外——测试 tmp——则退回 config），否则 BACKUP_CONFIG/config.json
     的 data_root，缺省 data。备份镜像按 ROOT 相对布局，故只取目录段。
     """
-    env = os.environ.get("DATA_ROOT")
-    if env:
-        try:
-            return Path(env).resolve().relative_to(ROOT).as_posix()
-        except (ValueError, OSError):
-            pass
-    return jsonfile.load_dict(_cfg_path()).get("data_root") or "data"
+    try:
+        return _paths.data_root().resolve().relative_to(ROOT).as_posix()
+    except (ValueError, OSError):
+        return jsonfile.load_dict(_cfg_path()).get("data_root") or "data"
 
 
 _DATA_DIRNAME = _data_dirname()
 
-_STATE_DIR = Path(os.environ.get("BACKUP_STATE_DIR") or _paths.data_root())
-STATE_FILE = _STATE_DIR / ".backup_state.json"
+_STATE_ENV = os.environ.get("BACKUP_STATE_DIR")
+STATE_FILE = (Path(_STATE_ENV) / ".backup_state.json" if _STATE_ENV
+              else _paths.state_file(".backup_state.json"))
 
 # 永不进备份的路径（即使用户把 data 整个加进 include）
 _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
@@ -79,9 +77,10 @@ _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
                        ".image_gc_state.json", ".llm_overrides.json",
                        "wechat_recent_msgs.json", "wechat_sent_msgs.json"}
 
-# 永不进备份的目录段（图表可再生；.knowking_jobs 为运行时瞬态任务文件，
-# 投递即删且含频道 id/查询主题，绝不镜像上云）
-_HARD_EXCLUDE_DIRS = {"charts", "web_images", ".knowking_jobs"}
+# 永不进备份的目录段：.state（运行时状态/凭据/瞬态任务，含频道 id，绝不镜像上云）、
+# cache（可再生产物）。后三个是迁入 .state/ 与 cache/ 之前的旧位置，未迁完的目录仍需挡住。
+_HARD_EXCLUDE_DIRS = {_paths.STATE_DIRNAME, _paths.CACHE_DIRNAME,
+                      "charts", "web_images", ".knowking_jobs"}
 
 
 def _now_iso() -> str:
@@ -99,8 +98,8 @@ def _save_json(path: Path, obj: dict) -> None:
 def _excluded(rel: str) -> bool:
     parts = rel.split("/")
     dirs = parts[:-1]
-    # 图表目录可再生 → 排除；但 documents/ 下即便用户把 doc_type 命名为 "charts"
-    # 也是不可再生原件，必须留备份（charts 段匹配不带锚点，故显式放行 documents/）。
+    # 段匹配不带锚点：documents/ 下即便 doc_type 被命名为 "charts"/"cache"
+    # 也是不可再生原件，必须留备份，故显式放行 documents/。
     if "documents" not in dirs and any(seg in _HARD_EXCLUDE_DIRS for seg in dirs):
         return True
     name = parts[-1]

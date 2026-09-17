@@ -13,7 +13,7 @@ Telegram Bot API 是全球最开放的 IM Bot 协议：
 用法:
     python .codewhale/skills/Agent_Runtime/telegram_bot.py [--no-debug]
 
-    调试日志默认开（写 data/bot_debug.log）；关闭用 --no-debug
+    调试日志默认开（写 data/.state/bot_debug.log）；关闭用 --no-debug
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
 
 # 上次处理的 update_id（避免重复）；跟随 data_root，备份硬排除该文件名
-OFFSET_FILE = _paths.data_root() / ".telegram_offset"
+OFFSET_FILE = _paths.state_file(".telegram_offset")
 
 
 def _load_offset() -> int:
@@ -341,7 +341,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Family Assistant — Telegram Bot")
     parser.add_argument("--debug", action="store_true", default=True,
-                        help="开启调试日志（写 data/bot_debug.log，默认开）")
+                        help="开启调试日志（写 data/.state/bot_debug.log，默认开）")
     parser.add_argument("--no-debug", dest="debug", action="store_false",
                         help="关闭调试日志")
     args = parser.parse_args()

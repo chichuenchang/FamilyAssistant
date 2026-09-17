@@ -34,7 +34,7 @@ def test_save_llm_overrides_roundtrip_atomic(tmp_path, monkeypatch):
     data = {"u1": {"model": "deepseek-v4-pro", "effort": "max"}}
     agent_core._save_llm_overrides(data)
     assert agent_core._load_llm_overrides() == data
-    assert [p.name for p in tmp_path.iterdir()] == [".llm_overrides.json"]  # 无临时文件残留
+    assert [p.name for p in (tmp_path / ".state").iterdir()] == [".llm_overrides.json"]  # 无临时文件残留
 
 
 def _agent(tmp_path, monkeypatch):

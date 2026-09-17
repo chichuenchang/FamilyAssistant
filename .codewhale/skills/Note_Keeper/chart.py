@@ -3,7 +3,7 @@ Family Assistant — Note Keeper 可视化（worksheet → 图表 PNG）。
 
 LLM 从工作表取出数字，按 spec 调本模块渲染 line/bar/pie 图。
 matplotlib 懒加载（Agg，离线渲染，数据不出本机）。图片存成员私有
-data/<成员>/charts/，渲染前按 retention 天数清理旧图，不入备份。
+data/<成员>/cache/charts/，渲染前按 retention 天数清理旧图，不入备份。
 """
 
 import re
@@ -83,8 +83,7 @@ def render_chart(spec: dict, member: str, retention_days: int = 7) -> str:
     """
     _validate_spec(spec)
     plt = _load_mpl()
-    charts_dir = _paths.member_dir(member) / "charts"
-    charts_dir.mkdir(parents=True, exist_ok=True)
+    charts_dir = _paths.member_cache_dir(member, "charts")
     _prune_old(charts_dir, retention_days)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

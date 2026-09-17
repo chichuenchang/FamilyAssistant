@@ -87,7 +87,7 @@ def setup_logging(debug: bool = True) -> logging.Logger:
     """配置 "familyassist" 日志器，各传输层（telegram/wechat）调一次即可。
 
     项目规范：所有 Bot 默认开调试日志（debug=True）。新增 Bot 直接 setup_logging() 即继承。
-    debug=True（默认）：DEBUG 全量，同时写 stderr 和 data/bot_debug.log（含完整 traceback），
+    debug=True（默认）：DEBUG 全量，同时写 stderr 和 data/.state/bot_debug.log（含完整 traceback），
                 供排查 OCR/记账/工具调用链路。
     debug=False（--no-debug）：仅 WARNING 及以上，安静运行。
     子日志器（familyassist.telegram 等）自动继承本配置。
@@ -103,12 +103,11 @@ def setup_logging(debug: bool = True) -> logging.Logger:
     sh.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(sh)
     if debug:
-        log_dir = _paths.data_root()
-        log_dir.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_dir / "bot_debug.log", encoding="utf-8")
+        log_file = _paths.state_file("bot_debug.log")
+        fh = logging.FileHandler(log_file, encoding="utf-8")
         fh.setFormatter(fmt)
         logger.addHandler(fh)
-        logger.debug("调试日志已开启 → %s", log_dir / "bot_debug.log")
+        logger.debug("调试日志已开启 → %s", log_file)
     return logger
 
 
