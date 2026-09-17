@@ -111,7 +111,7 @@ def tool_draft_reply(args):
 
 
 def tool_send_reply(args):
-    """真正发出。三道闸门见 mail_draft.check（同轮不可发 / 须用户原话确认 / 30 分钟过期）。"""
+    """真正发出。闸门见 mail_draft 文件头。"""
     got, err = _provider(args.get("member", ""))
     if err:
         return err
