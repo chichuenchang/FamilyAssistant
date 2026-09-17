@@ -137,6 +137,7 @@ _CONTEXT_TOOLS = REGISTRY.context_tools
 _UNTRUSTED_TOOLS = REGISTRY.untrusted_tools
 _IMAGE_TOOLS = REGISTRY.image_tools
 _DOC_TOOLS = REGISTRY.doc_tools
+_SHOW_TOOLS = REGISTRY.show_tools
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
@@ -372,12 +373,13 @@ class Agent:
         tool_counts: dict[str, int] = {}
         produced_images: list[str] = []  # 图片工具成功产出的 data 相对路径
         produced_docs: list[str] = []     # 文档工具成功产出的 data 相对路径
+        shown: dict[str, str] = {}        # SHOW_TOOLS 成功原文（每工具留最后一次），必达用户
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
         for _ in range(8):
             message = self._call_llm(msgs, user=user)
             if message is None:
-                return "抱歉，暂时出错了。"
+                return "\n\n".join(["抱歉，暂时出错了。", *shown.values()])
 
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
@@ -411,6 +413,8 @@ class Agent:
                     elif name in _DOC_TOOLS:
                         # form-render 第一行是路径，后续可能有"警告:"行——哨兵只取首行
                         produced_docs.append(result.strip().splitlines()[0])
+                    if name in _SHOW_TOOLS:
+                        shown[name] = result.replace("\x01", "")   # 外部文本不得伪造哨兵行
                 tool_counts[name] = tool_counts.get(name, 0) + 1
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
@@ -429,6 +433,8 @@ class Agent:
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         turn.append({"role": "assistant", "content": reply})
         self._save_history(user, turn)
+        for s in shown.values():
+            final += f"\n\n{s}"
         for p in produced_images:
             final += f"\n{IMG_SENTINEL}{p}"
         for p in produced_docs:

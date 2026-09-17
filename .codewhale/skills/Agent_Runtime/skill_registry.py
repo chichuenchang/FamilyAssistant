@@ -12,6 +12,7 @@ manifest 是普通模块，模块级属性即契约（全部可选，缺省为�
     UNTRUSTED_TOOLS set   结果含非本地来源文本（网页/OCR/远程日历）→ 套 tool_runtime.fence 才进 LLM
     IMAGE_TOOLS     set   成功返回 = 图片相对路径，每行一张（传输层发图）
     DOC_TOOLS       set   成功返回首行 = 文件相对路径（传输层发文件）
+    SHOW_TOOLS      set   成功返回原文由代码附在回复末尾（用户必看到，LLM 藏不了/改不了）
     PROMPT_SECTIONS list[str]  system prompt 独立段落（"## 标题" 开头）
     PROMPT_RULES    list[str]  并入 "## 行为准则" 的条目（不带 "- "）
     CONTEXT_FNS     list[callable(member)->str]  每条消息注入 system prompt 的动态块（数据行含非本地来源 → 自行 fence，标题留在围栏外）
@@ -49,6 +50,7 @@ class Registry:
     untrusted_tools: set[str] = field(default_factory=set)
     image_tools: set[str] = field(default_factory=set)
     doc_tools: set[str] = field(default_factory=set)
+    show_tools: set[str] = field(default_factory=set)
     prompt_sections: list[str] = field(default_factory=list)
     prompt_rules: list[str] = field(default_factory=list)
     context_fns: list[Callable[[str], str]] = field(default_factory=list)
@@ -119,6 +121,7 @@ def load() -> Registry:
         reg.untrusted_tools |= set(getattr(m, "UNTRUSTED_TOOLS", ()))
         reg.image_tools |= set(getattr(m, "IMAGE_TOOLS", ()))
         reg.doc_tools |= set(getattr(m, "DOC_TOOLS", ()))
+        reg.show_tools |= set(getattr(m, "SHOW_TOOLS", ()))
         reg.prompt_sections.extend(getattr(m, "PROMPT_SECTIONS", ()))
         reg.prompt_rules.extend(getattr(m, "PROMPT_RULES", ()))
         reg.context_fns.extend(getattr(m, "CONTEXT_FNS", ()))

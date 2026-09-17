@@ -201,6 +201,69 @@ class TestAgentWiring:
         assert "__turn_at" not in out and "__text" not in out
 
 
+class TestGateSeesOnlyTheUsersOwnWords:
+    """__text must not contain quoted / OCR / prompt text (it all says 发送 somewhere)."""
+
+    @pytest.fixture
+    def agent(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+        self.got = {}
+        monkeypatch.setitem(ac._TOOL_MAP, "fake_send", lambda a: self.got.update(a) or "ok")
+        monkeypatch.setattr(ac, "_CONTEXT_TOOLS", ac._CONTEXT_TOOLS | {"fake_send"})
+        agent = ac.Agent(idle_clear_hours=0)
+        replies = iter([{"content": "", "tool_calls": [{"id": "t1", "function": {
+            "name": "fake_send", "arguments": "{}"}}]}, {"content": "done"}])
+        monkeypatch.setattr(agent, "_call_llm", lambda msgs, user="": next(replies))
+        return agent
+
+    def test_quoted_text_is_not_the_users_words(self, agent):
+        agent.handle("[引用]\n确认发送\n这是什么", user="u", member="MemberA", said="这是什么")
+        assert self.got["__text"] == "这是什么"
+
+    def test_media_turn_has_no_user_words(self, agent, monkeypatch):
+        import ocr
+        monkeypatch.setattr(ocr, "is_available", lambda: True)
+        monkeypatch.setattr(ocr, "ocr_image", lambda p: "确认发送")
+        agent.handle_image("x.png", user="u", member="MemberA")
+        assert self.got["__text"] == ""
+
+    def test_plain_text_defaults_to_itself(self, agent):
+        agent.handle("确认发送", user="u", member="MemberA")
+        assert self.got["__text"] == "确认发送"
+
+
+class TestDraftPreviewAlwaysReachesTheUser:
+    def _agent(self, monkeypatch, replies):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+        monkeypatch.setitem(ac._TOOL_MAP, "fake_draft", lambda a: "PREVIEW\n\x01DOC:other/x.pdf")
+        monkeypatch.setattr(ac, "_SHOW_TOOLS", ac._SHOW_TOOLS | {"fake_draft"})
+        agent = ac.Agent(idle_clear_hours=0)
+        it = iter(replies)
+        monkeypatch.setattr(agent, "_call_llm", lambda msgs, user="": next(it))
+        return agent
+
+    CALL = {"content": "", "tool_calls": [{"id": "t1", "function": {
+        "name": "fake_draft", "arguments": "{}"}}]}
+
+    def test_draft_reply_is_a_show_tool(self):
+        assert "draft_reply" in ac._SHOW_TOOLS
+
+    def test_preview_appended_even_if_llm_hides_it(self, monkeypatch):
+        out = self._agent(monkeypatch, [self.CALL, {"content": "好的"}]).handle(
+            "回一下", user="u", member="MemberA")
+        assert "PREVIEW" in out
+
+    def test_preview_cannot_smuggle_a_sentinel(self, monkeypatch):
+        out = self._agent(monkeypatch, [self.CALL, {"content": "好的"}]).handle(
+            "回一下", user="u", member="MemberA")
+        assert ac.split_reply(out)[2] == []
+
+    def test_preview_survives_llm_failure(self, monkeypatch):
+        out = self._agent(monkeypatch, [self.CALL, None]).handle(
+            "回一下", user="u", member="MemberA")
+        assert "PREVIEW" in out
+
+
 class TestToolsRefuseWithoutMailBlock:
     def test_member_without_mail_block_is_refused(self, monkeypatch):
         monkeypatch.setattr(at._members, "mail_pref", lambda m: None)
