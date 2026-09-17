@@ -92,8 +92,8 @@ def check(member: str, *, turn_id: int, user: str, text: str,
     if (time.time() if now is None else now) - created > TTL_S:
         drop(member)
         return None, "[错误] 草稿已过期（超过 30 分钟），请重新起草。"
-    if int(turn_id) != int(draft.get("turn_id") or 0) + 1 \
-            or str(user or "") != str(draft.get("turn_user") or ""):
+    expected_turn = int(draft.get("turn_id") or 0) + 1      # 预览的下一轮，就这一轮
+    if int(turn_id) != expected_turn or str(user or "") != str(draft.get("turn_user") or ""):
         return None, ("[错误] 这份草稿不是上一轮刚给用户看过的那份"
                       "（同一轮起草即发、或中间隔了别的对话）。"
                       "重新起草一份给用户过目，等他下一条消息说\"确认/发送\"再调本工具。")
