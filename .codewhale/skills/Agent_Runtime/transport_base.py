@@ -20,6 +20,7 @@ from pathlib import Path
 
 import backup_hook
 import paths as _paths
+import tool_runtime as rt
 from agent_core import Agent, REGISTRY, member_inbox_dir, split_reply
 from members import resolve
 from skill_registry import run_ticks
@@ -28,9 +29,9 @@ log = logging.getLogger("familyassist.transport")
 
 
 def with_quote(text: str, quoted) -> str:
-    """被引用内容前置注入正文（``[引用: {内容}]\\n{text}``），让 Agent 看到用户在回复什么。"""
+    """被引用内容套围栏前置注入正文，让 Agent 看到用户在回复什么（引用可能是转发来的外部文本）。"""
     if quoted:
-        return f"[引用: {quoted}]\n{text}"
+        return f"[引用]\n{rt.fence(str(quoted), 'quote')}\n{text}"
     return text
 
 

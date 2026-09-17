@@ -9,11 +9,12 @@ manifest 是普通模块，模块级属性即契约（全部可选，缺省为�
     SCHEMAS         list  工具 JSON schema（tool_runtime.fn 构造）
     MEMBER_LOCKED   set   剥离 LLM 给的 member、注入发送者（写入 / 按成员私有）
     CONTEXT_TOOLS   set   注入 __channel/__user（异步回推）
+    UNTRUSTED_TOOLS set   结果含非本地来源文本（网页/OCR/远程日历）→ 套 tool_runtime.fence 才进 LLM
     IMAGE_TOOLS     set   成功返回 = 图片相对路径（传输层发图）
     DOC_TOOLS       set   成功返回首行 = 文件相对路径（传输层发文件）
     PROMPT_SECTIONS list[str]  system prompt 独立段落（"## 标题" 开头）
     PROMPT_RULES    list[str]  并入 "## 行为准则" 的条目（不带 "- "）
-    CONTEXT_FNS     list[callable(member)->str]  每条消息注入 system prompt 的动态块
+    CONTEXT_FNS     list[callable(member)->str]  每条消息注入 system prompt 的动态块（数据行含非本地来源 → 自行 fence，标题留在围栏外）
     IMAGE_ROUTES    list[str]  来图/PDF OCR 后的分流条目（agent_core.handle_image 按 ORDER 编号拼接）
     MESSAGE_TICKS   list[callable()]  已注册成员每条消息到达时跑（节流自理）
     SLOW_TICKS      list[callable(push_text, channel)]  后台慢拍（~10 分钟）：提醒/备份
@@ -45,6 +46,7 @@ class Registry:
     schemas: list[dict] = field(default_factory=list)
     member_locked: set[str] = field(default_factory=set)
     context_tools: set[str] = field(default_factory=set)
+    untrusted_tools: set[str] = field(default_factory=set)
     image_tools: set[str] = field(default_factory=set)
     doc_tools: set[str] = field(default_factory=set)
     prompt_sections: list[str] = field(default_factory=list)
@@ -114,6 +116,7 @@ def load() -> Registry:
         reg.schemas.extend(getattr(m, "SCHEMAS", ()))
         reg.member_locked |= set(getattr(m, "MEMBER_LOCKED", ()))
         reg.context_tools |= set(getattr(m, "CONTEXT_TOOLS", ()))
+        reg.untrusted_tools |= set(getattr(m, "UNTRUSTED_TOOLS", ()))
         reg.image_tools |= set(getattr(m, "IMAGE_TOOLS", ()))
         reg.doc_tools |= set(getattr(m, "DOC_TOOLS", ()))
         reg.prompt_sections.extend(getattr(m, "PROMPT_SECTIONS", ()))

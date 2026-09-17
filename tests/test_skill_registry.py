@@ -26,7 +26,8 @@ def test_passthrough_commands_are_allowed_and_routed():
 def test_policy_sets_reference_real_tools():
     reg = skill_registry.load()
     names = set(reg.tool_map)
-    for s in (reg.member_locked, reg.context_tools, reg.image_tools, reg.doc_tools):
+    for s in (reg.member_locked, reg.context_tools, reg.untrusted_tools,
+              reg.image_tools, reg.doc_tools):
         assert s <= names, s - names
 
 

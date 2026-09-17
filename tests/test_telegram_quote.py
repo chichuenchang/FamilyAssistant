@@ -1,5 +1,6 @@
 # tests/test_telegram_quote.py — Telegram 引用/回复注入：reply_to_message 自带原文，直接取用。
 import telegram_bot
+import tool_runtime as rt
 
 
 def test_no_reply_returns_none():
@@ -35,5 +36,5 @@ def test_long_reply_truncated():
 
 def test_with_quote_injection():
     out = telegram_bot._with_quote("把这个记到日历", "周五下午3点牙医预约")
-    assert out == "[引用: 周五下午3点牙医预约]\n把这个记到日历"
+    assert out == f"[引用]\n{rt.fence('周五下午3点牙医预约', 'quote')}\n把这个记到日历"
     assert telegram_bot._with_quote("原样", None) == "原样"

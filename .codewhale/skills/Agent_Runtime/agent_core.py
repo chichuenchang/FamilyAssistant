@@ -128,6 +128,7 @@ _TOOL_MAP = REGISTRY.tool_map
 TOOL_SCHEMAS = REGISTRY.schemas
 _MEMBER_LOCKED = REGISTRY.member_locked
 _CONTEXT_TOOLS = REGISTRY.context_tools
+_UNTRUSTED_TOOLS = REGISTRY.untrusted_tools
 _IMAGE_TOOLS = REGISTRY.image_tools
 _DOC_TOOLS = REGISTRY.doc_tools
 
@@ -155,6 +156,11 @@ def _apply_context(tool_name: str, targs: dict, channel: str, user: str,
     return targs
 
 
+def _apply_fence(tool_name: str, result: str) -> str:
+    """UNTRUSTED_TOOLS：结果来自非本地来源，套围栏后才进 LLM。其余工具原样放行。"""
+    return rt.fence(result, tool_name) if tool_name in _UNTRUSTED_TOOLS else result
+
+
 # ── system prompt ───────────────────────────────────────────
 
 # 与具体 skill 无关的准则；各 skill 自己的条目由 manifest PROMPT_RULES 提供，排在前面
@@ -164,6 +170,7 @@ _CORE_RULES = [
     "工具执行后会返回结果，你基于结果用自然语言回复",
     '如果用户没有指定日期，默认今天（见"当前时间"块）；用户问现在几点/今天几号，直接按该块回答',
     "回复中不要暴露技术细节（如 SQLite、CLI 等）",
+    rt.FENCE_RULE,
 ]
 
 
@@ -391,10 +398,12 @@ class Agent:
                 tool_counts[name] = tool_counts.get(name, 0) + 1
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
-                             "content": result})
+                             "content": _apply_fence(name, result)})
+                # 先截断再套围栏：反过来闭合标记会被截掉
                 turn.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
-                             "content": _budget.clip_tool_result(result)})
+                             "content": _apply_fence(
+                                 name, _budget.clip_tool_result(result))})
 
         if tool_counts:
             tool_log = "⚙️ " + ", ".join(
@@ -422,7 +431,7 @@ class Agent:
         if ocr_text:
             routes = "\n".join(f"{i}) {r}" for i, r in enumerate(REGISTRY.image_routes, 1))
             prompt = (
-                f"用户发来一份材料（图片或 PDF），已保存为 {image_path}，OCR结果:\n{ocr_text}\n"
+                f"用户发来一份材料（图片或 PDF），已保存为 {image_path}，OCR结果:\n{rt.fence(ocr_text, 'ocr')}\n"
                 f"判断内容，按以下情况处理（取最匹配的一条）：\n{routes}\n"
                 f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
             )

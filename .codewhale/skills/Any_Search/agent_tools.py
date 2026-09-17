@@ -15,6 +15,8 @@ TOOLS = {
     "anysearch_subdomains": "any-subdomains",
 }
 
+UNTRUSTED_TOOLS = {"anysearch_search", "anysearch_extract"}
+
 SCHEMAS = [
     fn("anysearch_search", "高质量实时联网搜索（AnySearch）。比 web_search 更准，"
        "查最新资讯/事实/股价/学术/健康等首选。需要垂直领域结构化结果时（finance/health/"

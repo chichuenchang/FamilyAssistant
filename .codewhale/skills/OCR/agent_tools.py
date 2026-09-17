@@ -34,6 +34,8 @@ def tool_ocr_image(args):
 
 TOOLS = {"ocr_image": tool_ocr_image}
 
+UNTRUSTED_TOOLS = set(TOOLS)
+
 SCHEMAS = [
     fn("ocr_image", "OCR 识别票据/账单图片，逐笔提取交易明细（返回 transactions 数组，"
        "非账单总额）。拿到后逐笔调 add_transaction 记账", {
