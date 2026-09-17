@@ -1269,6 +1269,7 @@ import pdf_layout
 
 MIN_FONT_PT = 6.0
 DEFAULT_FONT_PT = 10.0
+AUTO_FONT_PT = (9.0, 12.0)   # 自动字号夹在此区间：行框是贴字形的（偏矮），多行区是高框（偏高）
 FONT_NAME = "PDFEditFont"
 ERASE_WARNING = "白底覆盖不是脱敏：原内容仍留在文件里，可被复制或恢复"
 
@@ -1437,7 +1438,7 @@ def _draw_text(c, op, left, top, s, resolve_src, warnings):
     if op.get("size"):
         size = float(op["size"])
     elif box_h:
-        size = max(box_h * 0.7 / len(lines), MIN_FONT_PT)
+        size = min(max(box_h * 0.9 / len(lines), AUTO_FONT_PT[0]), AUTO_FONT_PT[1])
     else:
         size = DEFAULT_FONT_PT
     if box_w:
@@ -1509,6 +1510,7 @@ def _overlay(page, page_ops: list, scale: float, resolve_src, warnings: list) ->
     c = canvas.Canvas(buf, pagesize=(float(page.mediabox.right), float(page.mediabox.top)))
     for op in sorted(page_ops, key=lambda o: o["op"] != "erase"):    # 白底先画，字在上
         _DRAW[op["op"]](c, op, left, top, scale, resolve_src, warnings)
+    c.showPage()          # 什么都没画成（如图片全坏）时 save() 不出页，merge 会越界
     c.save()
     buf.seek(0)
     page.merge_page(PdfReader(buf).pages[0])
