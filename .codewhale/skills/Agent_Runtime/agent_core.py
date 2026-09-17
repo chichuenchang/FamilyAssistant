@@ -433,8 +433,8 @@ class Agent:
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         turn.append({"role": "assistant", "content": reply})
         self._save_history(user, turn)
-        for s in shown.values():
-            final += f"\n\n{s}"
+        if shown:
+            final += "\n\n" + "\n\n".join(shown.values())
         for p in produced_images:
             final += f"\n{IMG_SENTINEL}{p}"
         for p in produced_docs:

@@ -44,7 +44,9 @@ def store_path(member: str) -> Path:
 
 def load(member: str) -> list[dict]:
     rules = jsonfile.load_dict(store_path(member)).get("rules")
-    return [r for r in rules if isinstance(r, dict)] if isinstance(rules, list) else []
+    if not isinstance(rules, list):       # 文件被手改坏也不炸
+        return []
+    return [r for r in rules if isinstance(r, dict)]
 
 
 def _save(member: str, rules: list[dict]) -> None:
@@ -101,6 +103,8 @@ def match(meta: dict, rules: list[dict]) -> dict | None:
     meta 用 gmail_provider.message_meta 的形状；label 规则只需要其中的 labels，
     故 mail_watch 可在取信头之前先用 history 带回的标签过一遍。
     """
+    if not rules:                     # 规则表空 = 全推，不必解析这封信
+        return None
     addr = (parseaddr(meta.get("from") or "")[1] or "").lower()
     host = addr.rsplit("@", 1)[-1] if "@" in addr else ""
     subject = (meta.get("subject") or "").lower()

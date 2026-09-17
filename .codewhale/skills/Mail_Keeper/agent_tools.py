@@ -78,7 +78,8 @@ def tool_read_mail(args):
     except Exception as e:
         _log.exception("邮件读取失败")
         return f"[错误] 读邮件失败：{e}"
-    body = m["body"][:_gmail.BODY_CAP] + ("…[截断]" if len(m["body"]) > _gmail.BODY_CAP else "")
+    cap = mod.BODY_CAP
+    body = m["body"][:cap] + ("…[截断]" if len(m["body"]) > cap else "")
     return (f"#{m['id']}\n发件人：{m['from']}\n收件人：{m['to']}\n"
             f"日期：{m['date']}\n主题：{m['subject']}\n---\n{body}")
 

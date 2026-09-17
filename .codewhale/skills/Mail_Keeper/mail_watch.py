@@ -70,22 +70,30 @@ def _save(channel: str, d: dict) -> None:
     jsonfile.save(store_path(channel), d)
 
 
+def _entry_items(entry) -> list[dict]:
+    """一条成员记录里的信头列表（文件被手改坏也不炸）。"""
+    items = (entry or {}).get("items")
+    if not isinstance(items, list):
+        return []
+    return [i for i in items if isinstance(i, dict)]
+
+
 def last_push(member: str) -> list[dict]:
     """最近播报过的信头（新的在前），供 mail_last_push 工具回放给 Agent。"""
-    items = (jsonfile.load_dict(last_push_path()).get(member) or {}).get("items")
-    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+    return _entry_items(jsonfile.load_dict(last_push_path()).get(member))
 
 
 def record_last_push(member: str, metas: list[dict]) -> None:
     """同一封信各频道都会播报一次，按 id 去重只记一条。"""
     d = jsonfile.load_dict(last_push_path())
-    known = {i.get("id") for i in last_push(member)}
+    old = _entry_items(d.get(member))
+    known = {i.get("id") for i in old}
     items = [{"id": m.get("id", ""), "from": m.get("from", ""),
               "subject": m.get("subject", ""), "labels": list(m.get("labels") or [])}
              for m in reversed(metas) if m.get("id") not in known]
     if not items:
         return
-    d[member] = {"at": time.time(), "items": (items + last_push(member))[:LAST_PUSH_KEEP]}
+    d[member] = {"at": time.time(), "items": (items + old)[:LAST_PUSH_KEEP]}
     jsonfile.save(last_push_path(), d)
 
 
@@ -111,12 +119,17 @@ def _keep(rows: list[dict], mod, prefix: str, rules: list[dict]) -> tuple[list[d
     两道：先用 history 带回的 labels 挡 label 规则（不花配额取信头），
     再对最新 MAX_META 封取信头按发件人/域/主题规则挡。
     """
-    live = [r for r in rows if not (rules and _rules.match(r, rules))]
+    live = [r for r in rows if not _rules.match(r, rules)]
     head = live[-MAX_META:]
     metas = [m for m in mod.message_metas([r["id"] for r in head], prefix)
-             if not (rules and _rules.match(m, rules))]
+             if not _rules.match(m, rules)]
     extra = len(live) - len(head) + max(0, len(metas) - MAX_LINES)
     return metas[-MAX_LINES:], extra
+
+
+def _cursors(chan: dict) -> dict:
+    """{成员: 游标}，用于判断这一轮有没有推进过（没变就不写盘）。"""
+    return {m: v.get("history_id") for m, v in chan.items() if isinstance(v, dict)}
 
 
 def _push_all(push_fn, ids: list[str], text: str) -> bool:
@@ -143,7 +156,7 @@ def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
     now = time.time() if now is None else now
     began = time.monotonic()
     chan = _load(channel)
-    before = {m: v.get("history_id") for m, v in chan.items() if isinstance(v, dict)}
+    before = _cursors(chan)
     pushed = 0
     for member, bindings in _members.load_members(members_path).items():
         if not isinstance(bindings, dict):
@@ -183,6 +196,6 @@ def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
             continue
         chan[member] = {"history_id": new_hid, "at": now}
         pushed += 1
-    if {m: v.get("history_id") for m, v in chan.items() if isinstance(v, dict)} != before:
+    if _cursors(chan) != before:
         _save(channel, chan)
     return pushed
