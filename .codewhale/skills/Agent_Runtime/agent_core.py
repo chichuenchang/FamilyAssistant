@@ -391,7 +391,9 @@ class Agent:
                 _log.debug("工具 %s(%s) → %s", name, brief, result[:200])
                 if result and not result.startswith("[错误]"):
                     if name in _IMAGE_TOOLS:
-                        produced_images.append(result.strip())
+                        # 每行一张（fetch_images 多张）；按行不按空白拆——路径可含空格
+                        produced_images.extend(
+                            ln.strip() for ln in result.splitlines() if ln.strip())
                     elif name in _DOC_TOOLS:
                         # form-render 第一行是路径，后续可能有"警告:"行——哨兵只取首行
                         produced_docs.append(result.strip().splitlines()[0])

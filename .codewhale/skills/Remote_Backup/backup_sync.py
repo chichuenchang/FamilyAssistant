@@ -81,7 +81,7 @@ _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
 
 # 永不进备份的目录段（图表可再生；.knowking_jobs 为运行时瞬态任务文件，
 # 投递即删且含频道 id/查询主题，绝不镜像上云）
-_HARD_EXCLUDE_DIRS = {"charts", ".knowking_jobs"}
+_HARD_EXCLUDE_DIRS = {"charts", "web_images", ".knowking_jobs"}
 
 
 def _now_iso() -> str:

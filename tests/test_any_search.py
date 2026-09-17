@@ -250,3 +250,249 @@ class TestAgentRegistration:
         assert cmds <= agent_core.ALLOWED_COMMANDS
         for c in cmds:
             assert agent_core._cli_path(c).parent.name == "Any_Search"
+
+
+# ── fetch_images：搜图 → 下载 → 返回 data 相对路径 ─────────────
+
+JPEG = b"\xff\xd8\xff\xe0" + b"0" * 32
+PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+GIF = b"GIF89a" + b"0" * 32
+WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"0" * 32
+
+_IMG_MD = """## Search Results (2 results, 540ms)
+
+### 1. Praying Mantis
+- **URL**: https://unsplash.com/photos/abc
+- https://images.unsplash.com/photo-1?w=1080
+
+### 2. Macro mantis
+- **URL**: https://www.pexels.com/photo/xyz/
+- https://images.pexels.com/photos/2/p.jpeg
+"""
+
+
+class TestParseImageUrls:
+    def test_takes_direct_image_lines_not_page_urls(self):
+        assert anysearch.parse_image_urls(_IMG_MD) == [
+            "https://images.unsplash.com/photo-1?w=1080",
+            "https://images.pexels.com/photos/2/p.jpeg",
+        ]
+
+    def test_empty_input(self):
+        assert anysearch.parse_image_urls("") == []
+
+    def test_bing_murl_extracted_and_unescaped(self):
+        html = ('<a m="{&quot;murl&quot;:&quot;https://a.com/1.jpg?x=1&amp;y=2&quot;,'
+                '&quot;turl&quot;:&quot;https://t/1&quot;}"></a>'
+                '<a m="{&quot;murl&quot;:&quot;https://b.com/2.png&quot;}"></a>')
+        assert anysearch.parse_bing_image_urls(html) == [
+            "https://a.com/1.jpg?x=1&y=2", "https://b.com/2.png"]
+
+
+class TestSniffImageExt:
+    @pytest.mark.parametrize("data,ext", [(JPEG, ".jpg"), (PNG, ".png"), (GIF, ".gif")])
+    def test_sendable_types(self, data, ext):
+        assert anysearch.sniff_image_ext(data) == ext
+
+    @pytest.mark.parametrize("data", [WEBP, b"<svg xmlns=", b"<!DOCTYPE html>", b""])
+    def test_unsendable_types_rejected(self, data):
+        assert anysearch.sniff_image_ext(data) is None
+
+
+class TestFetchImages:
+    def _call(self, md=_IMG_MD):
+        return lambda tool, args: md
+
+    def test_saves_images_and_returns_one_path_per_line(self, tmp_path):
+        out = anysearch.fetch_images(
+            "mantis", call=self._call(), download=lambda u: JPEG, dest_dir=tmp_path)
+        paths = out.splitlines()
+        assert len(paths) == 2
+        for p in paths:
+            assert _Path(p).read_bytes() == JPEG
+            assert _Path(p).suffix == ".jpg"
+
+    def test_queries_resource_image_subdomain(self, tmp_path):
+        seen = {}
+
+        def call(tool, args):
+            seen.update(tool=tool, **args)
+            return _IMG_MD
+        anysearch.fetch_images("mantis", call=call, download=lambda u: PNG,
+                               dest_dir=tmp_path)
+        assert seen["tool"] == "search"
+        assert seen["query"] == "mantis"
+        assert (seen["domain"], seen["sub_domain"]) == ("resource", "resource.image")
+
+    def test_count_limits_saved_images(self, tmp_path):
+        out = anysearch.fetch_images("mantis", call=self._call(),
+                                     download=lambda u: JPEG, dest_dir=tmp_path, count=1)
+        assert len(out.splitlines()) == 1
+        assert len(list(tmp_path.iterdir())) == 1
+
+    def test_count_clamped_to_five(self, tmp_path):
+        md = "\n".join(f"- https://i.com/{i}.jpg" for i in range(20))
+        out = anysearch.fetch_images("x", call=self._call(md),
+                                     download=lambda u: JPEG, dest_dir=tmp_path, count=99)
+        assert len(out.splitlines()) == 5
+
+    def test_failed_and_unsendable_downloads_skipped(self, tmp_path):
+        md = "- https://i.com/boom.jpg\n- https://i.com/a.webp\n- https://i.com/ok.png"
+
+        def download(url):
+            if "boom" in url:
+                raise OSError("timeout")
+            return WEBP if "webp" in url else PNG
+        out = anysearch.fetch_images("x", call=self._call(md), download=download,
+                                     dest_dir=tmp_path)
+        assert [_Path(p).suffix for p in out.splitlines()] == [".png"]
+        assert len(list(tmp_path.iterdir())) == 1
+
+    def test_fallback_used_when_primary_has_no_images(self, tmp_path):
+        out = anysearch.fetch_images(
+            "x", call=self._call("no results"), download=lambda u: GIF,
+            dest_dir=tmp_path, fallback=lambda q: [f"https://bing/{q}.gif"])
+        assert [_Path(p).suffix for p in out.splitlines()] == [".gif"]
+
+    def test_fallback_used_when_primary_raises(self, tmp_path):
+        def call(tool, args):
+            raise RuntimeError("rate limited")
+        out = anysearch.fetch_images("x", call=call, download=lambda u: JPEG,
+                                     dest_dir=tmp_path,
+                                     fallback=lambda q: ["https://bing/1.jpg"])
+        assert len(out.splitlines()) == 1
+        assert not out.startswith("[错误]")
+
+    def test_fallback_not_called_when_primary_succeeds(self, tmp_path):
+        def fallback(q):
+            raise AssertionError("fallback must not run")
+        out = anysearch.fetch_images("x", call=self._call(), download=lambda u: JPEG,
+                                     dest_dir=tmp_path, fallback=fallback)
+        assert not out.startswith("[错误]")
+
+    def test_all_sources_fail_returns_error(self, tmp_path):
+        def download(url):
+            raise OSError("nope")
+
+        def fallback(q):
+            raise RuntimeError("bing down")
+        out = anysearch.fetch_images("x", call=self._call(), download=download,
+                                     dest_dir=tmp_path, fallback=fallback)
+        assert out.startswith("[错误]")
+
+    def test_empty_query_is_error(self, tmp_path):
+        out = anysearch.fetch_images("  ", call=self._call(), download=lambda u: JPEG,
+                                     dest_dir=tmp_path)
+        assert out.startswith("[错误]")
+
+    def test_rel_maps_returned_paths(self, tmp_path):
+        out = anysearch.fetch_images("x", call=self._call(), download=lambda u: JPEG,
+                                     dest_dir=tmp_path, count=1,
+                                     rel=lambda p: "REL/" + _Path(p).name)
+        assert out.startswith("REL/")
+
+    def test_time_budget_stops_further_downloads(self, tmp_path):
+        # 慢源不能把 Bot 拖到子进程超时：预算用尽后不再发起新下载
+        tried = []
+        out = anysearch.fetch_images(
+            "x", call=self._call(), download=lambda u: tried.append(u) or JPEG,
+            dest_dir=tmp_path, budget=0, fallback=lambda q: ["https://bing/1.jpg"])
+        assert tried == []
+        assert out.startswith("[错误]")
+
+    def test_old_downloads_pruned(self, tmp_path):
+        import os
+        import time
+        old = tmp_path / "old.jpg"
+        old.write_bytes(JPEG)
+        stale = time.time() - 8 * 86400
+        os.utime(old, (stale, stale))
+        anysearch.fetch_images("x", call=self._call(), download=lambda u: JPEG,
+                               dest_dir=tmp_path, count=1)
+        assert not old.exists()
+
+
+class TestDownloadImage:
+    """下载适配器的闸门：协议 / 内网地址 / 体积上限。不联网。"""
+
+    @staticmethod
+    def _public(host):
+        return ["93.184.216.34"]
+
+    @staticmethod
+    def _fake_open(body):
+        class _Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        return lambda req, timeout: _Resp(body)
+
+    def test_returns_body(self, monkeypatch):
+        monkeypatch.setattr(anysearch, "_open", self._fake_open(JPEG))
+        assert anysearch.download_image("https://i.com/a.jpg", resolve=self._public) == JPEG
+
+    @pytest.mark.parametrize("url", ["file:///etc/passwd", "ftp://i.com/a.jpg", "i.com/a.jpg"])
+    def test_non_http_scheme_rejected(self, monkeypatch, url):
+        monkeypatch.setattr(anysearch, "_open", self._fake_open(JPEG))
+        with pytest.raises(ValueError):
+            anysearch.download_image(url, resolve=self._public)
+
+    @pytest.mark.parametrize("ip", ["127.0.0.1", "10.0.0.5", "192.168.1.1",
+                                    "169.254.169.254", "::1"])
+    def test_private_address_rejected(self, monkeypatch, ip):
+        monkeypatch.setattr(anysearch, "_open", self._fake_open(JPEG))
+        with pytest.raises(ValueError):
+            anysearch.download_image("http://evil.example/a.jpg", resolve=lambda h: [ip])
+
+    def test_oversize_rejected(self, monkeypatch):
+        monkeypatch.setattr(anysearch, "_open", self._fake_open(b"x" * 101))
+        with pytest.raises(ValueError):
+            anysearch.download_image("https://i.com/a.jpg", resolve=self._public,
+                                     max_bytes=100)
+
+
+class TestFetchImagesWiring:
+    def test_registered_as_member_locked_image_tool(self):
+        import agent_core
+        schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
+        assert "fetch_images" in schema_names
+        assert "fetch_images" in agent_core._TOOL_MAP
+        assert "fetch_images" in agent_core._IMAGE_TOOLS
+        assert agent_core._apply_member("fetch_images", {"member": "X"}, "Jim")["member"] == "Jim"
+
+    def test_command_routed_with_long_timeout(self):
+        import agent_core
+        assert "any-images" in agent_core.ALLOWED_COMMANDS
+        assert agent_core._cli_path("any-images").parent.name == "Any_Search"
+        assert agent_core._CLI_TIMEOUTS["any-images"] >= 60
+
+    def test_system_prompt_routes_picture_requests(self):
+        import agent_core
+        assert "fetch_images" in agent_core._build_system_prompt()
+
+    def test_multi_path_result_becomes_one_sentinel_each(self, monkeypatch):
+        import agent_core
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+        agent = agent_core.Agent(idle_clear_hours=0)
+        monkeypatch.setitem(agent_core._TOOL_MAP, "visualize_data",
+                            lambda args: "Jim/web_images/a.jpg\nJim/web_images/b.png\n")
+        replies = iter([
+            {"content": "", "tool_calls": [{"id": "c1", "function": {
+                "name": "visualize_data", "arguments": "{}"}}]},
+            {"content": "给你找了两张"},
+        ])
+        monkeypatch.setattr(agent, "_call_llm", lambda msgs, user="": next(replies))
+        reply = agent.handle("看看螳螂的图片", user="u", member="Jim")
+        _, imgs, _ = agent_core.split_reply(reply)
+        assert imgs == ["Jim/web_images/a.jpg", "Jim/web_images/b.png"]
+
+    def test_downloads_excluded_from_backup(self):
+        import backup_sync as bs
+        assert bs._excluded("Jim/web_images/1_mantis_0.jpg") is True
+
+    def test_cli_empty_query_prints_error(self):
+        r = _run_cli("any-images", "--query", " ")
+        assert r.returncode == 0
+        assert r.stdout.startswith("[错误]")

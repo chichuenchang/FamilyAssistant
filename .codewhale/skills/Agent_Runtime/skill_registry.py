@@ -10,7 +10,7 @@ manifest 是普通模块，模块级属性即契约（全部可选，缺省为�
     MEMBER_LOCKED   set   剥离 LLM 给的 member、注入发送者（写入 / 按成员私有）
     CONTEXT_TOOLS   set   注入 __channel/__user（异步回推）
     UNTRUSTED_TOOLS set   结果含非本地来源文本（网页/OCR/远程日历）→ 套 tool_runtime.fence 才进 LLM
-    IMAGE_TOOLS     set   成功返回 = 图片相对路径（传输层发图）
+    IMAGE_TOOLS     set   成功返回 = 图片相对路径，每行一张（传输层发图）
     DOC_TOOLS       set   成功返回首行 = 文件相对路径（传输层发文件）
     PROMPT_SECTIONS list[str]  system prompt 独立段落（"## 标题" 开头）
     PROMPT_RULES    list[str]  并入 "## 行为准则" 的条目（不带 "- "）
