@@ -440,3 +440,190 @@ class TestMailWatch:
     def test_watch_tick_is_registered_on_fast_ticks(self):
         assert any(getattr(f, "__name__", "") == "_mail_watch_tick"
                    for f in ac.REGISTRY.fast_ticks)
+
+
+# ── 播报过滤规则（mail_rules）──────────────────────────────
+
+import mail_rules as mr
+
+
+def _meta(frm="Shop <deals@shop.example>", subject="50% off", labels=("INBOX",)):
+    return {"id": "x", "from": frm, "subject": subject, "labels": list(labels)}
+
+
+class TestMailRules:
+    @pytest.fixture(autouse=True)
+    def _members(self, monkeypatch):
+        monkeypatch.setattr(mr._members, "load_members",
+                            lambda *a, **k: {"MemberA": {"dir": "membera"}})
+        mr.store_path("MemberA").unlink(missing_ok=True)
+
+    def test_added_rule_is_persisted_and_listed(self):
+        mr.add("MemberA", kind="sender", value="deals@shop.example", note="广告")
+        rules = mr.load("MemberA")
+        assert (rules[0]["kind"], rules[0]["value"]) == ("sender", "deals@shop.example")
+        assert rules[0]["note"] == "广告"
+
+    def test_same_rule_twice_is_not_duplicated(self):
+        mr.add("MemberA", kind="sender", value="deals@shop.example")
+        mr.add("MemberA", kind="sender", value="DEALS@shop.example")
+        assert len(mr.load("MemberA")) == 1
+
+    def test_unknown_kind_is_refused(self):
+        with pytest.raises(ValueError):
+            mr.add("MemberA", kind="mood", value="x")
+
+    def test_remove_by_index(self):
+        mr.add("MemberA", kind="sender", value="a@x.example")
+        mr.add("MemberA", kind="subject", value="newsletter")
+        gone = mr.remove("MemberA", 1)
+        assert gone["value"] == "a@x.example"
+        assert [r["value"] for r in mr.load("MemberA")] == ["newsletter"]
+        assert mr.remove("MemberA", 9) is None
+
+    def test_rules_are_per_member(self):
+        mr.add("MemberA", kind="sender", value="a@x.example")
+        assert mr.load("MemberB") == []
+
+    def test_sender_match_ignores_display_name_and_case(self):
+        rules = [{"kind": "sender", "value": "Deals@Shop.Example"}]
+        assert mr.match(_meta(), rules)
+        assert mr.match(_meta(frm="other@shop.example"), rules) is None
+
+    def test_domain_match_covers_whole_domain(self):
+        rules = [{"kind": "domain", "value": "shop.example"}]
+        assert mr.match(_meta(frm="anyone@shop.example"), rules)
+        assert mr.match(_meta(frm="x@notshop.example"), rules) is None
+
+    def test_subject_match_is_case_insensitive_substring(self):
+        rules = [{"kind": "subject", "value": "OFF"}]
+        assert mr.match(_meta(subject="Weekend 50% off!"), rules)
+        assert mr.match(_meta(subject="Invoice"), rules) is None
+
+    def test_label_match_uses_gmail_categories(self):
+        rules = [{"kind": "label", "value": "category_promotions"}]
+        assert mr.match(_meta(labels=("INBOX", "CATEGORY_PROMOTIONS")), rules)
+        assert mr.match(_meta(labels=("INBOX",)), rules) is None
+
+    def test_no_rules_matches_nothing(self):
+        assert mr.match(_meta(), []) is None
+
+
+class TestMailWatchFiltering:
+    MEMBERS = {"MemberA": {"wechat": ["wx-a"], "dir": "membera",
+                           "mail": {"provider": "gmail", "cred_prefix": PREFIX,
+                                    "enabled": True, "watch": True}}}
+
+    @pytest.fixture(autouse=True)
+    def _members(self, monkeypatch):
+        monkeypatch.setattr(mw._members, "load_members", lambda *a, **k: self.MEMBERS)
+        monkeypatch.setattr(mr._members, "load_members", lambda *a, **k: self.MEMBERS)
+        mw.store_path().unlink(missing_ok=True)
+        mw.last_push_path().unlink(missing_ok=True)
+        mr.store_path("MemberA").unlink(missing_ok=True)
+
+    @pytest.fixture
+    def sent(self):
+        out = []
+        return out, lambda cid, text: out.append((cid, text))
+
+    def _provider_for(self, member):
+        return ((gp, PREFIX), "")
+
+    def _seed(self, push, monkeypatch):
+        monkeypatch.setattr(gp, "_http", _WatchStub(profile_id="500"))
+        mw.check_and_push(push, "wechat", provider_for=self._provider_for)
+
+    def _poll(self, push, stub, monkeypatch):
+        monkeypatch.setattr(gp, "_http", stub)
+        return mw.check_and_push(push, "wechat", provider_for=self._provider_for,
+                                 now=time.time() + 100)
+
+    def test_unmuted_mail_still_pushes(self, monkeypatch, sent):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        n = self._poll(push, _WatchStub(pages=[_hist([_added("m2")])]), monkeypatch)
+        assert (n, len(out)) == (1, 1)
+
+    def test_muted_sender_is_dropped_but_cursor_advances(self, monkeypatch, sent):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        mr.add("MemberA", kind="sender", value="m2@example.com")
+        n = self._poll(push, _WatchStub(pages=[_hist([_added("m2")], history_id="600")]),
+                       monkeypatch)
+        assert (n, out) == (0, [])
+        assert mw._load()["wechat"]["MemberA"]["history_id"] == "600"
+
+    def test_only_unmuted_mail_of_a_batch_is_pushed(self, monkeypatch, sent):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        mr.add("MemberA", kind="sender", value="m2@example.com")
+        self._poll(push, _WatchStub(pages=[_hist([_added("m2"), _added("m3")])]), monkeypatch)
+        text = out[0][1]
+        assert "Subj m3" in text and "Subj m2" not in text
+        assert "1" in text.splitlines()[0]
+
+    def test_label_rule_drops_mail_without_fetching_it(self, monkeypatch, sent):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        mr.add("MemberA", kind="label", value="CATEGORY_PROMOTIONS")
+        stub = _WatchStub(pages=[_hist([_added("m2", labels=("INBOX", "CATEGORY_PROMOTIONS"))])])
+        n = self._poll(push, stub, monkeypatch)
+        assert (n, out) == (0, [])
+        assert not any("/messages/" in u for u in stub.urls)
+
+    def test_pushed_items_are_recorded_for_later_feedback(self, monkeypatch, sent):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        self._poll(push, _WatchStub(pages=[_hist([_added("m2")])]), monkeypatch)
+        items = mw.last_push("MemberA")
+        assert [i["id"] for i in items] == ["m2"]
+        assert items[0]["from"] == "m2 <m2@example.com>"
+
+
+class TestMuteTools:
+    @pytest.fixture(autouse=True)
+    def _mail_member(self, monkeypatch):
+        monkeypatch.setattr(at._members, "mail_pref", lambda m, *a, **k: {
+            "provider": "gmail", "cred_prefix": PREFIX, "enabled": True, "watch": True})
+        monkeypatch.setattr(mr._members, "load_members",
+                            lambda *a, **k: {"MemberA": {"dir": "membera"}})
+        mr.store_path("MemberA").unlink(missing_ok=True)
+        mw.last_push_path().unlink(missing_ok=True)
+
+    def test_tools_are_registered_member_locked(self):
+        names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
+        for t in ("mail_last_push", "mail_mute", "mail_rules"):
+            assert t in names and t in ac._MEMBER_LOCKED
+        assert "mail_last_push" in ac._UNTRUSTED_TOOLS
+
+    def test_last_push_lists_what_was_broadcast(self):
+        mw.record_last_push("MemberA", [{"id": "m2", "from": "Shop <d@shop.example>",
+                                         "subject": "50% off", "labels": ["INBOX"]}])
+        out = at.tool_mail_last_push({"member": "MemberA"})
+        assert "d@shop.example" in out and "50% off" in out
+
+    def test_last_push_empty_says_so(self):
+        assert "没有" in at.tool_mail_last_push({"member": "MemberA"})
+
+    def test_mute_by_sender_persists_rule(self):
+        out = at.tool_mail_mute({"member": "MemberA", "sender": "d@shop.example",
+                                 "note": "广告"})
+        assert "d@shop.example" in out
+        assert mr.load("MemberA")[0]["kind"] == "sender"
+
+    def test_mute_needs_one_criterion(self):
+        assert at.tool_mail_mute({"member": "MemberA"}).startswith("[错误]")
+
+    def test_mute_by_label_normalises_promotions(self):
+        at.tool_mail_mute({"member": "MemberA", "label": "promotions"})
+        assert mr.load("MemberA")[0]["value"] == "CATEGORY_PROMOTIONS"
+
+    def test_rules_tool_lists_and_removes(self):
+        at.tool_mail_mute({"member": "MemberA", "sender": "d@shop.example"})
+        assert "d@shop.example" in at.tool_mail_rules({"member": "MemberA"})
+        out = at.tool_mail_rules({"member": "MemberA", "remove": 1})
+        assert "d@shop.example" in out and mr.load("MemberA") == []
+
+    def test_rules_tool_on_empty_list(self):
+        assert "没有" in at.tool_mail_rules({"member": "MemberA"})

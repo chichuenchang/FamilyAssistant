@@ -146,6 +146,13 @@ def member_forms_dir(member: str) -> Path:
     return d
 
 
+def member_mail_rules(member: str) -> Path:
+    """成员的新邮件播报忽略规则 data/<成员>/mail/rules.json（用户教出来的偏好，入备份）。"""
+    d = member_dir(member) / "mail"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "rules.json"
+
+
 def member_cache_dir(member: str, name: str) -> Path:
     """可再生产物 data/<成员>/cache/<name>/（charts、web_images…），不存在则创建。
 

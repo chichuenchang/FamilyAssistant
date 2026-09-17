@@ -10,9 +10,9 @@ scope：gmail.readonly（搜/读）+ gmail.send（只发，不能删改信件）
 
 新邮件播报（mail_watch 用）要的三件：
     profile_history_id(prefix) -> str                       当前游标（首次起点）
-    history_since(cursor, prefix) -> (rows | None, 新游标)   rows=[{id, thread_id}]（新进收件箱）；
+    history_since(cursor, prefix) -> (rows | None, 新游标)   rows=[{id, thread_id, labels}]（新进收件箱）；
                                                             None = 游标过旧已失效，新游标是重新起点
-    message_meta(msg_id, prefix) -> {id, from, subject, date, unread}   不含正文
+    message_meta(msg_id, prefix) -> {id, from, subject, date, labels, unread}   不含正文
 """
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ def body_text(payload: dict) -> str:
 # ── 契约 ────────────────────────────────────────────────────
 
 def message_meta(msg_id: str, prefix: str = DEFAULT_PREFIX) -> dict:
-    """一封的信头（无正文）：{id, thread_id, from, subject, date, snippet, unread}。"""
+    """一封的信头（无正文）：{id, thread_id, from, subject, date, snippet, labels, unread}。"""
     full = _api(prefix, "GET", f"/messages/{urllib.parse.quote(msg_id, safe='')}",
                 [("format", "metadata")] + [("metadataHeaders", h)
                                             for h in ("From", "Subject", "Date")])
@@ -168,6 +168,7 @@ def message_meta(msg_id: str, prefix: str = DEFAULT_PREFIX) -> dict:
     return {"id": full["id"], "thread_id": full.get("threadId", ""),
             "from": h.get("from", ""), "subject": h.get("subject", ""),
             "date": h.get("date", ""), "snippet": html.unescape(full.get("snippet", "")),
+            "labels": list(full.get("labelIds") or []),
             "unread": "UNREAD" in (full.get("labelIds") or [])}
 
 
@@ -212,7 +213,8 @@ def history_since(start_history_id: str, prefix: str = DEFAULT_PREFIX,
                 if m.get("id") in seen or label not in labels or labels & _SKIP_LABELS:
                     continue
                 seen.add(m["id"])
-                ids.append({"id": m["id"], "thread_id": m.get("threadId", "")})
+                ids.append({"id": m["id"], "thread_id": m.get("threadId", ""),
+                            "labels": sorted(labels)})
         hid = str(r.get("historyId") or hid)
         token = r.get("nextPageToken") or ""
         if not token:
