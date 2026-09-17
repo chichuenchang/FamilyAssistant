@@ -12,7 +12,8 @@ scope：gmail.readonly（搜/读）+ gmail.send（只发，不能删改信件）
     profile_history_id(prefix) -> str                       当前游标（首次起点）
     history_since(cursor, prefix) -> (rows | None, 新游标)   rows=[{id, thread_id, labels}]（新进收件箱）；
                                                             None = 游标过旧已失效，新游标是重新起点
-    message_meta(msg_id, prefix) -> {id, from, subject, date, labels, unread}   不含正文
+    message_metas(ids, prefix) -> [{id, from, subject, date, labels, unread}]   不含正文；
+                                                            已不存在的信（404）直接略过
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 from email.utils import parseaddr
 from pathlib import Path
@@ -48,6 +50,8 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 DEFAULT_PREFIX = "GMAIL"
 BODY_CAP = 6000
+TIMEOUT_S = 15             # 单次 HTTP 上限：播报节拍跑在传输层轮询循环里，慢了全员卡住
+META_WORKERS = 5           # 信头并发数
 HISTORY_PAGES = 5          # history.list 翻页上限（一轮最多看这么多页，防爆量时卡住节拍）
 # 新进收件箱但不该播报的标签（自己发的、草稿、垃圾、已删）
 _SKIP_LABELS = {"SENT", "DRAFT", "SPAM", "TRASH"}
@@ -73,7 +77,7 @@ def _http(method: str, url: str, data: bytes | None = None,
     """唯一 HTTP 出口（测试在此打桩）。"""
     req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, e.read()
@@ -172,11 +176,29 @@ def message_meta(msg_id: str, prefix: str = DEFAULT_PREFIX) -> dict:
             "unread": "UNREAD" in (full.get("labelIds") or [])}
 
 
+def message_metas(ids: list[str], prefix: str = DEFAULT_PREFIX) -> list[dict]:
+    """并发取一批信头，保持 ids 的顺序。列出后又被彻底删除的信（404）略过——
+    history/搜索结果里仍带着它的 id，一封取不到不能拖垮整批。"""
+    def one(mid: str) -> dict | None:
+        try:
+            return message_meta(mid, prefix)
+        except ApiError as e:
+            if e.status == 404:
+                return None
+            raise
+
+    if not ids:
+        return []
+    _token(prefix)                        # 先刷好 token，免得各线程各刷一次
+    with ThreadPoolExecutor(max_workers=META_WORKERS) as pool:
+        return [m for m in pool.map(one, ids) if m]
+
+
 def search(query: str, max_results: int = 10, prefix: str = DEFAULT_PREFIX) -> list[dict]:
     """Gmail 搜索语法（同网页搜索框）。返回 message_meta 列表。"""
     r = _api(prefix, "GET", "/messages",
              {"q": query, "maxResults": max(1, min(int(max_results), 20))})
-    return [message_meta(m["id"], prefix) for m in (r.get("messages") or [])]
+    return message_metas([m["id"] for m in (r.get("messages") or [])], prefix)
 
 
 def profile_history_id(prefix: str = DEFAULT_PREFIX) -> str:
