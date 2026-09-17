@@ -16,6 +16,7 @@ Agent 经白名单子命令调用，输出纯文本。一次填表 = 一个会�
 import argparse
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -94,6 +95,17 @@ def _fmt_field_line(i: int, f: dict) -> str:
     return f"{i}. {f['name']} | {f['label']} | {t}"
 
 
+def _pages_dir(member: str, session_id: str) -> Path:
+    return _paths.member_forms_dir(member) / f"{session_id}_pages"
+
+
+def _cancel(member: str, s: dict) -> None:
+    """会话作废；已取消的会话不能再 render，页面渲染图随之删除（可由 form-scan 重生）。"""
+    s["status"] = "cancelled"
+    form_session.save(s)
+    shutil.rmtree(_pages_dir(member, s["id"]), ignore_errors=True)
+
+
 def cmd_form_scan(args):
     src = _resolve_source(args.file, args.member)
     rel_src = _paths.to_rel(src)
@@ -114,8 +126,7 @@ def cmd_form_scan(args):
     # 同一 PDF 半途的 flat 扫描（defining，还没定义字段）重扫即作废，不留僵尸会话
     for s in form_session.list_sessions(args.member):
         if s.get("source_pdf") == rel_src and s.get("status") == "defining":
-            s["status"] = "cancelled"
-            form_session.save(s)
+            _cancel(args.member, s)
 
     if not form_fill.is_available():
         _die("缺少 pypdf 依赖，无法读取 PDF 表单。pip install pypdf")
@@ -147,7 +158,7 @@ def cmd_form_scan(args):
         _die("此 PDF 没有可填写字段（平面/扫描表格），需要腾讯云 OCR 定位标签。"
              "请配置 TENCENT_SECRET_ID/TENCENT_SECRET_KEY")
     s = form_session.new_session(args.member, rel_src, "flat", status="defining")
-    pages_dir = _paths.member_forms_dir(args.member) / f"{s['id']}_pages"
+    pages_dir = _pages_dir(args.member, s["id"])
     try:
         pages = form_overlay.render_pages(str(src), str(pages_dir))
     except Exception as e:
@@ -273,8 +284,7 @@ def cmd_form_list(args):
 
 def cmd_form_cancel(args):
     s = _load_session(args, strict=True)
-    s["status"] = "cancelled"
-    form_session.save(s)
+    _cancel(args.member, s)
     _mark_backup_dirty()
     print(f"已取消会话 {s['id']}。")
 

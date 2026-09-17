@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import sys
 import time
@@ -83,6 +84,11 @@ def member_inbox_dir(member: str, dt: date | None = None) -> Path:
 
 # ── 调试日志（各 Bot 共用；默认开，--no-debug 关） ─────────────────
 
+# 调试日志封顶：单文件 2 MB × (1 + 3 份轮转) ≈ 8 MB
+_LOG_MAX_BYTES = 2 * 1024 * 1024
+_LOG_BACKUPS = 3
+
+
 def setup_logging(debug: bool = True) -> logging.Logger:
     """配置 "familyassist" 日志器，各传输层（telegram/wechat）调一次即可。
 
@@ -104,7 +110,8 @@ def setup_logging(debug: bool = True) -> logging.Logger:
     logger.addHandler(sh)
     if debug:
         log_file = _paths.state_file("bot_debug.log")
-        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS, encoding="utf-8")
         fh.setFormatter(fmt)
         logger.addHandler(fh)
         logger.debug("调试日志已开启 → %s", log_file)

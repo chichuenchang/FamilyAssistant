@@ -108,6 +108,17 @@ def test_list_and_cancel(data_root, inbox_pdf):
     assert r.returncode == 1 and "[错误]" in r.stdout
 
 
+def test_cancel_drops_rendered_pages(data_root, inbox_pdf):
+    sid = _sid(_run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
+                    data_root=data_root).stdout)
+    pages = data_root / "jim" / "forms" / f"{sid}_pages"
+    pages.mkdir()
+    (pages / "p1.png").write_bytes(b"x")
+    _run("form-cancel", "--session", sid, "--member", "Jim", data_root=data_root)
+    assert not pages.exists()
+    assert (data_root / "jim" / "forms" / f"{sid}.json").exists()   # 会话记录保留
+
+
 def test_scan_same_pdf_reuses_active_session(data_root, inbox_pdf):
     # 填表回归：LLM 忘会话 id 后常重扫同一 PDF——不能建平行会话丢进度
     sid = _sid(_run("form-scan", "--file", str(inbox_pdf), "--member", "Jim",
