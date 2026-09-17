@@ -25,12 +25,13 @@
 - 重复检测（证件编号 / 文件哈希）
 - **家庭成员资料**：法定名/生日/电话/住址/证件卡号等长期事实存家庭共享库（documents.db），全家每次对话自动带上——填表建议、"爸爸生日几号"随口即答；对话里提到即自动更新
 
-### 📋 PDF 表格代填（Form Filler）
-- 微信/Telegram 发一份 PDF 表格说"帮我填"→ Bot 识别字段，**一条消息问一个空**，答完自动生成填好的 PDF 发回
-- 可填写 PDF（政府/移民/银行表单常见）直接填字段；扫描/平面表格走 OCR 定位 + 盖字
-- 已知信息（成员法定名、备忘里的号码）会作为**建议**给出，但每个空都经你确认——绝不擅自填
-- 填一半断了不怕：会话落盘，`/clear`、重启后都能继续；"剩下都留空"一句话收尾
-- 依赖 pypdf（可填写 PDF）/ pypdfium2+Pillow（扫描表），未安装时给安装提示
+### 📋 PDF 编辑（PDF Editor）
+- 微信/Telegram 发一份 PDF，**一句话说要改什么**（"姓名填张三，生日 1990-01-02，勾已婚，第 2 页贴我的签名，删掉第 4 页"）→ 改好的 PDF 直接发回
+- 能做：填表单字段、任意位置写字/打勾、白底盖掉再改写、贴签名/图片、画线、删页/旋转/重排/合并
+- 不满意就说哪儿不对（"名字往上挪一点""出生年改 1991"）→ 从原件重做，不叠加痕迹
+- 缺的值一条消息一起问，绝不编造；签名必须是你发来的图片
+- 可填写 PDF 保持可填写；其余叠一层矢量覆盖，原页不动、不糊、文字仍可选
+- 依赖 pypdf（必需）/ reportlab（写字贴图）/ pypdfium2（定位），扫描件另需腾讯云 OCR；未安装时给安装提示
 
 ### 🗒️ 个人备忘（Note Keeper）
 - "帮我记住车位是B2-118"、发一张路由器标签/课表/名片照片 → OCR 提取后存为备忘
@@ -238,12 +239,12 @@ FamilyAssistant/
 │       │   ├── sheet_db.py       ← 工作表数据层（kv 事实清单 / table 流水）
 │       │   ├── chart.py          ← 离线图表渲染（matplotlib Agg，可再生不入备份）
 │       │   └── cli.py            ← 备忘 / 工作表 / 图表 CLI 入口
-│       ├── Form_Filler/      ← PDF 表格代填（会话落盘，一字段一问）
+│       ├── PDF_Editor/       ← 一句指令改 PDF（会话落盘，可续改）
 │       │   ├── SKILL.md
-│       │   ├── form_session.py   ← 填表会话 JSON 存储
-│       │   ├── form_fill.py      ← AcroForm 读字段/填值（pypdf）
-│       │   ├── form_overlay.py   ← 平面/扫描 PDF 渲染+盖字（pypdfium2+Pillow）
-│       │   └── cli.py            ← 填表 CLI 入口
+│       │   ├── pdf_layout.py     ← 版面：字段框 / 文字行框 / 扫描页 OCR
+│       │   ├── pdf_plan.py       ← 编辑会话 + instruction→ops（排版 LLM）
+│       │   ├── pdf_apply.py      ← 填字段 + 覆盖层 + 页级操作
+│       │   └── cli.py            ← PDF 编辑 CLI 入口
 │       ├── Remote_Backup/    ← 用户数据云盘镜像（可选）
 │       │   ├── SKILL.md
 │       │   ├── backup_sync.py    ← 同步引擎
@@ -286,7 +287,7 @@ FamilyAssistant/
 ├── FamilyAssistant.md    ← 开发者总览（架构 / config 键表 / 运行方式）
 ├── data/                 ← 全部用户数据（git 不跟踪）
 │   ├── Family/           ← 家庭共享：ledger.db（财务）、documents.db（文档+成员资料）、receipts/、documents/
-│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/、forms/（填表会话）、cache/（可再生，不备份）
+│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/、pdf_edits/（PDF 编辑会话）、cache/（可再生，不备份）
 │   ├── .state/           ← 运行时状态/凭据/日志（不备份）；路径一律经 paths.state_file
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）

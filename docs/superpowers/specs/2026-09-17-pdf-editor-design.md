@@ -31,6 +31,7 @@ Agent 侧不做逐字段问答：一条消息可以问多项，已知的不问�
 | `scanned` | 无字段、抽不到文字 | 渲染 2x PNG + 腾讯 OCR 逐行框 | OCR 额度 |
 
 `digital` 档是新增的：Form_Filler 无字段就一律 OCR，明明文字层能直接给精确坐标。
+判定按页做（混合 PDF：有文字层的页走 pdfium，没有的页走 OCR）；`kind` 只是整体标签。
 
 ## 输出方式
 
@@ -43,7 +44,8 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 ## 目录与 plan
 
 `data/<成员>/pdf_edits/<id>/`，`id` = `YYYYMMDD_HHMMSS_xxxx`：
-`plan.json`、`pages/page_N.png`（digital/scanned）、`out.pdf`。
+`plan.json`、`layout.json`（版面缓存，续改不重跑 OCR）、`<原名>_edited.pdf`。
+扫描页 PNG 只渲染到临时目录，OCR 完即删。
 
 ```json
 {"id","member","created","source_pdf","kind",
@@ -62,13 +64,14 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 {"op":"check","page":0,"x":88,"y":410,"size":18}
 {"op":"erase","page":0,"x":200,"y":330,"w":180,"h":24}
 {"op":"image","page":5,"x":120,"y":700,"w":160,"h":50,"src":"爸爸/images/sig.png"}
+{"op":"line","page":0,"x1":100,"y1":200,"x2":400,"y2":200,"width":2}
 {"op":"page_delete","pages":[2]}
 {"op":"page_rotate","page":1,"deg":90}
 {"op":"page_reorder","order":[0,2,1]}
 {"op":"page_insert","src":"爸爸/documents/x.pdf","after":0}
 ```
 
-- `size` 省略：有框取框高 0.7，无框取 10pt。放不下逐级缩到 8pt，仍放不下截断加 `…` 并警告。
+- `size` 省略：有框取框高 0.9 夹在 9–12pt，无框取 10pt。放不下逐级缩到 6pt，仍放不下截断加 `…` 并警告。
 - `check`：画 `X`（部分字体缺 ✓ 字形）。
 - `erase`：不透明白矩形，**不是脱敏 —— 原内容仍在其下**。用到就出警告，Agent 必须转述。
 - 未知 `op`：跳过 + `警告: 不支持的操作 <op>`，不崩。新增动词 = 一个 apply 函数 + 一行 schema。
@@ -81,10 +84,10 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 | 工具 | 参数 | 返回 |
 |------|------|------|
 | `inspect_pdf` | `file` | kind、页数、这份 PDF 要填什么：字段标签（acroform）或探到的空白标签行（digital/scanned）。`UNTRUSTED_TOOLS`（套围栏）。Agent 靠它知道该向用户问哪些值 |
-| `edit_pdf` | `file` 或 `session`，`instruction` | `DOC_TOOLS`：stdout 首行 = `out.pdf` 的 data 相对路径（自动发给用户），随后 `session=<id>` 行与 `警告: …` 行 |
+| `edit_pdf` | `file` 或 `session`，`instruction`，`fresh` | `DOC_TOOLS` + `UNTRUSTED_TOOLS`：stdout 首行 = 产出 PDF 的 data 相对路径（自动发给用户），随后 `session=<id>`、`提示: …`（排版模型的 notes）、`警告: …` |
 | `pdf_edit_list` | — | 近期会话（id、源文件、最后一条指令），`/clear` 或重启后接着改用 |
 
-`MEMBER_LOCKED` = 全部三个。`CLI_TIMEOUTS`：`pdf-inspect` 120，`pdf-edit` 180（渲染 + OCR + LLM）。
+`MEMBER_LOCKED` = 全部三个。`CLI_TIMEOUTS`：`pdf-inspect` 120，`pdf-edit` 300（渲染 + OCR + 至多两次 120s 的 LLM 调用）。
 
 `ORDER = 95`（原 Form_Filler 位次）。
 
@@ -114,7 +117,7 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 ## instruction → ops
 
 `pdf_plan.py` 给 `llm_client.chat` 的内容：kind、各页尺寸、带坐标的版面行/字段清单、
-旧 ops（若续用会话）、用户指令。要求只回 JSON ops 数组。
+旧 ops（若续用会话）、用户指令。要求只回 JSON `{"ops":[…],"notes":[…]}`（裸数组也接受）。
 JSON 不可解 → 重试一次 → `[错误] 排版模型没给出可用编辑计划`。
 
 ## 依赖缺席

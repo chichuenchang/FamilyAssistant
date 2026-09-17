@@ -2181,7 +2181,7 @@ Apply the one-word test/comment edits listed under **Files**; remove `member_for
 ```markdown
 # PDF Editor
 
-> 一句指令改 PDF：Agent 调一次 `edit_pdf`，工具内部排版、应用、发回。取代 Form_Filler。
+> 一句指令改 PDF：Agent 调一次 `edit_pdf`，工具内部排版、应用、发回。
 > 设计与 ops 词汇：`docs/superpowers/specs/2026-09-17-pdf-editor-design.md`。
 
 ## 代码
@@ -2204,6 +2204,10 @@ Apply the one-word test/comment edits listed under **Files**; remove `member_for
 - 排版是纯文本调用：`llm_client.chat` 在 tools 为空时不带 `tools` 键（空数组 API 是否接受未验证，不赌）。
 - 排版用 `PLAN_EFFORT = "high"` 而非 max：`llm_client.chat` 单次超时 120s，至多两次，CLI 超时 300s。
 - 续改永远从原始 PDF 重渲染，LLM 回完整 ops，不回 diff。
+- 实测排版模型会把字段**标签**当 `name` 填：版面里写成 `name="…"`，`validate_ops` 对唯一标签做兜底映射。
+- reportlab 空画布 `save()` 不出页（图片全坏时）→ `merge_page` 越界；`_overlay` 一律先 `showPage()`。
+- 自动字号 = 框高 × 0.9，夹在 9–12pt：pdfium 行框贴字形（12pt 字框高约 9pt），多行区框又很高，不夹就出蚂蚁字或巨字。
+- DeepSeek flash + `high`：合成两页表单实测一次排版 1.5–2.5s。
 - LLM 忘/编会话 id 是常态：`pdf-edit` 兜底接续最近会话，提示走 stderr（stdout 首行是哨兵路径）。
 
 ## 会话
