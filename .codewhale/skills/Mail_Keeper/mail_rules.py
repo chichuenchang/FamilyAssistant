@@ -10,7 +10,7 @@ mail_mute 落一条规则，此后命中的信 mail_watch 直接丢（不播报�
 
 四种 kind 覆盖实际会说的话：
     sender   某个地址（"这个发件人别推了"）
-    domain   整个域（"这家公司的都别推"）
+    domain   整个域含子域（"这家公司的都别推"；shop.example 也挡 news@mail.shop.example）
     subject  主题含某词（不分大小写；"带 newsletter 的别推"）
     label    Gmail 自己的分类标签，如 CATEGORY_PROMOTIONS / CATEGORY_SOCIAL
              （"广告类的都别推"）—— 标签随 history 一起来，命中时连信头都不用取
@@ -18,6 +18,7 @@ mail_mute 落一条规则，此后命中的信 mail_watch 直接丢（不播报�
 
 from __future__ import annotations
 
+import re
 import time
 from email.utils import parseaddr
 from pathlib import Path
@@ -59,8 +60,11 @@ def normalise(kind: str, value: str) -> tuple[str, str]:
         raise ValueError("规则值不能为空")
     if kind == "label":
         v = LABEL_ALIASES.get(v.lower(), v.upper())
-    elif kind == "domain":
-        v = v.lstrip("@").lower()
+    elif kind == "domain":           # LLM 可能给整个地址或网址：只留主机名
+        v = re.sub(r"^[a-z][a-z0-9+.-]*://", "", v.lower()).split("/")[0]
+        v = v.rsplit("@", 1)[-1].strip(".")
+        if not v:
+            raise ValueError("domain 要给域名，如 shop.example")
     elif kind == "sender":
         v = (parseaddr(v)[1] or v).lower()
     return kind, v
@@ -98,6 +102,7 @@ def match(meta: dict, rules: list[dict]) -> dict | None:
     故 mail_watch 可在取信头之前先用 history 带回的标签过一遍。
     """
     addr = (parseaddr(meta.get("from") or "")[1] or "").lower()
+    host = addr.rsplit("@", 1)[-1] if "@" in addr else ""
     subject = (meta.get("subject") or "").lower()
     labels = {str(x).upper() for x in (meta.get("labels") or [])}
     for r in rules:
@@ -107,7 +112,7 @@ def match(meta: dict, rules: list[dict]) -> dict | None:
             continue
         if kind == "sender" and addr and addr == val.lower():
             return r
-        if kind == "domain" and addr.endswith("@" + val.lower()):
+        if kind == "domain" and (host == val.lower() or host.endswith("." + val.lower())):
             return r
         if kind == "subject" and val.lower() in subject:
             return r

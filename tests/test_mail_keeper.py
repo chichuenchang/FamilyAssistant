@@ -633,6 +633,16 @@ class TestMailRules:
         assert mr.match(_meta(frm="anyone@shop.example"), rules)
         assert mr.match(_meta(frm="x@notshop.example"), rules) is None
 
+    def test_domain_match_covers_subdomains(self):
+        rules = [{"kind": "domain", "value": "shop.example"}]
+        assert mr.match(_meta(frm="news@mail.shop.example"), rules)
+        assert mr.match(_meta(frm="x@shop.example.evil.test"), rules) is None
+
+    @pytest.mark.parametrize("raw", ["@Shop.Example", "deals@shop.example",
+                                     "https://shop.example/unsubscribe"])
+    def test_domain_value_is_reduced_to_the_host(self, raw):
+        assert mr.normalise("domain", raw) == ("domain", "shop.example")
+
     def test_subject_match_is_case_insensitive_substring(self):
         rules = [{"kind": "subject", "value": "OFF"}]
         assert mr.match(_meta(subject="Weekend 50% off!"), rules)
