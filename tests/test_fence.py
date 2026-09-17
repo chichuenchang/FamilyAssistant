@@ -33,7 +33,7 @@ def test_rule_in_system_prompt_names_the_nonce():
 def test_untrusted_tools_cover_non_local_sources():
     reg = skill_registry.load()
     for tool in ("web_search", "web_read", "youtube_summarize", "anysearch_search",
-                 "anysearch_extract", "ocr_image", "fill_form_scan", "list_schedule"):
+                 "anysearch_extract", "ocr_image", "inspect_pdf", "list_schedule"):
         assert tool in reg.untrusted_tools, tool
 
 

@@ -416,7 +416,7 @@ class Agent:
                         produced_images.extend(
                             ln.strip() for ln in result.splitlines() if ln.strip())
                     elif name in _DOC_TOOLS:
-                        # form-render 第一行是路径，后续可能有"警告:"行——哨兵只取首行
+                        # pdf-edit 第一行是路径，后续可能有"警告:"行——哨兵只取首行
                         produced_docs.append(result.strip().splitlines()[0])
                     if name in _SHOW_TOOLS:
                         shown[name] = result.replace("\x01", "")   # 外部文本不得伪造哨兵行

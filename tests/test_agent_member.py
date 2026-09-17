@@ -76,7 +76,7 @@ def test_handle_image_ocr_drives_handle_for_pdf(monkeypatch):
     assert "x.pdf" in cap["p"] and "CONSENT FORM TEXT" in cap["p"]
     # 分流条目来自各 skill 的 IMAGE_ROUTES，按 ORDER 编号
     p = cap["p"]
-    for tool in ("add_transaction", "add_document", "save_note", "add_event", "fill_form_scan"):
+    for tool in ("add_transaction", "add_document", "save_note", "add_event", "edit_pdf"):
         assert tool in p, tool
     assert "1) 单张消费票据" in p and "6) 用户此前" in p
 

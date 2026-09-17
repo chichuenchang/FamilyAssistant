@@ -71,11 +71,6 @@ def test_notes_image_dir_created(env):
     assert d.exists() and d.as_posix().endswith("data/Alex/notes/2026-06")
 
 
-def test_member_forms_dir_created(env):
-    d = paths.member_forms_dir("Alex Lee")
-    assert d.is_dir() and d.as_posix().endswith("data/Alex/forms")
-
-
 def test_family_documents_db(env):
     assert paths.family_documents_db().as_posix().endswith("data/Family/documents.db")
 
