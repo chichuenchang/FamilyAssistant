@@ -391,6 +391,26 @@ class TestProviderHistory:
         rows, hid = gp.history_since("100", PREFIX)
         assert [r["id"] for r in rows] == ["m2", "m3"] and hid == "888"
 
+    def test_page_cap_resumes_from_last_record_not_mailbox_head(self, monkeypatch):
+        monkeypatch.setattr(gp, "HISTORY_PAGES", 1)
+        page = _hist([_added("m2")], history_id="999", token="p1")
+        page["history"][0]["id"] = "150"
+        monkeypatch.setattr(gp, "_http", _WatchStub(pages=[page, _hist([_added("m3")])]))
+        rows, hid = gp.history_since("100", PREFIX)
+        assert [r["id"] for r in rows] == ["m2"] and hid == "150"
+
+    def test_metas_skip_deleted_messages_and_keep_order(self, monkeypatch):
+        stub = _WatchStub()
+        monkeypatch.setattr(gp, "_http", lambda m, url, *a, **k: (
+            (404, b"{}") if "/messages/gone" in url else stub(m, url, *a, **k)))
+        metas = gp.message_metas(["m2", "gone", "m3"], PREFIX)
+        assert [m["id"] for m in metas] == ["m2", "m3"]
+
+    def test_metas_other_errors_still_raise(self, monkeypatch):
+        monkeypatch.setattr(gp, "_http", lambda *a, **k: (500, b"{}"))
+        with pytest.raises(RuntimeError):
+            gp.message_metas(["m2"], PREFIX)
+
     def test_stale_start_id_reseeds_from_profile(self, monkeypatch):
         monkeypatch.setattr(gp, "_http", _WatchStub(profile_id="900", history_status=404))
         rows, hid = gp.history_since("1", PREFIX)

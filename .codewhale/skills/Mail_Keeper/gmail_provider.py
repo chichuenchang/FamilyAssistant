@@ -212,11 +212,14 @@ def history_since(start_history_id: str, prefix: str = DEFAULT_PREFIX,
 
     起点过旧（Gmail 只保证约一周）→ Gmail 回 404 → 返回 (None, 新起点)，
     调用方存下新游标并跳过这一轮（不知道错过了什么，宁可不播报）。
+
+    翻满 HISTORY_PAGES 页还没完 → 新游标停在**已读到的最后一条 history 记录**，
+    下一轮从那接着读。不能用响应里的 historyId：那是邮箱当前值，用了就丢掉没读的页。
     """
     ids: list[dict] = []
     seen: set[str] = set()
     token = ""
-    hid = str(start_history_id)
+    hid = last_rec = str(start_history_id)
     for _ in range(HISTORY_PAGES):
         params = {"startHistoryId": str(start_history_id),
                   "historyTypes": "messageAdded", "labelId": label}
@@ -229,6 +232,7 @@ def history_since(start_history_id: str, prefix: str = DEFAULT_PREFIX,
                 return None, profile_history_id(prefix)
             raise
         for rec in r.get("history") or []:
+            last_rec = str(rec.get("id") or last_rec)
             for add in rec.get("messagesAdded") or []:
                 m = add.get("message") or {}
                 labels = set(m.get("labelIds") or [])
@@ -240,8 +244,8 @@ def history_since(start_history_id: str, prefix: str = DEFAULT_PREFIX,
         hid = str(r.get("historyId") or hid)
         token = r.get("nextPageToken") or ""
         if not token:
-            break
-    return ids, hid
+            return ids, hid
+    return ids, last_rec
 
 
 def get_message(msg_id: str, prefix: str = DEFAULT_PREFIX) -> dict:
