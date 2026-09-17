@@ -23,6 +23,7 @@ client_secret*.json
 
 # AnySearch API key（仅环境变量或 gitignore 的 .env，绝不入库）
 **/Any_Search/.env
+**/Web_Reach/.env
 
 # IDE
 .vscode/
