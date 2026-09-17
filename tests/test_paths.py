@@ -103,3 +103,8 @@ def test_member_cache_dir_adopts_legacy_dir(env):
     d = paths.member_cache_dir(name, "charts")
     assert d == paths.member_dir(name) / "cache" / "charts"
     assert (d / "a.png").exists() and not legacy.exists()
+
+
+def test_member_pdf_edits_dir_created(env):
+    d = paths.member_pdf_edits_dir("Alex Lee")
+    assert d.is_dir() and d.as_posix().endswith("data/Alex/pdf_edits")

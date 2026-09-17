@@ -19,3 +19,5 @@ pypdf
 pypdfium2
 # Pillow — Form_Filler 平面表盖字 + 重组 PDF（与 pypdfium2 配套）。
 Pillow
+# reportlab — PDF_Editor 的覆盖层（写字/打勾/白底/贴图/画线）；未安装时仅表单字段填写与页级操作可用。
+reportlab

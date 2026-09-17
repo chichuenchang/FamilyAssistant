@@ -89,7 +89,7 @@ def member_pdf_edits_dir(member: str) -> Path:
         "reasoning_effort": effort,
         "temperature": 0.3, "max_tokens": 32000,
     }
-    if tools:      # 空 tools 数组会被 API 拒收；纯文本调用（PDF_Editor 排版）不带
+    if tools:      # 纯文本调用（PDF_Editor 排版）不带 tools 键
         payload["tools"] = tools
     body = json.dumps(payload).encode("utf-8")
 ```
@@ -1132,8 +1132,7 @@ def test_field_ops_set_real_values(tmp_path):
     r = PdfReader(str(out))
     f = r.get_fields()
     assert f["name"]["/V"] == "ZHANG" and f["married"]["/V"] == "/Yes"
-    assert r.trailer["/Root"]["/AcroForm"]["/NeedAppearances"] is True or \
-        bool(r.trailer["/Root"]["/AcroForm"]["/NeedAppearances"])
+    assert bool(r.trailer["/Root"]["/AcroForm"]["/NeedAppearances"])
 
 
 def test_checkbox_off_and_bad_state(tmp_path):
@@ -2184,7 +2183,7 @@ Apply the one-word test/comment edits listed under **Files**; remove `member_for
 - `writer.append(reader, pages=[2,0])` 保序且保留 AcroForm；逐页 `add_page` 会丢表单。
 - reportlab 白矩形盖不掉文字层：`erase` 后原文仍可复制，工具每次都警告。
 - reportlab 只吃 TrueType 轮廓：Noto CJK（CFF）注册失败，候选链里没放。`.ttc` 要 `subfontIndex=0`。
-- DeepSeek 拒收空 `tools` 数组 → `llm_client.chat` 在 tools 为空时不带该键。
+- 排版是纯文本调用：`llm_client.chat` 在 tools 为空时不带 `tools` 键（空数组 API 是否接受未验证，不赌）。
 - 排版用 `PLAN_EFFORT = "high"` 而非 max：`llm_client.chat` 单次超时 120s，至多两次，CLI 超时 300s。
 - 续改永远从原始 PDF 重渲染，LLM 回完整 ops，不回 diff。
 - LLM 忘/编会话 id 是常态：`pdf-edit` 兜底接续最近会话，提示走 stderr（stdout 首行是哨兵路径）。

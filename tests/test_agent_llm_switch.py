@@ -208,3 +208,22 @@ def test_reset_persist_failure_warns(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_core, "_save_llm_overrides", boom)
     r = a.handle("/model reset", user="u1", member="Jim")
     assert "重启后可能恢复" in r  # 旧覆盖还在盘上，重启会复活——必须告知
+
+
+def test_chat_omits_tools_key_when_empty(monkeypatch):
+    import io
+    import json
+    import urllib.request
+    import llm_client
+    sent = {}
+
+    def fake_urlopen(req, timeout=0):
+        sent.update(json.loads(req.data))
+        return io.BytesIO(json.dumps(
+            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert llm_client.chat([{"role": "user", "content": "hi"}], [], "m", "low")["content"] == "ok"
+    assert "tools" not in sent
+    llm_client.chat([{"role": "user", "content": "hi"}], [{"type": "function"}], "m", "low")
+    assert sent["tools"] == [{"type": "function"}]
