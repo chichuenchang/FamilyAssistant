@@ -298,8 +298,8 @@ def tool_send_draft(args):
         _log.exception("发信失败")
         return f"[错误] 发送失败（草稿留着，可重试）：{e}"
     _draft.drop(member)
-    att = f"，附件 {len(rels)} 个" if rels else ""
-    return f"已发送给 {draft['to']}（主题：{draft['subject']}{att}，新邮件 id {new_id}）"
+    att_note = f"，附件 {len(rels)} 个" if rels else ""
+    return f"已发送给 {draft['to']}（主题：{draft['subject']}{att_note}，新邮件 id {new_id}）"
 
 
 def tool_mail_last_push(args):
