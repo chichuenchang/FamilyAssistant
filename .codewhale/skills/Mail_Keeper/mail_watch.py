@@ -11,14 +11,18 @@ provider.history_since(游标)，新进收件箱的信只播报 **发件人 + �
 播报过的信头记进 .mail_last_push.json：推送不经 LLM，用户回头说"别推这种"时
 Agent 才有得可查（mail_last_push 工具）。
 
-游标存 data/.state/.mail_history.json：{频道: {成员: {history_id, at}}}
+游标存 data/.state/.mail_history.<频道>.json：{成员: {history_id, at}}
 （点前缀 = 运行时瞬态，不进备份）。按频道各存一份，微信/Telegram 都能收到同一封。
+一频道一文件：各频道是独立进程，共用一个文件会互相用旧副本盖掉对方的游标。
 
 确定性规则：
   - 首次见到某(频道,成员) → 用 getProfile 的 historyId 落游标，不播报历史邮件
   - 游标过旧（history_since 返回 rows=None）→ 存新起点，这轮不播报
-  - 推送或 API 失败 → 游标不动，下一轮重来（宁可重播一次，不可漏）
-  - MIN_POLL_S 节流：传输层节拍比这更密也不会多打 Gmail
+  - API 失败、或该成员所有 id 都没推出去（push_fn 抛错或返回 False）→ 游标不动，
+    下一轮重来（宁可重播一次，不可漏）
+  - MIN_POLL_S 节流（进程内存，不落盘）：传输层节拍比这更密也不会多打 Gmail
+  - 游标没变不写盘
+  - 一轮总耗时超过 TICK_BUDGET_S → 剩下的成员留到下一轮（节拍跑在传输层轮询循环里）
   - label 规则先用 history 带回的标签过一遍 → 命中的连信头都不取（省配额）
   - 一轮最多取 MAX_META 封信头；更早的只计入条数
   - 一条播报最多 MAX_LINES 行，其余只报条数（订阅邮件爆量不刷屏）
@@ -39,28 +43,31 @@ import mail_rules as _rules
 
 _log = logging.getLogger("familyassist.mail")
 
-STATE_NAME = ".mail_history.json"
+STATE_NAME = ".mail_history.{channel}.json"
 LAST_PUSH_NAME = ".mail_last_push.json"
 MAX_LINES = 5
 MAX_META = 25
 MIN_POLL_S = 15
 LAST_PUSH_KEEP = 20
+TICK_BUDGET_S = 20
+
+_polled: dict[tuple[str, str], float] = {}    # (频道, 成员) → 上次轮询时刻
 
 
-def store_path() -> Path:
-    return _paths.state_file(STATE_NAME)
+def store_path(channel: str) -> Path:
+    return _paths.state_file(STATE_NAME.format(channel=channel))
 
 
 def last_push_path() -> Path:
     return _paths.state_file(LAST_PUSH_NAME)
 
 
-def _load() -> dict:
-    return jsonfile.load_dict(store_path())
+def _load(channel: str) -> dict:
+    return jsonfile.load_dict(store_path(channel))
 
 
-def _save(d: dict) -> None:
-    jsonfile.save(store_path(), d)
+def _save(channel: str, d: dict) -> None:
+    jsonfile.save(store_path(channel), d)
 
 
 def last_push(member: str) -> list[dict]:
@@ -70,10 +77,14 @@ def last_push(member: str) -> list[dict]:
 
 
 def record_last_push(member: str, metas: list[dict]) -> None:
+    """同一封信各频道都会播报一次，按 id 去重只记一条。"""
     d = jsonfile.load_dict(last_push_path())
+    known = {i.get("id") for i in last_push(member)}
     items = [{"id": m.get("id", ""), "from": m.get("from", ""),
               "subject": m.get("subject", ""), "labels": list(m.get("labels") or [])}
-             for m in metas]
+             for m in reversed(metas) if m.get("id") not in known]
+    if not items:
+        return
     d[member] = {"at": time.time(), "items": (items + last_push(member))[:LAST_PUSH_KEEP]}
     jsonfile.save(last_push_path(), d)
 
@@ -102,14 +113,22 @@ def _keep(rows: list[dict], mod, prefix: str, rules: list[dict]) -> tuple[list[d
     """
     live = [r for r in rows if not (rules and _rules.match(r, rules))]
     head = live[-MAX_META:]
-    metas: list[dict] = []
-    for r in head:
-        meta = mod.message_meta(r["id"], prefix)
-        if rules and _rules.match(meta, rules):
-            continue
-        metas.append(meta)
+    metas = [m for m in mod.message_metas([r["id"] for r in head], prefix)
+             if not (rules and _rules.match(m, rules))]
     extra = len(live) - len(head) + max(0, len(metas) - MAX_LINES)
     return metas[-MAX_LINES:], extra
+
+
+def _push_all(push_fn, ids: list[str], text: str) -> bool:
+    """推给该成员在本频道的每个 id；至少一个送达才算成功。
+    push_fn 抛错或返回 False = 没送达（Transport.push_text 的约定）。"""
+    ok = False
+    for cid in ids:
+        try:
+            ok = (push_fn(cid, text) is not False) or ok
+        except Exception:
+            _log.exception("新邮件播报推送失败: %s", cid)
+    return ok
 
 
 def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
@@ -122,19 +141,22 @@ def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
     单个成员出错只记日志，不影响其余。
     """
     now = time.time() if now is None else now
-    state = _load()
-    chan = dict(state.get(channel) or {})
+    began = time.monotonic()
+    chan = _load(channel)
+    before = {m: v.get("history_id") for m, v in chan.items() if isinstance(v, dict)}
     pushed = 0
-    dirty = False
     for member, bindings in _members.load_members(members_path).items():
         if not isinstance(bindings, dict):
             continue
         ids = [str(i) for i in (bindings.get(channel) or [])]
         if not ids or not watch_enabled(member, members_path):
             continue
-        cur = chan.get(member) or {}
-        if now - float(cur.get("at") or 0) < MIN_POLL_S:
+        if now - _polled.get((channel, member), 0.0) < MIN_POLL_S:
             continue
+        if time.monotonic() - began > TICK_BUDGET_S:
+            break
+        _polled[(channel, member)] = now
+        cur = chan.get(member) if isinstance(chan.get(member), dict) else {}
         got, err = provider_for(member)
         if err:
             continue                      # 没配/没凭据：工具那边已会如实告知用户
@@ -143,29 +165,24 @@ def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
             hid = str(cur.get("history_id") or "")
             if not hid:                   # 首次：只落游标，不播报历史
                 chan[member] = {"history_id": mod.profile_history_id(prefix), "at": now}
-                dirty = True
                 continue
             rows, new_hid = mod.history_since(hid, prefix)
             if rows is None:              # 游标过旧 → 重新起点，这轮不播报
                 chan[member] = {"history_id": new_hid, "at": now}
-                dirty = True
                 continue
             metas, extra = _keep(rows, mod, prefix, _rules.load(member))
             if not metas:                 # 全被忽略规则挡掉（或本来就没新信）
                 chan[member] = {"history_id": new_hid, "at": now}
-                dirty = True
                 continue
             text = format_push(metas, extra)
-            for cid in ids:
-                push_fn(cid, text)
+            if not _push_all(push_fn, ids, text):
+                raise RuntimeError("所有 id 都推送失败")
             record_last_push(member, metas)
         except Exception:
             _log.exception("新邮件播报失败（游标不动，下轮重试）: %s/%s", channel, member)
             continue
         chan[member] = {"history_id": new_hid, "at": now}
-        dirty = True
         pushed += 1
-    if dirty:
-        state[channel] = chan
-        _save(state)
+    if {m: v.get("history_id") for m, v in chan.items() if isinstance(v, dict)} != before:
+        _save(channel, chan)
     return pushed

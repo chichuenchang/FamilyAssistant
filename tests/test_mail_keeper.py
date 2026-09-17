@@ -438,7 +438,9 @@ class TestMailWatch:
     @pytest.fixture(autouse=True)
     def _members(self, monkeypatch):
         monkeypatch.setattr(mw._members, "load_members", lambda *a, **k: self.MEMBERS)
-        mw.store_path().unlink(missing_ok=True)
+        for ch in ("wechat", "telegram"):
+            mw.store_path(ch).unlink(missing_ok=True)
+        mw._polled.clear()
 
     @pytest.fixture
     def sent(self):
@@ -457,7 +459,7 @@ class TestMailWatch:
         out, push = sent
         n = self._run(push, _WatchStub(profile_id="500"), monkeypatch)
         assert (n, out) == (0, [])
-        assert mw._load()["wechat"]["MemberA"]["history_id"] == "500"
+        assert mw._load("wechat")["MemberA"]["history_id"] == "500"
 
     def test_new_mail_is_pushed_with_sender_and_subject(self, monkeypatch, sent):
         out, push = sent
@@ -467,13 +469,13 @@ class TestMailWatch:
         assert n == 1 and len(out) == 1
         cid, text = out[0]
         assert cid == "wx-a" and "m2@example.com" in text and "Subj m2" in text
-        assert mw._load()["wechat"]["MemberA"]["history_id"] == "600"
+        assert mw._load("wechat")["MemberA"]["history_id"] == "600"
 
     def test_member_without_watch_flag_is_never_polled(self, monkeypatch, sent):
         out, push = sent
         stub = _WatchStub(profile_id="500")
         self._run(push, stub, monkeypatch)
-        assert mw._load()["wechat"].get("MemberB") is None
+        assert mw._load("wechat").get("MemberB") is None
 
     def test_only_members_bound_to_this_channel_are_polled(self, monkeypatch, sent):
         out, push = sent
@@ -506,7 +508,7 @@ class TestMailWatch:
         n = self._run(push, _WatchStub(profile_id="900", history_status=404), monkeypatch,
                       now=time.time() + 100)
         assert (n, out) == (0, [])
-        assert mw._load()["wechat"]["MemberA"]["history_id"] == "900"
+        assert mw._load("wechat")["MemberA"]["history_id"] == "900"
 
     def test_push_failure_keeps_cursor_for_retry(self, monkeypatch, sent):
         def boom(cid, text):
@@ -515,7 +517,47 @@ class TestMailWatch:
         self._run(boom, _WatchStub(profile_id="500"), monkeypatch)
         stub = _WatchStub(pages=[_hist([_added("m2")], history_id="600")])
         self._run(boom, stub, monkeypatch, now=time.time() + 100)
-        assert mw._load()["wechat"]["MemberA"]["history_id"] == "500"
+        assert mw._load("wechat")["MemberA"]["history_id"] == "500"
+
+    def test_push_returning_false_keeps_cursor_for_retry(self, monkeypatch, sent):
+        """Telegram swallows send errors and returns False instead of raising."""
+        self._run(lambda c, t: False, _WatchStub(profile_id="500"), monkeypatch)
+        stub = _WatchStub(pages=[_hist([_added("m2")], history_id="600")])
+        n = self._run(lambda c, t: False, stub, monkeypatch, now=time.time() + 100)
+        assert n == 0 and mw._load("wechat")["MemberA"]["history_id"] == "500"
+
+    def test_deleted_mail_does_not_wedge_the_watch(self, monkeypatch, sent):
+        out, push = sent
+        self._run(push, _WatchStub(profile_id="500"), monkeypatch)
+        stub = _WatchStub(pages=[_hist([_added("gone"), _added("m3")], history_id="600")])
+        monkeypatch.setattr(gp, "_http", lambda m, url, *a, **k: (
+            (404, b"{}") if "/messages/gone" in url else stub(m, url, *a, **k)))
+        n = mw.check_and_push(push, "wechat", provider_for=self._provider_for,
+                              now=time.time() + 100)
+        assert n == 1 and "Subj m3" in out[0][1]
+        assert mw._load("wechat")["MemberA"]["history_id"] == "600"
+
+    def test_channels_do_not_share_a_state_file(self):
+        assert mw.store_path("wechat") != mw.store_path("telegram")
+
+    def test_unchanged_cursor_is_not_rewritten(self, monkeypatch, sent):
+        out, push = sent
+        self._run(push, _WatchStub(profile_id="500"), monkeypatch)
+        saved = []
+        monkeypatch.setattr(mw, "_save", lambda *a: saved.append(a))
+        self._run(push, _WatchStub(pages=[_hist([], history_id="500")]), monkeypatch,
+                  now=time.time() + 100)
+        assert saved == []
+
+    def test_same_mail_on_two_channels_is_recorded_once(self, monkeypatch, sent):
+        out, push = sent
+        mw.last_push_path().unlink(missing_ok=True)
+        for ch in ("wechat", "telegram"):
+            self._run(push, _WatchStub(profile_id="500"), monkeypatch, channel=ch)
+        stub = _WatchStub(pages=[_hist([_added("m2")], history_id="600")])
+        for ch in ("wechat", "telegram"):
+            self._run(push, stub, monkeypatch, channel=ch, now=time.time() + 100)
+        assert [i["id"] for i in mw.last_push("MemberA")] == ["m2"]
 
     def test_throttle_skips_polls_inside_the_window(self, monkeypatch, sent):
         out, push = sent
@@ -531,7 +573,7 @@ class TestMailWatch:
         n = self._run(push, _WatchStub(history_status=500), monkeypatch,
                       now=time.time() + 100)
         assert (n, out) == (0, [])
-        assert mw._load()["wechat"]["MemberA"]["history_id"] == "500"
+        assert mw._load("wechat")["MemberA"]["history_id"] == "500"
 
     def test_watch_tick_is_registered_on_fast_ticks(self):
         assert any(getattr(f, "__name__", "") == "_mail_watch_tick"
@@ -614,7 +656,9 @@ class TestMailWatchFiltering:
     def _members(self, monkeypatch):
         monkeypatch.setattr(mw._members, "load_members", lambda *a, **k: self.MEMBERS)
         monkeypatch.setattr(mr._members, "load_members", lambda *a, **k: self.MEMBERS)
-        mw.store_path().unlink(missing_ok=True)
+        for ch in ("wechat", "telegram"):
+            mw.store_path(ch).unlink(missing_ok=True)
+        mw._polled.clear()
         mw.last_push_path().unlink(missing_ok=True)
         mr.store_path("MemberA").unlink(missing_ok=True)
 
@@ -648,7 +692,7 @@ class TestMailWatchFiltering:
         n = self._poll(push, _WatchStub(pages=[_hist([_added("m2")], history_id="600")]),
                        monkeypatch)
         assert (n, out) == (0, [])
-        assert mw._load()["wechat"]["MemberA"]["history_id"] == "600"
+        assert mw._load("wechat")["MemberA"]["history_id"] == "600"
 
     def test_only_unmuted_mail_of_a_batch_is_pushed(self, monkeypatch, sent):
         out, push = sent
