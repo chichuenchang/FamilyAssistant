@@ -9,6 +9,8 @@ ORDER = 70
 
 COMMANDS = {"web-search", "web-read", "yt-summary"}
 
+CLI_TIMEOUTS = {"web-search": 45}  # RapidAPI 20s + DuckDuckGo fallback 20s
+
 TOOLS = {
     "web_search": "web-search",
     "web_read": "web-read",

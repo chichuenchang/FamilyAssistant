@@ -4,7 +4,7 @@
 
 实现 `reach.py` + `cli.py` 就在本 skill 目录 `.codewhale/skills/Web_Reach/`。搜索/网页抓取仅用标准库 urllib；YouTube 需 `yt-dlp`（缺失时优雅降级）。
 
-搜索走 RapidAPI Real-Time Web Search（付费订阅，需 `RAPIDAPI_KEY`）；网页读取走 Jina 阅读器（keyless）。只读公开信息，不写库、不按成员隔离。
+搜索走 RapidAPI Real-Time Web Search（付费订阅，需 `RAPIDAPI_KEY`），失败回退 DuckDuckGo 结果页经 Jina；网页读取走 Jina 阅读器（keyless）。只读公开信息，不写库、不按成员隔离。
 
 ## 命令行调用（agent 经白名单子命令调用）
 
@@ -39,7 +39,7 @@ python .codewhale/skills/Web_Reach/cli.py yt-summary --url "https://www.youtube.
 
 | 函数 | 返回 | 说明 |
 |------|------|------|
-| `web_search(query, *, search)` | `str` | `search(q)` 返 RapidAPI JSON，格式化为编号结果；空查询/失败/非 OK/无结果返回 `[错误] …` |
+| `web_search(query, *, search, fallback=None)` | `str` | `search(q)` 返 RapidAPI JSON，格式化为编号结果；抛错/非 OK/无结果时有 `fallback(url)` 则抓 DuckDuckGo 页（经 `r.jina.ai`），否则或两者皆败返回 `[错误] …` |
 | `web_read(url, *, fetch)` | `str` | 经 `r.jina.ai` 抓取清洗单页；空链接/失败返回 `[错误] …` |
 | `summarize_youtube(url, *, get_subs, get_meta)` | `str` | 优先字幕转写，回退标题+简介，再无则 `[错误] …` |
 | `parse_vtt(vtt)` | `str` | `.vtt` → 去时间轴/标签/连续重复的纯文字 |
@@ -54,8 +54,10 @@ python .codewhale/skills/Web_Reach/cli.py yt-summary --url "https://www.youtube.
 
 ## 配置
 
-- `RAPIDAPI_KEY`（`web-search` 必需）：环境变量 > skill 目录 `.env`（模板 `.env.example`，gitignore）。缺失返回 `[错误] 搜索失败：未配置 RAPIDAPI_KEY`。
+- `RAPIDAPI_KEY`（`web-search` 必需）：环境变量 > skill 目录 `.env`（模板 `.env.example`，gitignore）。缺失即走 DuckDuckGo 回退。
 - RapidAPI `/search`：`limit` 参数被忽略，用 `num`（固定 10）。响应 `data.organic_results[]`；旧形 `data=[…]` 也兼容。
+- 回退 DuckDuckGo 质量差（2026-09-16 实测 8 查询）：输出恒顶满 6000 字截断，仅 2–8 条有效结果，链接为 `duckduckgo.com/l/?uddg=` 跳转，常夹 Bing 广告；RapidAPI 10 条 ~2000 字。回退只保可用。
+- `web-search` 子进程上限 45s（`agent_tools.py` `CLI_TIMEOUTS`）：RapidAPI 20s + 回退 20s。
 
 - `JINA_API_KEY`：设置后作为 `Authorization: Bearer` 头发给 `r.jina.ai`，提升免费限频。不设则用 keyless 免费档。
 

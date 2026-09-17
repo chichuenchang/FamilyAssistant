@@ -45,7 +45,8 @@ def main() -> int:
     args = p.parse_args()
 
     if args.cmd == "web-search":
-        out = reach.web_search(args.query, search=reach.rapidapi_search)
+        out = reach.web_search(args.query, search=reach.rapidapi_search,
+                               fallback=reach.jina_fetch)
     elif args.cmd == "web-read":
         out = reach.web_read(args.url, fetch=reach.jina_fetch)
     elif args.cmd == "yt-summary":

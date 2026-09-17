@@ -69,7 +69,7 @@
 - "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
 - 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结
 - **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取；`ANYSEARCH_API_KEY` 可选（未配置走匿名访问，限额较低仍可用）；问最新资讯时优先 Any Search，下面的 Web Reach 作兜底
-- **Web Reach 只读公开信息**（搜索走 RapidAPI Real-Time Web Search，需 `RAPIDAPI_KEY`；网页读取走 Jina 阅读器，`JINA_API_KEY` 可选；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
+- **Web Reach 只读公开信息**（搜索走 RapidAPI Real-Time Web Search，需 `RAPIDAPI_KEY`，失败回退 DuckDuckGo；网页读取走 Jina 阅读器，`JINA_API_KEY` 可选；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
 
 ### 🔎 懂王舆情搜集（KnowKing 桥，可选）
 - 微信/Telegram 里说 **"用 knowking / kk / 懂王 查大家怎么看 X"** → 跨社交平台

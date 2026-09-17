@@ -160,6 +160,50 @@ class TestWebSearch:
         assert out.startswith("[错误]")
 
 
+class TestWebSearchFallback:
+    """RapidAPI fails (raise / non-OK / empty) → DuckDuckGo page via Jina reader."""
+
+    def _boom(self, q):
+        raise RuntimeError("HTTP 429")
+
+    def test_primary_ok_skips_fallback(self):
+        def fallback(url):
+            raise AssertionError("fallback must not run")
+
+        out = reach.web_search("q", search=lambda q: _V2, fallback=fallback)
+        assert out.startswith("1. T1")
+
+    @pytest.mark.parametrize("payload", [
+        {"status": "ERROR", "error": "quota"},
+        {"status": "OK", "data": {"organic_results": []}},
+    ])
+    def test_non_ok_or_empty_uses_fallback(self, payload):
+        out = reach.web_search("q", search=lambda q: payload, fallback=lambda url: "ddg page")
+        assert out == "ddg page"
+
+    def test_raise_uses_fallback_with_ddg_url(self):
+        seen = {}
+        out = reach.web_search("hello world", search=self._boom,
+                               fallback=lambda url: seen.update(url=url) or "ddg page")
+        assert out == "ddg page"
+        assert seen["url"] == "https://r.jina.ai/https://html.duckduckgo.com/html/?q=hello%20world"
+
+    def test_both_fail_reports_both(self):
+        def fb(url):
+            raise IOError("jina down")
+
+        out = reach.web_search("q", search=self._boom, fallback=fb)
+        assert out == "[错误] 搜索失败：HTTP 429；备用 DuckDuckGo 失败：jina down"
+
+    def test_fallback_empty_reports_primary_error(self):
+        out = reach.web_search("q", search=self._boom, fallback=lambda url: "  ")
+        assert out == "[错误] 搜索失败：HTTP 429；备用 DuckDuckGo 失败：无结果"
+
+    def test_fallback_trimmed(self):
+        out = reach.web_search("q", search=self._boom, fallback=lambda url: "a" * 7000)
+        assert out.endswith("…[截断]")
+
+
 class TestRapidapiSearch:
     def test_missing_key_raises(self, monkeypatch, tmp_path):
         monkeypatch.delenv("RAPIDAPI_KEY", raising=False)

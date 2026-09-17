@@ -21,6 +21,7 @@ _META_TIMEOUT = 8
 _JINA_READER = "https://r.jina.ai/"                  # keyless; cleans any URL to markdown
 _RAPID_HOST = "real-time-web-search.p.rapidapi.com"  # RapidAPI "Real-Time Web Search" (paid)
 _RAPID_NUM = 10         # `limit` ignored by API; `num` honoured
+_DDG_HTML = "https://html.duckduckgo.com/html/?q="   # keyless fallback search page
 
 _TAG_RE = re.compile(r"<[^>]+>")   # <c>…</c>, inline <00:00:01.500> word timings
 
@@ -97,22 +98,39 @@ def format_results(payload):
     return "\n\n".join(lines)
 
 
-def web_search(query, *, search):
-    """Search via injected `search(q) -> dict` (RapidAPI JSON); return markdown results."""
-    q = (query or "").strip()
-    if not q:
-        return "[错误] 空查询"
+def _primary(q, search):
+    """RapidAPI attempt -> (markdown, None) or (None, error reason)."""
     try:
         payload = search(q)
     except Exception as e:                       # noqa: BLE001 — relay any fetch failure
-        return f"[错误] 搜索失败：{e}"
+        return None, str(e)
     status = (payload or {}).get("status")
     if status and status != "OK":
-        return f"[错误] 搜索失败：{payload.get('error') or status}"
-    out = format_results(payload)
-    if not out:
-        return "[错误] 没查到结果"
-    return trim(out)
+        return None, payload.get("error") or status
+    return (format_results(payload), None) if _organic(payload) else (None, "无结果")
+
+
+def web_search(query, *, search, fallback=None):
+    """Search via injected `search(q) -> dict` (RapidAPI JSON); return markdown results.
+
+    On any RapidAPI failure (raise / non-OK / no results) and a `fallback(url) -> str`
+    fetcher given, retry as a DuckDuckGo results page through the Jina reader.
+    """
+    q = (query or "").strip()
+    if not q:
+        return "[错误] 空查询"
+    out, err = _primary(q, search)
+    if out:
+        return trim(out)
+    if fallback is None:
+        return "[错误] 没查到结果" if err == "无结果" else f"[错误] 搜索失败：{err}"
+    try:
+        raw = (fallback(_JINA_READER + _DDG_HTML + urllib.parse.quote(q)) or "").strip()
+    except Exception as e:                       # noqa: BLE001 — relay any fetch failure
+        return f"[错误] 搜索失败：{err}；备用 DuckDuckGo 失败：{e}"
+    if not raw:
+        return f"[错误] 搜索失败：{err}；备用 DuckDuckGo 失败：无结果"
+    return trim(raw)
 
 
 def web_read(url, *, fetch):
