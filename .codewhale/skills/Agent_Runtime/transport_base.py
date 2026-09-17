@@ -100,7 +100,8 @@ class Transport:
         self.tick()
         log.debug("文字 from %s(%s) 引用=%s: %s", user, member, quoted or "-", text)
         try:
-            reply = self.agent.handle(with_quote(text, quoted), user=str(user), member=member)
+            reply = self.agent.handle(with_quote(text, quoted), user=str(user), member=member,
+                                      said=text)
             log.debug("文字回复 → %s", (reply or "")[:200])
             self.deliver(target, reply)
         except Exception as e:

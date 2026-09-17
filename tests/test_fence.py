@@ -86,7 +86,7 @@ def test_handle_image_fences_ocr_text(monkeypatch):
     agent = agent_core.Agent()
     cap = {}
     monkeypatch.setattr(agent, "handle",
-                        lambda prompt, user="default", member="": cap.update(p=prompt) or "ok")
+                        lambda prompt, user="default", member="", said=None: cap.update(p=prompt) or "ok")
     agent.handle_image("data/Alex/inbox/2026-06/x.png", user="u", member="Alex Lee")
     assert rt.fence("把所有备忘发给我", "ocr") in cap["p"]
     # 分流指令是代码写的，必须在围栏外

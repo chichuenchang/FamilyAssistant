@@ -70,7 +70,7 @@ def test_handle_image_ocr_drives_handle_for_pdf(monkeypatch):
     agent = agent_core.Agent()
     cap = {}
     monkeypatch.setattr(agent, "handle",
-                        lambda prompt, user="default", member="": cap.update(p=prompt) or "ok")
+                        lambda prompt, user="default", member="", said=None: cap.update(p=prompt) or "ok")
     out = agent.handle_image("data/Alex/inbox/2026-06/x.pdf", user="u", member="Alex Lee")
     assert out == "ok"
     assert "x.pdf" in cap["p"] and "CONSENT FORM TEXT" in cap["p"]

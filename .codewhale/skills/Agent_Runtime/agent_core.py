@@ -318,7 +318,11 @@ class Agent:
         self._last_active: dict[str, float] = {}
         self._llm_overrides: dict[str, dict] = _load_llm_overrides()
 
-    def handle(self, text: str, user: str = "default", member: str = "") -> str:
+    def handle(self, text: str, user: str = "default", member: str = "", *,
+               said: str | None = None) -> str:
+        """said = 用户本人亲手打的字（确认闸门 __text 只认它）。text 可能掺了引用/OCR 等
+        外部内容，传输层须另传 said；缺省 = text（本地 CLI 等无掺杂入口）。"""
+        said = text if said is None else said
         # 防御纵深：传输层闸门漏掉的未注册来源，这里二次拦截，不碰 LLM
         if not member:
             return ""
@@ -394,7 +398,7 @@ class Agent:
                 fn = _TOOL_MAP.get(name)
                 targs = _apply_member(name, targs, member)
                 targs = _apply_context(name, targs, self.channel, user, member,
-                                       turn_at=now, text=text)
+                                       turn_at=now, text=said)
                 result = fn(targs) if fn else f"[错误] 未知工具: {name}"
                 # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
@@ -447,7 +451,7 @@ class Agent:
                 f"判断内容，按以下情况处理（取最匹配的一条）：\n{routes}\n"
                 f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
             )
-            return self.handle(prompt, user=user, member=member)
+            return self.handle(prompt, user=user, member=member, said="")
         return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"
 
     def _handle_llm_command(self, text: str, user: str) -> str | None:
