@@ -313,10 +313,10 @@ def test_describe_with_and_without_coords(tmp_path):
     full = pdf_layout.describe(layout)
     assert "类型: acroform | 页数: 1" in full
     assert "--- page=0（第 1 页）1224x1584 ---" in full
-    assert "字段 name | Full name | text [x=320,y=164,w=400,h=40]" in full
-    assert "字段 married | Married | checkbox[/Yes]" in full
+    assert '字段 name="name" | 标签: Full name | text [x=320,y=164,w=400,h=40]' in full
+    assert '字段 name="married" | 标签: Married | checkbox[/Yes]' in full
     plain = pdf_layout.describe(layout, coords=False)
-    assert "字段 name | Full name | text" in plain and "x=" not in plain
+    assert '字段 name="name" | 标签: Full name | text' in plain and "x=" not in plain
 ```
 
 - [ ] **Step 2: run, expect FAIL** — `python -m pytest tests/test_pdf_layout.py -q` → `ModuleNotFoundError: pdf_layout`.
@@ -550,8 +550,10 @@ def _box(b: dict) -> str:
     return f"[x={b['x']},y={b['y']},w={b['w']},h={b['h']}]"
 
 
-def _field_type(f: dict) -> str:
-    return f["type"] + (f"[{' / '.join(f['options'])}]" if f["options"] else "")
+def _field_line(f: dict) -> str:
+    # name 带引号单列：实测排版模型会把标签当字段名填进 field op
+    kind = f["type"] + (f"[{' / '.join(f['options'])}]" if f["options"] else "")
+    return f'字段 name="{f["name"]}" | 标签: {f["label"]} | {kind}'
 
 
 def describe(layout: dict, coords: bool = True) -> str:
@@ -561,7 +563,7 @@ def describe(layout: dict, coords: bool = True) -> str:
     placed: dict = {}
     for f in layout["fields"]:
         if not f["widgets"]:
-            out.append(f"字段 {f['name']} | {f['label']} | {_field_type(f)}")
+            out.append(_field_line(f))
         for w in f["widgets"]:
             placed.setdefault(w["page"], []).append((f, w))
     budget = MAX_LINES
@@ -571,8 +573,7 @@ def describe(layout: dict, coords: bool = True) -> str:
         out.append(f"--- page={g['page']}（第 {g['page'] + 1} 页）{g['width']}x{g['height']} ---")
         for f, w in fl:
             state = f" state={w['state']}" if len(f["options"]) > 1 and "state" in w else ""
-            out.append(f"字段 {f['name']} | {f['label']} | {_field_type(f)}{state}"
-                       + (f" {_box(w)}" if coords else ""))
+            out.append(_field_line(f) + state + (f" {_box(w)}" if coords else ""))
         for l in ll[:max(budget, 0)]:
             out.append((f"{_box(l)} " if coords else "") + l["text"])
         if len(ll) > max(budget, 0):
@@ -742,6 +743,18 @@ def test_validate_skips_bad_ops_with_warnings():
     assert "nope" in warns[1]
 
 
+def test_validate_resolves_field_by_unique_label():
+    # 实测：排版模型会拿标签当字段名
+    layout = {**LAYOUT, "fields": LAYOUT["fields"] + [
+        {"name": "a1", "label": "Date", "type": "text", "options": [], "widgets": []},
+        {"name": "a2", "label": "Date", "type": "text", "options": [], "widgets": []}]}
+    clean, warns = pdf_plan.validate_ops(
+        [{"op": "field", "name": "Full name", "value": "张三"},
+         {"op": "field", "name": "Date", "value": "x"}], layout, _ok)
+    assert clean == [{"op": "field", "name": "name", "value": "张三"}]
+    assert len(warns) == 1 and "Date" in warns[0]
+
+
 def test_validate_gates_src_paths():
     ops = [{"op": "image", "page": 0, "x": 1, "y": 1, "w": 50, "src": "amy/sig.png"},
            {"op": "page_insert", "src": "../../etc/x.pdf", "after": 0}]
@@ -857,7 +870,7 @@ SYSTEM_PROMPT = """你是 PDF 编辑排版器。输入：一份 PDF 的版面（
 坐标：版面像素，左上原点，x 向右 y 向下；每页尺寸见页头。page 从 0 起。
 
 ops：
-{"op":"field","name":"<字段名>","value":"<值>"}   表单字段。勾选框 value 用 on/off；多状态的用选项里的状态名
+{"op":"field","name":"<版面里 name=\"…\" 的原文，不是标签>","value":"<值>"}   表单字段。勾选框 value 用 on/off；多状态的用选项里的状态名
 {"op":"text","page":0,"x":0,"y":0,"w":0,"h":0,"text":"…","size":null}   x,y=文字框左上角；w,h=可用空白（可省）；size=字号 pt（可省，自动）
 {"op":"check","page":0,"x":0,"y":0,"size":18}   在方框处画 X；x,y=方框左上角，size=方框边长
 {"op":"erase","page":0,"x":0,"y":0,"w":0,"h":0}   白底盖住原内容
@@ -975,7 +988,10 @@ def _clean(op: dict, layout: dict, resolve_src) -> dict:
     if kind == "field":
         name = str(op.get("name") or "")
         if name not in {f["name"] for f in layout["fields"]}:
-            raise ValueError(f"表单里没有字段 {name}")
+            by_label = [f["name"] for f in layout["fields"] if f["label"] == name]
+            if len(by_label) != 1:          # 拿标签当名字：唯一才认
+                raise ValueError(f"表单里没有字段 {name}")
+            name = by_label[0]
         return {"op": kind, "name": name,
                 "value": "" if op.get("value") is None else str(op["value"])}
     if kind in OVERLAY_OPS:
@@ -1642,7 +1658,7 @@ def test_inspect_lists_what_the_pdf_asks_for(cli, capsys, inbox):
     pdf = build_acro_pdf(inbox / "form.pdf")
     code, out, _ = _run(cli, capsys, "pdf-inspect", "--file", str(pdf), "--member", "jim")
     assert code == 0 and out.startswith("session=")
-    assert "类型: acroform" in out and "字段 name | Full name | text" in out
+    assert "类型: acroform" in out and '字段 name="name" | 标签: Full name | text' in out
     assert "x=" not in out
 
 

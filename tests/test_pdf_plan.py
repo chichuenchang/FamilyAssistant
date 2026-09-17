@@ -136,6 +136,18 @@ def test_validate_skips_bad_ops_with_warnings():
     assert "nope" in warns[1]
 
 
+def test_validate_resolves_field_by_unique_label():
+    # 实测：排版模型会拿标签当字段名
+    layout = {**LAYOUT, "fields": LAYOUT["fields"] + [
+        {"name": "a1", "label": "Date", "type": "text", "options": [], "widgets": []},
+        {"name": "a2", "label": "Date", "type": "text", "options": [], "widgets": []}]}
+    clean, warns = pdf_plan.validate_ops(
+        [{"op": "field", "name": "Full name", "value": "张三"},
+         {"op": "field", "name": "Date", "value": "x"}], layout, _ok)
+    assert clean == [{"op": "field", "name": "name", "value": "张三"}]
+    assert len(warns) == 1 and "Date" in warns[0]
+
+
 def test_validate_gates_src_paths():
     ops = [{"op": "image", "page": 0, "x": 1, "y": 1, "w": 50, "src": "amy/sig.png"},
            {"op": "page_insert", "src": "../../etc/x.pdf", "after": 0}]

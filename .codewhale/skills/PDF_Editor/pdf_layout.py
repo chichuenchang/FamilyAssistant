@@ -223,8 +223,10 @@ def _box(b: dict) -> str:
     return f"[x={b['x']},y={b['y']},w={b['w']},h={b['h']}]"
 
 
-def _field_type(f: dict) -> str:
-    return f["type"] + (f"[{' / '.join(f['options'])}]" if f["options"] else "")
+def _field_line(f: dict) -> str:
+    # name 带引号单列：实测排版模型会把标签当字段名填进 field op
+    kind = f["type"] + (f"[{' / '.join(f['options'])}]" if f["options"] else "")
+    return f'字段 name="{f["name"]}" | 标签: {f["label"]} | {kind}'
 
 
 def describe(layout: dict, coords: bool = True) -> str:
@@ -234,7 +236,7 @@ def describe(layout: dict, coords: bool = True) -> str:
     placed: dict = {}
     for f in layout["fields"]:
         if not f["widgets"]:
-            out.append(f"字段 {f['name']} | {f['label']} | {_field_type(f)}")
+            out.append(_field_line(f))
         for w in f["widgets"]:
             placed.setdefault(w["page"], []).append((f, w))
     budget = MAX_LINES
@@ -244,8 +246,7 @@ def describe(layout: dict, coords: bool = True) -> str:
         out.append(f"--- page={g['page']}（第 {g['page'] + 1} 页）{g['width']}x{g['height']} ---")
         for f, w in fl:
             state = f" state={w['state']}" if len(f["options"]) > 1 and "state" in w else ""
-            out.append(f"字段 {f['name']} | {f['label']} | {_field_type(f)}{state}"
-                       + (f" {_box(w)}" if coords else ""))
+            out.append(_field_line(f) + state + (f" {_box(w)}" if coords else ""))
         for l in ll[:max(budget, 0)]:
             out.append((f"{_box(l)} " if coords else "") + l["text"])
         if len(ll) > max(budget, 0):

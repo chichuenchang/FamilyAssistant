@@ -100,7 +100,7 @@ SYSTEM_PROMPT = """你是 PDF 编辑排版器。输入：一份 PDF 的版面（
 坐标：版面像素，左上原点，x 向右 y 向下；每页尺寸见页头。page 从 0 起。
 
 ops：
-{"op":"field","name":"<字段名>","value":"<值>"}   表单字段。勾选框 value 用 on/off；多状态的用选项里的状态名
+{"op":"field","name":"<版面里 name=\"…\" 的原文，不是标签>","value":"<值>"}   表单字段。勾选框 value 用 on/off；多状态的用选项里的状态名
 {"op":"text","page":0,"x":0,"y":0,"w":0,"h":0,"text":"…","size":null}   x,y=文字框左上角；w,h=可用空白（可省）；size=字号 pt（可省，自动）
 {"op":"check","page":0,"x":0,"y":0,"size":18}   在方框处画 X；x,y=方框左上角，size=方框边长
 {"op":"erase","page":0,"x":0,"y":0,"w":0,"h":0}   白底盖住原内容
@@ -218,7 +218,10 @@ def _clean(op: dict, layout: dict, resolve_src) -> dict:
     if kind == "field":
         name = str(op.get("name") or "")
         if name not in {f["name"] for f in layout["fields"]}:
-            raise ValueError(f"表单里没有字段 {name}")
+            by_label = [f["name"] for f in layout["fields"] if f["label"] == name]
+            if len(by_label) != 1:          # 拿标签当名字：唯一才认
+                raise ValueError(f"表单里没有字段 {name}")
+            name = by_label[0]
         return {"op": kind, "name": name,
                 "value": "" if op.get("value") is None else str(op["value"])}
     if kind in OVERLAY_OPS:

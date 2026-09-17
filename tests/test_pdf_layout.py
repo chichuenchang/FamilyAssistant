@@ -97,7 +97,7 @@ def test_describe_with_and_without_coords(tmp_path):
     full = pdf_layout.describe(layout)
     assert "类型: acroform | 页数: 1" in full
     assert "--- page=0（第 1 页）1224x1584 ---" in full
-    assert "字段 name | Full name | text [x=320,y=164,w=400,h=40]" in full
-    assert "字段 married | Married | checkbox[/Yes]" in full
+    assert '字段 name="name" | 标签: Full name | text [x=320,y=164,w=400,h=40]' in full
+    assert '字段 name="married" | 标签: Married | checkbox[/Yes]' in full
     plain = pdf_layout.describe(layout, coords=False)
-    assert "字段 name | Full name | text" in plain and "x=" not in plain
+    assert '字段 name="name" | 标签: Full name | text' in plain and "x=" not in plain
