@@ -22,19 +22,32 @@ python .codewhale/skills/Any_Search/cli.py any-extract --url "https://example.co
 
 # 列出某垂直领域可用子域及参数
 python .codewhale/skills/Any_Search/cli.py any-subdomains --domains finance,health
+
+# 搜图并下载（每行输出一个 data 相对路径）
+python .codewhale/skills/Any_Search/cli.py any-images --query "praying mantis" --count 3 --member Jim
 ```
 
 输出为抓取到的原文/结果（截断到约 6000 字，DeepSeek max_tokens 偏紧）。失败打印 `[错误] …` 并 `exit 0`，让 Agent 自然地告诉用户"没查到"，不编造。
 
 ## Agent 工具映射
 
-`agent_core.py` 把三个子命令注册成 function-calling 工具（固定白名单，非任意 shell）：
+`agent_core.py` 把下列子命令注册成 function-calling 工具（固定白名单，非任意 shell）：
 
 | 工具 (LLM) | 子命令 | 触发场景 |
 |-----------|--------|---------|
 | `anysearch_search` | `any-search --query` | "最新新闻 / 帮我查一下 X / 行情 / 垂直领域查询" |
 | `anysearch_extract` | `any-extract --url` | 用户发链接让看/总结文章 |
 | `anysearch_subdomains` | `any-subdomains --domains` | 垂直搜索前发现可用子域 |
+| `fetch_images` | `any-images --query` | "看 X 的图片 / X 长什么样" |
+
+## 搜图（`fetch_images`）
+
+- 源：AnySearch `resource.image`（Unsplash/Pexels/Pixabay 图库，实测 540ms）→ 一张都没存下才走 Bing 图片页抓 `murl`（人物/商品/新闻图库没有；HTML 解析，Bing 改版即失效）。
+- 图库以英文为主：schema 让 LLM 先把中文译成英文再查。
+- 落盘 `data/<成员>/web_images/`，7 天后下次搜图时清理，不入备份（`backup_sync._HARD_EXCLUDE_DIRS`）。
+- 只存 jpg/png/gif（按魔数判，微信发不了 webp/svg）；上限见 `anysearch.py` 顶部 `IMG_*` 常量。
+- 结果 URL 不可信：仅 http(s)、解析出的地址须全为公网、重定向逐跳复查。未防 DNS rebinding（解析与连接之间的窗口）。
+- LLM 只拿到路径，拿不到网页标题 → 无注入面，故不在 `UNTRUSTED_TOOLS`。
 
 数据流：用户消息 → DeepSeek 选工具 → `cli.py` 抓取+截断 → stdout → DeepSeek 用中文总结 → 回复。
 

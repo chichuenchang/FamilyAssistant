@@ -6,8 +6,14 @@
 # adapter (anysearch_call) does the real HTTP and is wired in by cli.py.
 #
 # Key priority: ANYSEARCH_API_KEY env var > skill-dir .env > anonymous (lower limits).
+import html
+import ipaddress
 import json
 import os
+import re
+import socket
+import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -15,6 +21,15 @@ CAP = 6000              # max chars handed back to the LLM (DeepSeek max_tokens 
 _TRUNC = "…[截断]"
 _TIMEOUT = 25           # under _run_cli's 30s subprocess cap
 ENDPOINT = "https://api.anysearch.com/mcp"
+
+IMG_MAX = 5             # images per request (chat flood / subprocess timeout bound)
+IMG_MAX_BYTES = 5 * 1024 * 1024
+IMG_RETENTION_DAYS = 7  # downloads are re-fetchable: pruned on each fetch, not backed up
+_IMG_TIMEOUT = 10
+_IMG_TRIES = 3          # candidate URLs tried per wanted image
+IMG_BUDGET = 60         # seconds across all downloads; keeps any-images under its CLI timeout
+_BING_IMAGES = "https://www.bing.com/images/search?q="
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) FamilyAssistant/1.0"
 
 AVAILABLE_DOMAINS = [
     "general", "resource", "social_media", "finance", "academic", "legal",
@@ -119,6 +134,93 @@ def subdomains(domains, *, call):
     return trim(raw)
 
 
+def parse_image_urls(raw):
+    """Direct image URLs from a resource.image result: the bare `- https://…` lines
+    (the `- **URL**:` lines are the hosting pages, not images)."""
+    return re.findall(r"^- (https?://\S+)$", raw or "", flags=re.M)
+
+
+def parse_bing_image_urls(page):
+    """Original-image URLs (`murl`) from a Bing image-search HTML page."""
+    return [html.unescape(u)
+            for u in re.findall(r"murl&quot;:&quot;(.*?)&quot;", page or "")]
+
+
+def sniff_image_ext(data):
+    """Extension by magic bytes, only for types the transports can send; else None."""
+    if data[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    return None
+
+
+def _prune_old(dest_dir, retention_days):
+    cutoff = time.time() - retention_days * 86400
+    for f in dest_dir.iterdir():
+        try:
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink()
+        except OSError:
+            pass
+
+
+def _save_images(urls, want, *, download, dest_dir, stem, deadline):
+    saved = []
+    for url in urls[:want * _IMG_TRIES]:
+        if len(saved) >= want or time.monotonic() >= deadline:
+            break
+        try:
+            data = download(url)
+        except Exception:                        # noqa: BLE001 — skip, try next candidate
+            continue
+        ext = sniff_image_ext(data)
+        if not ext:
+            continue
+        out = dest_dir / f"{stem}_{len(saved)}{ext}"
+        out.write_bytes(data)
+        saved.append(out)
+    return saved
+
+
+def fetch_images(query, *, call, download, dest_dir, count=None, fallback=None,
+                 rel=str, budget=IMG_BUDGET):
+    """Search images, download up to `count` into dest_dir; returns one path per line.
+
+    Primary source is AnySearch resource.image (stock photos); `fallback(query) -> [url]`
+    runs only when the primary yields no saved image."""
+    q = (query or "").strip()
+    if not q:
+        return "[错误] 空查询"
+    try:
+        want = max(1, min(int(count), IMG_MAX))
+    except (TypeError, ValueError):
+        want = 3
+    dest_dir = Path(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    _prune_old(dest_dir, IMG_RETENTION_DAYS)
+    slug = re.sub(r"[^0-9A-Za-z一-鿿]+", "_", q).strip("_")[:40] or "image"
+    stem = f"{int(time.time())}_{slug}"
+    sources = [lambda: parse_image_urls(call("search", {
+        "query": q, "domain": "resource", "sub_domain": "resource.image",
+        "max_results": 10}))]
+    if fallback:
+        sources.append(lambda: fallback(q))
+    deadline = time.monotonic() + budget
+    for source in sources:
+        try:
+            urls = source()
+        except Exception:                        # noqa: BLE001 — next source
+            continue
+        saved = _save_images(urls, want, download=download, dest_dir=dest_dir, stem=stem,
+                             deadline=deadline)
+        if saved:
+            return "\n".join(rel(p) for p in saved)
+    return "[错误] 没找到可用的图片"
+
+
 # ── network adapter (real I/O; injected into the pure logic by cli.py) ──
 
 def _load_env():
@@ -173,3 +275,48 @@ def anysearch_call(tool_name, arguments, *, timeout=_TIMEOUT,
         if item.get("type") == "text":
             return item.get("text", "")
     return json.dumps(result, ensure_ascii=False)
+
+
+# ── image adapters (real I/O) ──
+
+def _resolve(host):
+    return [ai[4][0] for ai in socket.getaddrinfo(host, None)]
+
+
+def _check_public(url, resolve):
+    """http(s) only and every resolved address global — result URLs are untrusted (SSRF)."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError(f"不允许的链接: {url}")
+    for ip in resolve(parts.hostname):
+        if not ipaddress.ip_address(ip.split("%")[0]).is_global:
+            raise ValueError(f"非公网地址: {parts.hostname}")
+
+
+class _PublicRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_public(newurl, _resolve)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open(req, timeout):
+    return urllib.request.build_opener(_PublicRedirects).open(req, timeout=timeout)
+
+
+def download_image(url, *, timeout=_IMG_TIMEOUT, max_bytes=IMG_MAX_BYTES, resolve=_resolve):
+    """GET one image's bytes; raises on a non-public URL, oversize body, or HTTP failure."""
+    _check_public(url, resolve)
+    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    with _open(req, timeout) as resp:
+        data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("图片过大")
+    return data
+
+
+def bing_image_urls(query, *, timeout=_IMG_TIMEOUT):
+    """Keyless fallback: scrape Bing image search (covers people/products stock sites lack)."""
+    req = urllib.request.Request(_BING_IMAGES + urllib.parse.quote(query),
+                                 headers={"User-Agent": _UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return parse_bing_image_urls(resp.read().decode("utf-8", "replace"))

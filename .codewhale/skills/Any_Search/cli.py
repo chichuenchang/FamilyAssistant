@@ -5,6 +5,7 @@
   any-search    --query "..."     联网搜索（通用，或带 --domain/--sub_domain 做垂直搜索）
   any-extract   --url "..."       抓取并提取单个网页全文（markdown）
   any-subdomains --domains "a,b"  列出垂直领域可用子域及参数（垂直搜索前的发现步骤）
+  any-images    --query "..."     搜图并下载到 data/<成员>/web_images/，每行输出一个 data 相对路径
 
 输出为抓取到的原文/结果，交由 Agent 的 LLM 总结。失败打印 [错误] … 并 exit 0，
 让 Agent 自然地告诉用户"没查到"。无 ANYSEARCH_API_KEY 时走匿名访问（限额较低）。
@@ -26,6 +27,7 @@ if sys.platform == "win32":
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import anysearch
+import paths
 
 
 def main() -> int:
@@ -50,6 +52,11 @@ def main() -> int:
     d = sub.add_parser("any-subdomains", help="列出垂直领域子域及参数")
     d.add_argument("--domains", required=True, help="单个或逗号分隔的多个领域")
 
+    i = sub.add_parser("any-images", help="搜图并下载")
+    i.add_argument("--query", required=True, help="要找的图片内容")
+    i.add_argument("--count", type=int, help=f"张数 1-{anysearch.IMG_MAX}（默认 3）")
+    i.add_argument("--member", default="", help="成员名（决定保存目录）")
+
     args = p.parse_args()
     call = anysearch.anysearch_call
 
@@ -62,6 +69,12 @@ def main() -> int:
         out = anysearch.extract(args.url, call=call)
     elif args.cmd == "any-subdomains":
         out = anysearch.subdomains(args.domains, call=call)
+    elif args.cmd == "any-images":
+        base = paths.member_dir(args.member) if args.member else paths.data_root()
+        out = anysearch.fetch_images(
+            args.query, call=call, download=anysearch.download_image,
+            dest_dir=base / "web_images", count=args.count,
+            fallback=anysearch.bing_image_urls, rel=paths.to_rel)
     else:  # pragma: no cover — argparse(required=True) already guards this
         out = "[错误] 未知命令"
 
