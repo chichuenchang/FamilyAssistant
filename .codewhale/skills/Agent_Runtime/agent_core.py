@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import logging.handlers
 import os
 import sys
 import time
@@ -83,11 +84,16 @@ def member_inbox_dir(member: str, dt: date | None = None) -> Path:
 
 # ── 调试日志（各 Bot 共用；默认开，--no-debug 关） ─────────────────
 
+# 调试日志封顶：单文件 2 MB × (1 + 3 份轮转) ≈ 8 MB
+_LOG_MAX_BYTES = 2 * 1024 * 1024
+_LOG_BACKUPS = 3
+
+
 def setup_logging(debug: bool = True) -> logging.Logger:
     """配置 "familyassist" 日志器，各传输层（telegram/wechat）调一次即可。
 
     项目规范：所有 Bot 默认开调试日志（debug=True）。新增 Bot 直接 setup_logging() 即继承。
-    debug=True（默认）：DEBUG 全量，同时写 stderr 和 data/bot_debug.log（含完整 traceback），
+    debug=True（默认）：DEBUG 全量，同时写 stderr 和 data/.state/bot_debug.log（含完整 traceback），
                 供排查 OCR/记账/工具调用链路。
     debug=False（--no-debug）：仅 WARNING 及以上，安静运行。
     子日志器（familyassist.telegram 等）自动继承本配置。
@@ -103,12 +109,12 @@ def setup_logging(debug: bool = True) -> logging.Logger:
     sh.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(sh)
     if debug:
-        log_dir = _paths.data_root()
-        log_dir.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_dir / "bot_debug.log", encoding="utf-8")
+        log_file = _paths.state_file("bot_debug.log")
+        fh = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS, encoding="utf-8")
         fh.setFormatter(fmt)
         logger.addHandler(fh)
-        logger.debug("调试日志已开启 → %s", log_dir / "bot_debug.log")
+        logger.debug("调试日志已开启 → %s", log_file)
     return logger
 
 

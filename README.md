@@ -106,7 +106,7 @@ setx DEEPSEEK_API_KEY "sk-xxx"
 python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx --alias 法定名
 python .codewhale/skills/Expense_Tracker/cli.py member-list
 
-# 4. 启动 Agent（终端出二维码；默认写调试日志 data/bot_debug.log，--no-debug 关闭）
+# 4. 启动 Agent（终端出二维码；默认写调试日志 data/.state/bot_debug.log，--no-debug 关闭）
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # （可选）设 OCR：
@@ -274,7 +274,8 @@ FamilyAssistant/
 ├── FamilyAssistant.md    ← 开发者总览（架构 / config 键表 / 运行方式）
 ├── data/                 ← 全部用户数据（git 不跟踪）
 │   ├── Family/           ← 家庭共享：ledger.db（财务）、documents.db（文档+成员资料）、receipts/、documents/
-│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/、forms/（填表会话）
+│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/、forms/（填表会话）、cache/（可再生，不备份）
+│   ├── .state/           ← 运行时状态/凭据/日志（不备份）；路径一律经 paths.state_file
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档

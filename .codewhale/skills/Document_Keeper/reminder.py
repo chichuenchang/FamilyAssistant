@@ -3,7 +3,7 @@ Document Keeper — 每日到期提醒
 
 传输层在轮询循环里反复调 check_and_push(send_fn, channel)：
 每频道每天最多推送一次，有到期未确认文档才推。无新进程、无定时器。
-状态存 data/.doc_reminder_state（JSON：{频道: 最后运行日期}）；
+状态存 data/.state/.doc_reminder_state（JSON：{频道: 最后运行日期}）；
 推送失败不记状态，下一轮自动重试。
 """
 
@@ -22,7 +22,7 @@ import jsonfile
 from members import load_members
 
 # 跟随 data_root；备份硬排除该文件名
-STATE_FILE = _paths.data_root() / ".doc_reminder_state"
+STATE_FILE = _paths.state_file(".doc_reminder_state")
 
 
 def due_message(db_path: str | None = None) -> str | None:

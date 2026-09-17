@@ -5,7 +5,7 @@
   any-search    --query "..."     联网搜索（通用，或带 --domain/--sub_domain 做垂直搜索）
   any-extract   --url "..."       抓取并提取单个网页全文（markdown）
   any-subdomains --domains "a,b"  列出垂直领域可用子域及参数（垂直搜索前的发现步骤）
-  any-images    --query "..."     搜图并下载到 data/<成员>/web_images/，每行输出一个 data 相对路径
+  any-images    --query "..."     搜图并下载到 data/<成员>/cache/web_images/，每行输出一个 data 相对路径
 
 输出为抓取到的原文/结果，交由 Agent 的 LLM 总结。失败打印 [错误] … 并 exit 0，
 让 Agent 自然地告诉用户"没查到"。无 ANYSEARCH_API_KEY 时走匿名访问（限额较低）。
@@ -70,10 +70,11 @@ def main() -> int:
     elif args.cmd == "any-subdomains":
         out = anysearch.subdomains(args.domains, call=call)
     elif args.cmd == "any-images":
-        base = paths.member_dir(args.member) if args.member else paths.data_root()
+        dest = (paths.member_cache_dir(args.member, "web_images") if args.member
+                else paths.state_file("web_images"))
         out = anysearch.fetch_images(
             args.query, call=call, download=anysearch.download_image,
-            dest_dir=base / "web_images", count=args.count,
+            dest_dir=dest, count=args.count,
             fallback=anysearch.bing_image_urls, rel=paths.to_rel)
     else:  # pragma: no cover — argparse(required=True) already guards this
         out = "[错误] 未知命令"

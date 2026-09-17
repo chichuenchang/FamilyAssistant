@@ -74,14 +74,14 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
 # Telegram：设好 token 直接跑
 python .codewhale/skills/Agent_Runtime/telegram_bot.py
 
-# 两个 Bot 默认开调试日志（写 data/bot_debug.log）；用 --no-debug 关闭
+# 两个 Bot 默认开调试日志（写 data/.state/bot_debug.log）；用 --no-debug 关闭
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --no-debug
 python .codewhale/skills/Agent_Runtime/telegram_bot.py --no-debug
 ```
 
-微信凭据加密存于 `data/wechat_creds.json`；Telegram 去重 offset 存于 `data/.telegram_offset`。
-微信引用反查缓存存于 `data/wechat_recent_msgs.json`（近期入站消息）与
-`data/wechat_sent_msgs.json`（bot 出站回复，按时间戳匹配）——均为运行时状态，不进备份。
+微信凭据加密存于 `data/.state/wechat_creds.json`；Telegram 去重 offset 存于 `data/.state/.telegram_offset`。
+微信引用反查缓存存于 `data/.state/wechat_recent_msgs.json`（近期入站消息）与
+`data/.state/wechat_sent_msgs.json`（bot 出站回复，按时间戳匹配）——均为运行时状态，不进备份。
 微信 Bot 启动时抢单实例锁（绑定 `127.0.0.1:47831`）：双开会导致每条消息处理/回复两次，后启动的进程直接退出。
 
 ## 新增频道
@@ -143,7 +143,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
   （manifest `FAST_TICKS`；Telegram 挂在长轮询尾部 ~30s，微信走 `fast-tick` 守护线程 ~20s）。
 - **频道上下文注入**：`Agent(channel=...)`（各传输层构造时传 `"wechat"`/`"telegram"`）+ handle 里
   `_apply_context` 把 `__channel`/`__user`/`member` 注入 `knowking` 工具参数（代码确定性，LLM 不得伪造投递目标）。本地测试无 channel → 工具返回"仅正式频道可用"。
-- **任务落盘** `data/.knowking_jobs/<id>.json`（运行时瞬态，已列入 `backup_sync._HARD_EXCLUDE_DIRS`
+- **任务落盘** `data/.state/.knowking_jobs/<id>.json`（运行时瞬态，已列入 `backup_sync._HARD_EXCLUDE_DIRS`
   绝不进云备份；投递成功即删，删除失败标 delivered 下轮只清理绝不重发）。
   `running` 超 `stale_seconds`（默认 1800s，bot 重启/线程死）→ 记超时 error 再推送。同频道同用户
   只允许一个在跑（busy 拦截）。
@@ -184,7 +184,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 ### 运行时切换（/model /effort）
 
 用户随时可发 `/model flash|pro|reset`、`/effort low|medium|high|max|reset`（不带参数查当前值，
-含来源：个人覆盖/环境变量/默认）。每用户覆盖存 `data/.llm_overrides.json`（不入备份），
+含来源：个人覆盖/环境变量/默认）。每用户覆盖存 `data/.state/.llm_overrides.json`（不入备份），
 Agent 启动时读入、切换时合并写回；消息路径不读文件。优先级：个人覆盖 > 环境变量 > 默认。
 每轮 system 注入当前生效值（`_llm_status_note`），Agent 可直接回答"你在用什么模型/推理档"。
 

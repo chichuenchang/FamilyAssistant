@@ -1,6 +1,17 @@
 # tests/conftest.py — pytest fixtures; skill sys.path via bootstrap.
+import atexit
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
+
+# 数据根默认指向一次性临时目录，且必须先于任何 skill import：
+# 模块级路径常量（CREDS_FILE / OFFSET_FILE / _STATE_DIR …）在 import 时求值，
+# 未自行设 DATA_ROOT 的测试曾把幽灵成员库（data/member、data/alex）写进真实 data/。
+_SESSION_DATA_ROOT = tempfile.mkdtemp(prefix="fa_test_data_")
+os.environ["DATA_ROOT"] = _SESSION_DATA_ROOT
+atexit.register(shutil.rmtree, _SESSION_DATA_ROOT, ignore_errors=True)
 
 # 全部 skill 目录经 Agent_Runtime/bootstrap 一次挂上。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".codewhale" / "skills" / "Agent_Runtime"))

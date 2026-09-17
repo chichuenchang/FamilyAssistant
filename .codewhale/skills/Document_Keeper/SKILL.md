@@ -71,7 +71,7 @@ CLI：`profile-set --member-name <名> --field <字段> --value <值>` / `profil
 ## 到期提醒（双通道）
 
 - **随问随查**：`doc-due [--days N]` — active 且 `到期日 − 提前量 ≤ 今天`（含已过期），未确认在前。提前量：`--days` > 文档 `remind_days` > config `reminder_lead_days`。
-- **每日推送**：`reminder.check_and_push(send_fn, 频道)` 由传输层轮询调用，每频道每日最多一次，推给该频道全部已登记成员。状态存 `data/.doc_reminder_state`；推送失败不记状态、下轮重试。`doc-ack` 后该文档不再重复提醒，直到到期日更新。
+- **每日推送**：`reminder.check_and_push(send_fn, 频道)` 由传输层轮询调用，每频道每日最多一次，推给该频道全部已登记成员。状态存 `data/.state/.doc_reminder_state`；推送失败不记状态、下轮重试。`doc-ack` 后该文档不再重复提醒，直到到期日更新。
 
 ## CLI 命令参考
 

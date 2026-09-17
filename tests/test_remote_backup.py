@@ -674,6 +674,11 @@ class TestScopeResolver:
         assert files == {}
         assert backup_sync._excluded("data/.knowking_jobs/x.json") is True
 
+    def test_state_and_cache_dirs_hard_excluded(self, sr):
+        assert backup_sync._excluded("data/.state/wechat_recent_msgs.json") is True
+        assert backup_sync._excluded("data/Alex/cache/charts/a.png") is True
+        assert backup_sync._excluded("data/Family/documents/cache/a.pdf") is False
+
 
 def test_cmd_reorg_invokes_provider(monkeypatch, capsys):
     import importlib.util

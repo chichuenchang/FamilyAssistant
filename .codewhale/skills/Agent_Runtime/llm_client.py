@@ -1,7 +1,7 @@
 """DeepSeek 调用 + 每用户 model/effort 覆盖（/model /effort）。
 
 agent_core 只做编排；模型表、覆盖状态文件、HTTP 调用全在这里。
-状态存 data/.llm_overrides.json：{user: {"model": ..., "effort": ...}}，
+状态存 data/.state/.llm_overrides.json：{user: {"model": ..., "effort": ...}}，
 只在启动与切换命令时读写——消息路径零文件 IO。
 """
 
@@ -35,7 +35,7 @@ _DEFAULT = {"model": DEFAULT_MODEL, "effort": DEFAULT_EFFORT}
 # ── 覆盖状态文件 ────────────────────────────────────────────
 
 def overrides_path() -> Path:
-    return _paths.data_root() / ".llm_overrides.json"
+    return _paths.state_file(".llm_overrides.json")
 
 
 def load_overrides() -> dict:

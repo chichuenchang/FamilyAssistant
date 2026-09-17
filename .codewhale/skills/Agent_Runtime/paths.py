@@ -8,10 +8,12 @@ Family Assistant — 磁盘布局解析（数据落盘位置的单一事实来�
     data/<成员目录>/notes/notes.db         成员备忘 + notes/YYYY-MM/ 图片，私有
     data/<成员目录>/inbox/YYYY-MM/          来图暂存（按发送成员归属）
     data/<成员目录>/forms/                  填表会话 JSON 与填好的 PDF，私有
+    data/<成员目录>/cache/<名>/             可再生产物（charts / web_images），不入备份
     data/Family/ledger.db                   家庭账本（收支/定期/划转/报税/汇率，纯财务）
     data/Family/documents.db                家庭文档库（documents + profiles，家庭共享）
     data/Family/receipts/YYYY-MM/           票据图片
     data/Family/documents/<doc_type>/       长期文档（家庭与成员）
+    data/.state/                            运行时状态/凭据/日志（机器自管，不入备份）
 
 config.json：data_root（默认 data）、family_dir_name（默认 Family）。
 测试钩子：环境变量 DATA_ROOT 覆盖数据根（优先于 config）。
@@ -32,7 +34,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 import jsonfile
-import members as _members
 
 
 def _config() -> dict:
@@ -49,6 +50,30 @@ def data_root() -> Path:
 
 def _family_name() -> str:
     return _config().get("family_dir_name") or "Family"
+
+
+# ── 运行时状态 ──────────────────────────────────────────────
+
+STATE_DIRNAME = ".state"
+CACHE_DIRNAME = "cache"
+
+
+def state_file(name: str) -> Path:
+    """运行时状态/凭据/日志 data/.state/<name>（文件或目录名），父目录不存在则创建。
+
+    旧布局把这些散放在 data/ 根；首次访问时原地搬入（同卷 rename）。
+    搬不动（如日志被占用）就留在原处，新文件照常落 .state/。
+    """
+    d = data_root() / STATE_DIRNAME
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / name
+    legacy = data_root() / name
+    if legacy.exists() and not p.exists():
+        try:
+            legacy.replace(p)
+        except OSError:
+            pass
+    return p
 
 
 # ── 家庭共享 ────────────────────────────────────────────────
@@ -87,6 +112,7 @@ _DOMAINS = {"schedule": "schedule.db", "tasks": "tasks.db", "notes": "notes.db"}
 
 
 def member_dir(member: str) -> Path:
+    import members as _members  # 延迟 import：members 反向依赖本模块的 data_root
     return data_root() / _members.member_dir_name(member)
 
 
@@ -116,6 +142,23 @@ def member_inbox_dir(member: str, dt: date | None = None) -> Path:
 def member_forms_dir(member: str) -> Path:
     """填表会话与产出 data/<成员>/forms/，不存在则创建。"""
     d = member_dir(member) / "forms"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def member_cache_dir(member: str, name: str) -> Path:
+    """可再生产物 data/<成员>/cache/<name>/（charts、web_images…），不存在则创建。
+
+    旧布局为 data/<成员>/<name>/，首次访问时搬入。
+    """
+    d = member_dir(member) / CACHE_DIRNAME / name
+    legacy = member_dir(member) / name
+    if legacy.is_dir() and not d.exists():
+        d.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            legacy.replace(d)
+        except OSError:
+            pass
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -14,8 +14,8 @@ import db as dbm
 def test_default_db_is_family_ledger():
     """Default ledger lives under data/Family, receipts under data/Family/receipts."""
     import models
-    assert models.DB_PATH.as_posix().endswith("data/Family/ledger.db")
-    assert models.RECEIPTS_DIR.as_posix().endswith("data/Family/receipts")
+    assert models.DB_PATH.as_posix().endswith("/Family/ledger.db")
+    assert models.RECEIPTS_DIR.as_posix().endswith("/Family/receipts")
 
 
 def test_store_receipt_returns_family_rel(tmp_path, monkeypatch):

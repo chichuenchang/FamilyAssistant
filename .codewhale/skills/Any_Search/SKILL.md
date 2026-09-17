@@ -44,7 +44,7 @@ python .codewhale/skills/Any_Search/cli.py any-images --query "praying mantis" -
 
 - 源：AnySearch `resource.image`（Unsplash/Pexels/Pixabay 图库，实测 540ms）→ 一张都没存下才走 Bing 图片页抓 `murl`（人物/商品/新闻图库没有；HTML 解析，Bing 改版即失效）。
 - 图库以英文为主：schema 让 LLM 先把中文译成英文再查。
-- 落盘 `data/<成员>/web_images/`，7 天后下次搜图时清理，不入备份（`backup_sync._HARD_EXCLUDE_DIRS`）。
+- 落盘 `data/<成员>/cache/web_images/`，7 天后下次搜图时清理，不入备份（`backup_sync._HARD_EXCLUDE_DIRS`）。
 - 只存 jpg/png/gif（按魔数判，微信发不了 webp/svg）；上限见 `anysearch.py` 顶部 `IMG_*` 常量。
 - 结果 URL 不可信：仅 http(s)、解析出的地址须全为公网、重定向逐跳复查。未防 DNS rebinding（解析与连接之间的窗口）。
 - LLM 只拿到路径，拿不到网页标题 → 无注入面，故不在 `UNTRUSTED_TOOLS`。
