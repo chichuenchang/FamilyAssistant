@@ -130,7 +130,10 @@ class TestReplyAddressing:
 
     def test_send_reply_threads_and_targets_original_sender(self, stub):
         msg = gp.get_message("m1", PREFIX)
-        assert gp.send_reply(msg, "my answer", PREFIX) == "sent-1"
+        assert gp.send_mail(gp.reply_recipient(msg), gp.reply_subject(msg["subject"]),
+                            "my answer", PREFIX, in_reply_to=msg["message_id"],
+                            references=msg["references"],
+                            thread_id=msg["thread_id"]) == "sent-1"
         method, url, payload = stub.calls[-1]
         assert (method, "/messages/send" in url) == ("POST", True)
         assert payload["threadId"] == "t-m1"
@@ -139,6 +142,32 @@ class TestReplyAddressing:
         assert "Subject: Re: Invoice" in raw
         assert "In-Reply-To: <m1@example.com>" in raw
         assert "my answer" in raw
+
+    def test_new_mail_has_no_thread_id(self, stub):
+        assert gp.send_mail("who@example.com", "Hi", "text", PREFIX) == "sent-1"
+        payload = stub.calls[-1][2]
+        assert "threadId" not in payload
+        raw = base64.urlsafe_b64decode(payload["raw"] + "==").decode()
+        assert "To: who@example.com" in raw and "In-Reply-To" not in raw
+
+    def test_attachments_ride_as_mime_parts(self, stub, tmp_path):
+        pdf = tmp_path / "bill.pdf"
+        pdf.write_bytes(b"%PDF-1.4 xyz")
+        png = tmp_path / "shot.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\nzzz")
+        gp.send_mail("who@example.com", "Hi", "text", PREFIX, attachments=[pdf, png])
+        raw = base64.urlsafe_b64decode(stub.calls[-1][2]["raw"] + "==").decode()
+        assert "multipart/mixed" in raw
+        assert "application/pdf" in raw and 'filename="bill.pdf"' in raw
+        assert "image/png" in raw and 'filename="shot.png"' in raw
+        assert base64.b64encode(b"%PDF-1.4 xyz").decode() in raw
+
+    def test_unknown_extension_falls_back_to_octet_stream(self, stub, tmp_path):
+        f = tmp_path / "notes.whatever"
+        f.write_bytes(b"data")
+        gp.send_mail("who@example.com", "Hi", "text", PREFIX, attachments=[f])
+        raw = base64.urlsafe_b64decode(stub.calls[-1][2]["raw"] + "==").decode()
+        assert "application/octet-stream" in raw
 
 
 class TestDraftGate:
@@ -198,17 +227,18 @@ class TestDraftGate:
 class TestAgentWiring:
     def test_tools_registered_and_member_locked(self):
         names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
-        for t in ("check_mail", "read_mail", "draft_reply", "send_reply"):
+        for t in ("check_mail", "read_mail", "draft_reply", "compose_mail", "send_draft"):
             assert t in names and t in ac._TOOL_MAP
             assert t in ac._MEMBER_LOCKED
-        assert {"check_mail", "read_mail", "draft_reply"} <= ac._UNTRUSTED_TOOLS
+        assert {"check_mail", "read_mail", "draft_reply",
+                "compose_mail"} <= ac._UNTRUSTED_TOOLS
 
     def test_member_cannot_be_overridden_by_llm(self):
         out = ac._apply_member("check_mail", {"member": "Other"}, "MemberA")
         assert out["member"] == "MemberA"
 
-    def test_send_reply_gets_turn_context_injected(self):
-        out = ac._apply_context("send_reply", {}, "wechat", "u1", "MemberA",
+    def test_send_draft_gets_turn_context_injected(self):
+        out = ac._apply_context("send_draft", {}, "wechat", "u1", "MemberA",
                                 turn_at=123.0, text="确认发送")
         assert out["__turn_at"] == 123.0 and out["__text"] == "确认发送"
 
@@ -309,7 +339,7 @@ class TestToolFlow:
         preview = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "my answer"})
         assert "s@example.com" in preview and "my answer" in preview
         assert not any("/messages/send" in c[1] for c in stub.calls)   # nothing sent yet
-        out = at.tool_send_reply({"member": "MemberA", "__turn_at": time.time() + 1,
+        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
                                   "__text": "确认发送"})
         assert out.startswith("已发送")
         assert any("/messages/send" in c[1] for c in stub.calls)
@@ -318,7 +348,7 @@ class TestToolFlow:
     def test_send_in_same_turn_does_not_hit_the_api(self, stub):
         turn_at = time.time()
         at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x"})
-        out = at.tool_send_reply({"member": "MemberA", "__turn_at": turn_at,
+        out = at.tool_send_draft({"member": "MemberA", "__turn_at": turn_at,
                                   "__text": "确认发送"})
         assert out.startswith("[错误]")
         assert not any("/messages/send" in c[1] for c in stub.calls)
@@ -330,9 +360,9 @@ class TestToolFlow:
 
     def test_failed_send_keeps_the_draft(self, monkeypatch, stub):
         at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x"})
-        monkeypatch.setattr(gp, "send_reply",
+        monkeypatch.setattr(gp, "send_mail",
                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-        out = at.tool_send_reply({"member": "MemberA", "__turn_at": time.time() + 1,
+        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
                                   "__text": "确认"})
         assert out.startswith("[错误]") and md.get("MemberA") is not None
 
@@ -342,6 +372,121 @@ class TestToolFlow:
 
     def test_read_mail_returns_body(self, stub):
         assert "hello there" in at.tool_read_mail({"member": "MemberA", "id": "m1"})
+
+
+def _sent_raw(stub):
+    payload = next(c[2] for c in reversed(stub.calls) if "/messages/send" in c[1])
+    return base64.urlsafe_b64decode(payload["raw"] + "=="), payload
+
+
+class TestOutboundAttachments:
+    """附件闸门：只能发家庭共享或本成员的现存文件，起草和发送各查一次。"""
+
+    @pytest.fixture(autouse=True)
+    def _mail_member(self, monkeypatch):
+        monkeypatch.setattr(at._members, "mail_pref", lambda m: {
+            "provider": "gmail", "cred_prefix": PREFIX, "enabled": True})
+        md.drop("MemberA")
+
+    @pytest.fixture
+    def files(self):
+        fam = _paths.family_dir() / "documents" / "lease"
+        fam.mkdir(parents=True, exist_ok=True)
+        lease = fam / "lease.pdf"
+        lease.write_bytes(b"%PDF-1.4 lease")
+        mine = _paths.member_inbox_dir("MemberA")
+        shot = mine / "shot.png"
+        shot.write_bytes(b"\x89PNG shot")
+        theirs = _paths.member_inbox_dir("MemberB")
+        secret = theirs / "secret.png"
+        secret.write_bytes(b"\x89PNG secret")
+        return {k: _paths.to_rel(v) for k, v in
+                (("lease", lease), ("shot", shot), ("secret", secret))}
+
+    def test_reply_carries_family_and_own_files(self, stub, files):
+        preview = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "see attached",
+                                       "attachments": f"{files['lease']}, {files['shot']}"})
+        assert files["lease"] in preview and files["shot"] in preview
+        assert md.get("MemberA")["attachments"] == [files["lease"], files["shot"]]
+        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
+                                  "__text": "确认发送"})
+        assert out.startswith("已发送") and "附件 2 个" in out
+        raw, payload = _sent_raw(stub)
+        assert payload["threadId"] == "t-m1"
+        assert b'filename="lease.pdf"' in raw and b'filename="shot.png"' in raw
+        assert base64.b64encode(b"%PDF-1.4 lease") in raw
+
+    def test_other_members_file_is_refused_and_nothing_is_drafted(self, stub, files):
+        out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
+                                   "attachments": files["secret"]})
+        assert out.startswith("[错误]") and md.get("MemberA") is None
+
+    def test_missing_path_is_refused(self, stub, files):
+        out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
+                                   "attachments": "Family/documents/lease/nope.pdf"})
+        assert out.startswith("[错误]") and md.get("MemberA") is None
+
+    def test_too_many_attachments_refused(self, stub, files):
+        many = ",".join([files["lease"]] * (at.SEND_ATTACH_MAX_N + 1))
+        out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
+                                   "attachments": many})
+        assert out.startswith("[错误]") and str(at.SEND_ATTACH_MAX_N) in out
+
+    def test_total_size_cap(self, stub, files, monkeypatch):
+        monkeypatch.setattr(at, "SEND_ATTACH_MAX_BYTES", 4)
+        out = at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
+                                   "attachments": files["lease"]})
+        assert out.startswith("[错误]") and md.get("MemberA") is None
+
+    def test_file_vanishing_after_draft_blocks_send_and_keeps_draft(self, stub, files):
+        at.tool_draft_reply({"member": "MemberA", "id": "m1", "body": "x",
+                             "attachments": files["shot"]})
+        _paths.resolve_rel(files["shot"]).unlink()
+        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
+                                  "__text": "确认发送"})
+        assert out.startswith("[错误]") and md.get("MemberA") is not None
+        assert not any("/messages/send" in c[1] for c in stub.calls)
+
+
+class TestComposeNewMail:
+    @pytest.fixture(autouse=True)
+    def _mail_member(self, monkeypatch):
+        monkeypatch.setattr(at._members, "mail_pref", lambda m: {
+            "provider": "gmail", "cred_prefix": PREFIX, "enabled": True})
+        md.drop("MemberA")
+
+    def test_compose_then_confirmed_send(self, stub):
+        preview = at.tool_compose_mail({"member": "MemberA", "to": "Teacher <t@school.example>",
+                                        "subject": "请假", "body": "明天请假一天"})
+        assert "t@school.example" in preview and "请假" in preview
+        assert not any("/messages/send" in c[1] for c in stub.calls)
+        out = at.tool_send_draft({"member": "MemberA", "__turn_at": time.time() + 1,
+                                  "__text": "确认发送"})
+        assert out.startswith("已发送")
+        raw, payload = _sent_raw(stub)
+        assert "threadId" not in payload
+        assert b"To: t@school.example" in raw
+
+    def test_same_turn_send_refused(self, stub):
+        turn_at = time.time()
+        at.tool_compose_mail({"member": "MemberA", "to": "t@school.example",
+                              "subject": "s", "body": "b"})
+        out = at.tool_send_draft({"member": "MemberA", "__turn_at": turn_at,
+                                  "__text": "确认发送"})
+        assert out.startswith("[错误]")
+        assert not any("/messages/send" in c[1] for c in stub.calls)
+
+    @pytest.mark.parametrize("to", ["", "not-an-address", "a@b", "a@b.c, c@d.e", "a b@c.de"])
+    def test_bad_recipient_refused(self, stub, to):
+        out = at.tool_compose_mail({"member": "MemberA", "to": to,
+                                    "subject": "s", "body": "b"})
+        assert out.startswith("[错误]") and md.get("MemberA") is None
+
+    def test_subject_and_body_required(self, stub):
+        assert at.tool_compose_mail({"member": "MemberA", "to": "t@school.example",
+                                     "subject": "", "body": "b"}).startswith("[错误]")
+        assert at.tool_compose_mail({"member": "MemberA", "to": "t@school.example",
+                                     "subject": "s", "body": ""}).startswith("[错误]")
 
 
 # ── 新邮件播报（mail_watch）────────────────────────────────

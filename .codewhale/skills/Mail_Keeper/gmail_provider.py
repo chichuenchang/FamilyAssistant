@@ -8,7 +8,9 @@ Mail Keeper — Gmail REST v1 provider（零外部依赖，仅标准库 urllib�
 scope：gmail.readonly（搜/读）+ gmail.send（只发，不能删改信件）。
 网络/API 错误抛 RuntimeError。代码里不得出现字面 token/key。
 
-附件：get_message 的 attachments 字段（元数据），字节走 get_attachment(msg_id, attachment_id, prefix)。
+收件附件：get_message 的 attachments 字段（元数据），字节走 get_attachment(msg_id, attachment_id, prefix)。
+发件附件：send_mail(attachments=[本地路径…])。走 messages.send 的 JSON raw（非 /upload URI），
+    故整封上限 RAW_SEND_CAP_BYTES；更大要改用 uploadType=multipart 的 /upload 端点（未实现）。
 
 新邮件播报（mail_watch 用）要的三件：
     profile_history_id(prefix) -> str                       当前游标（首次起点）
@@ -23,6 +25,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import mimetypes
 import os
 import re
 import sys
@@ -30,6 +33,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 from email.utils import parseaddr
@@ -52,6 +56,7 @@ TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 DEFAULT_PREFIX = "GMAIL"
 BODY_CAP = 6000
+RAW_SEND_CAP_BYTES = 5 * 1024 * 1024   # messages.send 非 /upload 路径的整封上限（base64 前）
 TIMEOUT_S = 15             # 单次 HTTP 上限：播报节拍跑在传输层轮询循环里，慢了全员卡住
 META_WORKERS = 5           # 信头并发数
 HISTORY_PAGES = 5          # history.list 翻页上限（一轮最多看这么多页，防爆量时卡住节拍）
@@ -302,21 +307,33 @@ def reply_subject(subject: str) -> str:
     return subject if re.match(r"(?i)^\s*re\s*:", subject or "") else f"Re: {subject}".strip()
 
 
-def send_reply(msg: dict, body: str, prefix: str = DEFAULT_PREFIX) -> str:
-    """同线程回信给原发件人。返回新邮件 id。"""
-    to = reply_recipient(msg)
+def send_mail(to: str, subject: str, body: str, prefix: str = DEFAULT_PREFIX, *,
+              attachments: Sequence[str | Path] = (), in_reply_to: str = "",
+              references: str = "", thread_id: str = "") -> str:
+    """发一封信：新信，或（给 in_reply_to/thread_id 时）同线程回信。返回新邮件 id。
+
+    attachments 为本地文件路径，MIME 按扩展名猜（猜不出 application/octet-stream），
+    文件名取末段。整封信体积上限见本文件头 RAW_SEND_CAP_BYTES。
+    """
     if not to:
-        raise RuntimeError("原邮件无可回复地址")
+        raise RuntimeError("缺少收件人")
     em = EmailMessage()
     em["To"] = to
-    em["Subject"] = reply_subject(msg.get("subject", ""))
-    if msg.get("message_id"):
-        em["In-Reply-To"] = msg["message_id"]
-        em["References"] = f"{msg.get('references', '')} {msg['message_id']}".strip()
+    em["Subject"] = subject
+    if in_reply_to:
+        em["In-Reply-To"] = in_reply_to
+        em["References"] = f"{references} {in_reply_to}".strip()
     em.set_content(body)
-    raw = base64.urlsafe_b64encode(em.as_bytes()).decode()
-    r = _api(prefix, "POST", "/messages/send",
-             payload={"raw": raw, "threadId": msg.get("thread_id", "")})
+    for f in attachments:
+        p = Path(f)
+        mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+        maintype, _, subtype = mime.partition("/")
+        em.add_attachment(p.read_bytes(), maintype=maintype,
+                          subtype=subtype or "octet-stream", filename=p.name)
+    payload = {"raw": base64.urlsafe_b64encode(em.as_bytes()).decode()}
+    if thread_id:
+        payload["threadId"] = thread_id
+    r = _api(prefix, "POST", "/messages/send", payload=payload)
     return r.get("id", "")
 
 

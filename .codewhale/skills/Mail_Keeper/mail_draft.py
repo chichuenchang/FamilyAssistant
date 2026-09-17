@@ -1,8 +1,8 @@
 """
-Mail Keeper — 回信待确认草稿（纯逻辑，可注入测试）。
+Mail Keeper — 待确认邮件草稿（回信 kind="reply" / 新信 kind="new"，纯逻辑，可注入测试）。
 
 发邮件是对外不可撤回动作，且邮件正文是外部内容（提示注入面）：**代码强制两轮**。
-第 1 轮 draft_reply 只落盘草稿并把原文预览还给用户；第 2 轮用户自己说
+第 1 轮 draft_reply / compose_mail 只落盘草稿并把原文预览还给用户；第 2 轮用户自己说
 "确认/发送" 才允许 send。三道确定性闸门（不依赖 LLM 自觉）：
 
     1. 草稿 created_at 必须 < 本轮开始时间 turn_at —— 同一轮里 draft+send 被拒，
@@ -11,8 +11,13 @@ Mail Keeper — 回信待确认草稿（纯逻辑，可注入测试）。
        整句匹配而非子串：「不行，先别发送」「看下银行那封」「ok」都不算
     3. 草稿超过 TTL_S（30 分钟）过期作废
 
-收件人不在草稿里由 LLM 指定：draft 时由 gmail_provider.reply_recipient 从原信
-Reply-To/From 算出（改不了收件人 = 泄密面只能回到原发件人）。
+回信（kind="reply"）的收件人不由 LLM 指定：draft 时由 gmail_provider.reply_recipient
+从原信 Reply-To/From 算出（改不了收件人 = 泄密面只能回到原发件人）。新信（kind="new"）
+的收件人与附件由 LLM 填，全靠预览 + 用户确认把关——收件人和附件路径都在 preview 里，
+SHOW_TOOLS 保证它原文到用户眼前。
+
+附件在草稿里存 data 相对路径清单；发送前由 agent_tools 用
+tool_runtime.resolve_sendable 重新过闸（存在 + 属家庭或本成员）。
 
 草稿存 data/.state/.mail_drafts.json（点前缀 = 运行时瞬态，不进备份），每成员一条。
 """
@@ -75,7 +80,7 @@ def check(member: str, *, turn_at: float, text: str,
     """三道闸门。通过返回 (草稿, "")；否则 (None, 给 LLM 的错误原因)。"""
     draft = get(member)
     if not draft:
-        return None, "[错误] 没有待发送的回信草稿，先用 draft_reply 起草。"
+        return None, "[错误] 没有待发送的邮件草稿，先用 draft_reply / compose_mail 起草。"
     created = float(draft.get("created_at") or 0)
     if (time.time() if now is None else now) - created > TTL_S:
         drop(member)
@@ -90,7 +95,11 @@ def check(member: str, *, turn_at: float, text: str,
 
 
 def preview(draft: dict) -> str:
-    """给用户看的草稿全文（draft_reply 在 SHOW_TOOLS：代码直接附给用户，不经 LLM 转述）。"""
-    return (f"待确认回信：\n收件人：{draft.get('to', '')}\n"
-            f"主题：{draft.get('subject', '')}\n---\n{draft.get('body', '')}\n---\n"
+    """给用户看的草稿全文（起草工具在 SHOW_TOOLS：代码直接附给用户，不经 LLM 转述）。"""
+    att = draft.get("attachments") or []
+    head = "待确认回信" if draft.get("kind", "reply") == "reply" else "待确认新邮件"
+    att_block = ("附件（{n} 个）：\n{rows}\n".format(
+        n=len(att), rows="\n".join(f"  {a}" for a in att)) if att else "")
+    return (f"{head}：\n收件人：{draft.get('to', '')}\n"
+            f"主题：{draft.get('subject', '')}\n{att_block}---\n{draft.get('body', '')}\n---\n"
             f"回复\"确认发送\"我就发出；改内容就直接说怎么改（30 分钟内有效）。")

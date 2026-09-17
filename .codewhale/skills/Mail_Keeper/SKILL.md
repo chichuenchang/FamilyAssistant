@@ -1,12 +1,14 @@
 # Mail Keeper
 
-> 按成员私有的邮箱：查收、读全文、**两轮确认**后回信。只读 + 只发，不能删改信件。
+> 按成员私有的邮箱：查收、读全文、**两轮确认**后回信或发新信（可带附件）。只读 + 只发，不能删改信件。
 > 当前 provider = Gmail REST v1（契约见 `gmail_provider.py` 文件头）。
 
 无 `cli.py`：发信闸门要 `__turn_at` / `__text`（`agent_core._apply_context` 注入），
 子进程拿不到 → 工具在 bot 进程内跑。
 
 发信闸门：`mail_draft.py` 文件头。草稿预览必达用户：`SHOW_TOOLS`（`skill_registry.py` 文件头）。
+`compose_mail` 的收件人与附件由 LLM 填，防线只有预览 + 用户整句确认；`draft_reply` 的收件人
+仍由代码从原信 Reply-To/From 算出。
 
 ## 开启（每个要用邮箱的成员各一次）
 
@@ -41,9 +43,15 @@ Testing，refresh token 7 天后失效需重授权；生产未验证状态个人
 ## 边界
 
 - ❌ 主动查邮箱（工具只在用户开口时动；播报是独立的 `watch` 开关，且只给发件人+主题）
-- ❌ 新开一封信、指定收件人、抄送、发件带附件（只能回原发件人，纯文本）
+- ❌ 抄送、一封多收件人、群发
 - ❌ 删信/改标签/标已读（scope 就没给）
 - 正文优先 `text/plain`，只有 HTML 时去标签取文本，截断 `BODY_CAP` 6000 字
 - 收件附件：`read_mail` 列名字，`download_attachment` 才落盘到 `data/<成员>/inbox/YYYY-MM/`，
   内容要 OCR 的 `ocr_read`（OCR skill）。只收图片与 PDF、上限 `ATTACH_MAX_BYTES` 10 MB
   （exe/zip/office 宏不落盘）；文件名洗成末段、同名不覆盖
+- 发件附件：`draft_reply` / `compose_mail` 的 `attachments`（data 相对路径，逗号分隔）。
+  类型不限（发的是自家文件），闸门是 `tool_runtime.resolve_sendable`（家庭共享或本成员目录内
+  的现存文件），起草与发送各过一次 —— 起草后文件被删/移走则拒发、草稿留着。
+  上限 `SEND_ATTACH_MAX_N` 5 个 / `SEND_ATTACH_MAX_BYTES` 3 MB：走 `messages.send` 的
+  JSON `raw`（非 `/upload` URI），整封受 `RAW_SEND_CAP_BYTES` 5 MB 限制，base64 再涨 4/3。
+  要发更大的，得改用 `uploadType=multipart` 的 `/upload` 端点

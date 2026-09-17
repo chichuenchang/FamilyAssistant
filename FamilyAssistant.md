@@ -13,7 +13,7 @@
 | **Form Filler** | PDF 表格代填：识别可填写/扫描表格字段，逐字段问答收集（会话落盘可断点续填），生成填好的 PDF 发回（pypdf / pypdfium2+Pillow 可选依赖，缺席优雅降级） | [SKILL.md](.codewhale/skills/Form_Filler/SKILL.md) | 填表、帮我填这个表、PDF 表格、移民表格 |
 | **Note Keeper** | 个人备忘（杂项信息长期记忆，按成员私有，支持图片 OCR 入忘、置顶常驻上下文） | [SKILL.md](.codewhale/skills/Note_Keeper/SKILL.md) | 记一下、帮我记住、备忘、我记过什么 |
 | **Calendar Keeper** | 按成员私有的日程与待办（活动/待办分库），与各成员自己的远程日历静默同步，每次日程操作实时核对本地↔远端一致性并自动修复（作者已实现 Google Calendar + Tasks provider，按成员/域选择，用户可按契约换其他日历服务） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
-| **Mail Keeper** | 按成员私有的邮箱：查收/读全文/回信（回信须用户下一条消息确认才发出，闸门在代码里；收件人由原信决定），可选新邮件播报（只报发件人+主题；说"这种别推"即学会忽略该类）；当前 Gmail provider，可按契约换 | [SKILL.md](.codewhale/skills/Mail_Keeper/SKILL.md) | 邮件、邮箱、Gmail、回邮件、查收邮件 |
+| **Mail Keeper** | 按成员私有的邮箱：查收/读全文/回信/发新信，可带附件（发信须用户下一条消息确认才发出，闸门在代码里；回信收件人由原信决定），可选新邮件播报（只报发件人+主题；说"这种别推"即学会忽略该类）；当前 Gmail provider，可按契约换 | [SKILL.md](.codewhale/skills/Mail_Keeper/SKILL.md) | 邮件、邮箱、Gmail、回邮件、查收邮件 |
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Web Reach** | 只读联网：搜最新资讯、抓取/总结网页、转写 YouTube 字幕（无需 key；YouTube 需 yt-dlp，缺失优雅降级） | [SKILL.md](.codewhale/skills/Web_Reach/SKILL.md) | 最新新闻、查一下、外面在发生什么、总结链接、YouTube、视频 |
 | **Any Search** | 高质量实时联网搜索：垂直领域（finance/health/academic/code 等）结构化结果 + 网页全文抽取（可选 `ANYSEARCH_API_KEY`，未配置走匿名）；问最新资讯时优先，Web Reach 兜底 | [SKILL.md](.codewhale/skills/Any_Search/SKILL.md) | 最新资讯、实时搜索、行情、垂直领域查询 |
