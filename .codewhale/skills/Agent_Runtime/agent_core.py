@@ -414,6 +414,11 @@ class Agent:
             fallback = message.pop("_fallback", None) or fallback
             tokens["in"] += usage.get("prompt_tokens") or 0
             tokens["out"] += usage.get("completion_tokens") or 0
+            # 思考链进日志：INFO 级，debug 模式下终端与 bot_debug.log 同显
+            # （键留在 message 上不 pop——DeepSeek 同轮工具调用须原样回传）
+            cot = (message.get("reasoning_content") or "").strip()
+            if cot:
+                _log.info("思考链:\n%s", cot)
 
             tool_calls = message.get("tool_calls") or []
             if cut and tool_calls:

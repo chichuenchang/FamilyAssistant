@@ -1,4 +1,5 @@
 # tests/test_agent_context.py — agent_core 上下文自动管理（token 预算裁剪 + 闲置清空）。
+import logging
 from datetime import datetime
 
 import agent_core
@@ -176,6 +177,19 @@ def test_config_defaults_applied():
     agent = agent_core.Agent()
     assert agent.context_max_tokens == agent_core._CTX_MAX_TOKENS
     assert agent.idle_clear_seconds == agent_core._IDLE_CLEAR_HOURS * 3600
+
+
+def test_reasoning_content_logged(monkeypatch, caplog):
+    """思考链（reasoning_content）进 familyassist.agent 日志，且不污染历史结构。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    agent = agent_core.Agent(idle_clear_hours=0)
+    monkeypatch.setattr(agent, "_call_llm",
+                        lambda msgs, user="": {"content": "好",
+                                               "reasoning_content": "先想了一下"})
+    with caplog.at_level(logging.INFO, logger="familyassist.agent"):
+        agent.handle("test", user="u", member="爸爸")
+    assert "先想了一下" in caplog.text
+    assert "reasoning_content" not in agent.history["u"][-1]
 
 
 def test_tool_results_persist_across_turns(monkeypatch):
