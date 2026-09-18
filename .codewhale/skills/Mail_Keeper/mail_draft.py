@@ -21,7 +21,8 @@ SHOW_TOOLS 保证它原文到用户眼前。
 附件在草稿里存 data 相对路径清单；发送前由 agent_tools 用
 tool_runtime.resolve_sendable 重新过闸（存在 + 属家庭或本成员）。
 
-草稿存 data/.state/.mail_drafts.json（点前缀 = 运行时瞬态，不进备份），每成员一条。
+草稿存 data/.state/.mail_drafts.json（点前缀 = 运行时瞬态，不进备份），每成员每 slot 一条。
+slot="" 是邮件草稿；slot="filter" 是待确认过滤器（改邮箱设置，同样要两轮），互不顶掉。
 """
 
 from __future__ import annotations
@@ -52,8 +53,12 @@ def _save(d: dict) -> None:
     jsonfile.save(store_path(), d)
 
 
+def _key(member: str, slot: str) -> str:
+    return f"{member}#{slot}" if slot else member
+
+
 def put(member: str, draft: dict, *, turn_id: int = 0, user: str = "",
-        now: float | None = None) -> dict:
+        now: float | None = None, slot: str = "") -> dict:
     """存/覆盖该成员的待确认草稿（一人一条，新的顶掉旧的）。
 
     turn_id / user = 起草这一轮的身份，check 据此要求确认落在紧接着的下一轮。
@@ -61,19 +66,19 @@ def put(member: str, draft: dict, *, turn_id: int = 0, user: str = "",
     d = _load()
     draft = {**draft, "created_at": time.time() if now is None else now,
              "turn_id": int(turn_id), "turn_user": str(user or "")}
-    d[member] = draft
+    d[_key(member, slot)] = draft
     _save(d)
     return draft
 
 
-def get(member: str) -> dict | None:
-    v = _load().get(member)
+def get(member: str, slot: str = "") -> dict | None:
+    v = _load().get(_key(member, slot))
     return v if isinstance(v, dict) else None
 
 
-def drop(member: str) -> None:
+def drop(member: str, slot: str = "") -> None:
     d = _load()
-    if d.pop(member, None) is not None:
+    if d.pop(_key(member, slot), None) is not None:
         _save(d)
 
 
@@ -83,14 +88,14 @@ def confirmed(text: str) -> bool:
 
 
 def check(member: str, *, turn_id: int, user: str, text: str,
-          now: float | None = None) -> tuple[dict | None, str]:
+          now: float | None = None, slot: str = "") -> tuple[dict | None, str]:
     """三道闸门。通过返回 (草稿, "")；否则 (None, 给 LLM 的错误原因)。"""
-    draft = get(member)
+    draft = get(member, slot)
     if not draft:
         return None, "[错误] 没有待发送的邮件草稿，先用 draft_reply / compose_mail 起草。"
     created = float(draft.get("created_at") or 0)
     if (time.time() if now is None else now) - created > TTL_S:
-        drop(member)
+        drop(member, slot)
         return None, "[错误] 草稿已过期（超过 30 分钟），请重新起草。"
     expected_turn = int(draft.get("turn_id") or 0) + 1      # 预览的下一轮，就这一轮
     if int(turn_id) != expected_turn or str(user or "") != str(draft.get("turn_user") or ""):

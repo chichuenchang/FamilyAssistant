@@ -1075,3 +1075,182 @@ class TestAttachments:
         assert "download_attachment" in names
         assert "download_attachment" in ac._TOOL_MAP
         assert "download_attachment" in ac._MEMBER_LOCKED
+
+
+class _FilterStub:
+    """Gmail labels / filters / messages.list / batchModify endpoints."""
+
+    def __init__(self, labels=(), filters=(), matches=(), scope_ok=True):
+        self.labels = [{"id": f"L{i}", "name": n, "type": "user"} for i, n in enumerate(labels)]
+        self.filters = list(filters)
+        self.matches = list(matches)
+        self.scope_ok = scope_ok
+        self.calls = []
+
+    def __call__(self, method, url, data=None, headers=None):
+        payload = json.loads(data) if data else None
+        self.calls.append((method, url, payload))
+        if not self.scope_ok and method != "GET":
+            return 403, b'{"error":{"message":"Request had insufficient authentication scopes."}}'
+        path = url.split("/users/me")[1].split("?")[0]
+        if path == "/labels" and method == "GET":
+            return 200, json.dumps({"labels": self.labels}).encode()
+        if path == "/labels":
+            lb = {"id": f"L{len(self.labels)}", "name": payload["name"], "type": "user"}
+            self.labels.append(lb)
+            return 200, json.dumps(lb).encode()
+        if path == "/settings/filters" and method == "GET":
+            return 200, json.dumps({"filter": self.filters}).encode()
+        if path == "/settings/filters":
+            f = {"id": f"F{len(self.filters)}", **payload}
+            self.filters.append(f)
+            return 200, json.dumps(f).encode()
+        if path.startswith("/settings/filters/") and method == "DELETE":
+            fid = path.rsplit("/", 1)[1]
+            self.filters = [f for f in self.filters if f["id"] != fid]
+            return 204, b""
+        if path == "/messages":
+            return 200, json.dumps({"messages": [{"id": m} for m in self.matches],
+                                    "resultSizeEstimate": len(self.matches)}).encode()
+        if path == "/messages/batchModify":
+            return 204, b""
+        raise AssertionError(f"unexpected {method} {url}")
+
+    def hit(self, method, path):
+        return [c for c in self.calls if c[0] == method and c[1].split("?")[0].endswith(path)]
+
+
+class TestFilterProvider:
+    def test_ensure_label_reuses_existing_case_insensitively(self, monkeypatch):
+        s = _FilterStub(labels=["School"])
+        monkeypatch.setattr(gp, "_http", s)
+        assert gp.ensure_label("school", PREFIX) == "L0"
+        assert not s.hit("POST", "/labels")
+
+    def test_nested_label_creates_parent_first(self, monkeypatch):
+        s = _FilterStub()
+        monkeypatch.setattr(gp, "_http", s)
+        gp.ensure_label(" Family / Bills ", PREFIX)
+        assert [c[2]["name"] for c in s.hit("POST", "/labels")] == ["Family", "Family/Bills"]
+
+    def test_create_filter_labels_and_skips_inbox(self, monkeypatch):
+        s = _FilterStub()
+        monkeypatch.setattr(gp, "_http", s)
+        gp.create_filter({"from": "school.example", "to": "", "bogus": "x"}, "L9", True, PREFIX)
+        body = s.hit("POST", "/settings/filters")[0][2]
+        assert body == {"criteria": {"from": "school.example"},
+                        "action": {"addLabelIds": ["L9"], "removeLabelIds": ["INBOX"]}}
+
+    def test_keep_in_inbox_omits_remove(self, monkeypatch):
+        s = _FilterStub()
+        monkeypatch.setattr(gp, "_http", s)
+        gp.create_filter({"subject": "bill"}, "L9", False, PREFIX)
+        assert "removeLabelIds" not in s.hit("POST", "/settings/filters")[0][2]["action"]
+
+    def test_criteria_query_quotes_spaces(self):
+        q = gp.criteria_query({"from": "a@b.com", "subject": "report card",
+                               "query": "has:attachment"})
+        assert q == 'from:a@b.com subject:"report card" (has:attachment)'
+
+    def test_move_matching_batch_modifies(self, monkeypatch):
+        s = _FilterStub(matches=["m1", "m2"])
+        monkeypatch.setattr(gp, "_http", s)
+        assert gp.move_matching("from:x", "L1", True, PREFIX) == 2
+        body = s.hit("POST", "/messages/batchModify")[0][2]
+        assert body == {"ids": ["m1", "m2"], "addLabelIds": ["L1"], "removeLabelIds": ["INBOX"]}
+
+    def test_move_matching_nothing_skips_modify(self, monkeypatch):
+        s = _FilterStub()
+        monkeypatch.setattr(gp, "_http", s)
+        assert gp.move_matching("from:x", "L1", True, PREFIX) == 0
+        assert not s.hit("POST", "/messages/batchModify")
+
+    def test_old_token_raises_scope_error(self, monkeypatch):
+        monkeypatch.setattr(gp, "_http", _FilterStub(scope_ok=False))
+        with pytest.raises(gp.ScopeError, match="--auth"):
+            gp.ensure_label("School", PREFIX)
+
+
+class TestFilterTools:
+    @pytest.fixture(autouse=True)
+    def _mail_member(self, monkeypatch):
+        monkeypatch.setattr(at._members, "mail_pref", lambda m, *a, **k: {
+            "provider": "gmail", "cred_prefix": PREFIX, "enabled": True})
+        md.drop("MemberA", at.FILTER_SLOT)
+        md.drop("MemberA")
+
+    @pytest.fixture
+    def fstub(self, monkeypatch):
+        s = _FilterStub(matches=["m1", "m2", "m3"])
+        monkeypatch.setattr(gp, "_http", s)
+        return s
+
+    def _draft(self, **kw):
+        return at.tool_draft_mail_filter({"member": "MemberA", "from": "school.example",
+                                          "label": "学校", **TURN, **kw})
+
+    def _apply(self, turn=NEXT_TURN):
+        return at.tool_apply_mail_filter({"member": "MemberA", **turn, "__text": "确认"})
+
+    def test_registered_gated_and_shown(self):
+        names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
+        for t in ("draft_mail_filter", "apply_mail_filter", "mail_filters"):
+            assert t in names and t in ac._MEMBER_LOCKED
+        assert {"draft_mail_filter", "apply_mail_filter"} <= ac._CONTEXT_TOOLS
+        assert "draft_mail_filter" in ac._SHOW_TOOLS
+
+    def test_draft_previews_without_touching_gmail_settings(self, fstub):
+        out = self._draft()
+        assert "from:school.example" in out and "学校" in out and "约 3 封" in out
+        assert not fstub.hit("POST", "/settings/filters") and not fstub.hit("POST", "/labels")
+
+    def test_draft_needs_criterion_and_label(self, fstub):
+        assert self._draft(**{"from": ""}).startswith("[错误]")
+        assert self._draft(label=" / ").startswith("[错误]")
+        assert self._draft(label="inbox").startswith("[错误]")
+
+    def test_confirmed_next_turn_creates_label_and_filter(self, fstub):
+        self._draft()
+        assert self._apply().startswith("已建过滤器")
+        assert fstub.hit("POST", "/labels")[0][2]["name"] == "学校"
+        assert fstub.hit("POST", "/settings/filters")
+        assert not fstub.hit("POST", "/messages/batchModify")          # 默认不动旧信
+        assert md.get("MemberA", at.FILTER_SLOT) is None
+
+    def test_apply_existing_moves_old_mail(self, fstub):
+        self._draft(apply_existing="true")
+        assert "旧信已移 3 封" in self._apply()
+
+    def test_same_turn_apply_refused(self, fstub):
+        self._draft()
+        assert self._apply(TURN).startswith("[错误]")
+        assert not fstub.hit("POST", "/settings/filters")
+
+    def test_no_filter_draft_refused(self, fstub):
+        out = self._apply()
+        assert out.startswith("[错误]") and "draft_mail_filter" in out
+
+    def test_filter_draft_and_mail_draft_do_not_collide(self, fstub):
+        md.put("MemberA", {"to": "s@example.com", "subject": "x", "body": "y"},
+               turn_id=3, user="u1")
+        self._draft()
+        assert md.get("MemberA")["to"] == "s@example.com"
+        assert md.get("MemberA", at.FILTER_SLOT)["label"] == "学校"
+
+    def test_scope_error_keeps_draft(self, monkeypatch):
+        monkeypatch.setattr(gp, "_http", _FilterStub(matches=["m1"], scope_ok=False))
+        self._draft()
+        out = self._apply()
+        assert out.startswith("[错误]") and "--auth" in out
+        assert md.get("MemberA", at.FILTER_SLOT) is not None
+
+    def test_list_and_remove(self, monkeypatch):
+        s = _FilterStub(labels=["学校"], filters=[{
+            "id": "F0", "criteria": {"from": "school.example"},
+            "action": {"addLabelIds": ["L0"], "removeLabelIds": ["INBOX"]}}])
+        monkeypatch.setattr(gp, "_http", s)
+        out = at.tool_mail_filters({"member": "MemberA"})
+        assert "1. 条件 from:school.example → 学校，不进收件箱" in out
+        assert at.tool_mail_filters({"member": "MemberA", "remove": 2}).startswith("[错误]")
+        assert at.tool_mail_filters({"member": "MemberA", "remove": 1}).startswith("已删")
+        assert s.filters == []
