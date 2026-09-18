@@ -243,12 +243,13 @@ def _send_reply(chat_id, reply: str) -> None:
 
 # ── 主循环 ──────────────────────────────────────────────────
 
-def handle_updates(t: Transport, updates: list[dict], offset: int) -> int:
+def handle_updates(t: Transport, updates: list[dict], offset: int,
+                   albums: dict[str, dict]) -> int:
     """处理一批 getUpdates 结果，返回推进后的 offset。"""
     # 图/PDF 附言 = 这件（整本相册）的文字指令，只配自己的来件，不领别的攒着的。
-    # 相册每张是一条 update、附言只在第一张 → 按 media_group_id 收齐本批再发。
-    # 落盘失败/不支持的文件不留附言。
-    albums: dict[str, dict] = {}
+    # 相册每张是一条 update、附言只在第一张，且可能被拆到相邻两批 → 按 media_group_id
+    # 收进 albums（跨批存活），某批没再来新张才发出。落盘失败/不支持的文件不留附言。
+    touched = set()
     for update in updates:
         # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
         offset = max(offset, update["update_id"])
@@ -305,13 +306,14 @@ def handle_updates(t: Transport, updates: list[dict], offset: int) -> int:
                                         "caption": "", "paths": []})
             a["paths"].append(str(path))
             a["caption"] = a["caption"] or caption
+            touched.add(gid)
         elif caption:
             t.on_text(chat_id, chat_id, member, caption, media=[str(path)])
         else:
             t.on_media(chat_id, chat_id, member, path)   # 等文字指令
 
-    for a in albums.values():
-        _flush_album(t, a)
+    for gid in [g for g in albums if g not in touched]:
+        _flush_album(t, albums.pop(gid))
     return offset
 
 
@@ -341,13 +343,14 @@ def run() -> None:
 
     t = _TRANSPORT
     offset = _load_offset()
+    albums: dict[str, dict] = {}   # 未收齐的相册（handle_updates）
     print("[tg] 等待消息... (Ctrl+C 停止)")
 
     while True:
         try:
             resp = _api("getUpdates", {
                 "offset": offset + 1,
-                "timeout": 30,
+                "timeout": 2 if albums else 30,   # 相册未收齐：短轮询，没新张即发
                 "allowed_updates": ["message"],
             })
         except KeyboardInterrupt:
@@ -360,7 +363,7 @@ def run() -> None:
         if not resp or not resp.get("ok"):
             continue
 
-        offset = handle_updates(t, resp.get("result", []), offset)
+        offset = handle_updates(t, resp.get("result", []), offset, albums)
         _save_offset(offset)
         t.background_tick()   # 到期提醒 + 懂王投递 + 备份节拍（每轮 ≤30s）
 

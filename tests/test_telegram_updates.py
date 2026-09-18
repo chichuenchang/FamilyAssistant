@@ -44,20 +44,20 @@ def _setup(monkeypatch, photo_ok=True):
 
 def test_offset_advances(monkeypatch):
     _setup(monkeypatch)
-    assert tg.handle_updates(Rec(), [_photo(5), _photo(9)], 3) == 9
+    assert tg.handle_updates(Rec(), [_photo(5), _photo(9)], 3, {}) == 9
 
 
 def test_failed_download_drops_caption(monkeypatch):
     _setup(monkeypatch, photo_ok=False)
     t = Rec()
-    tg.handle_updates(t, [_photo(1, "记账")], 0)
+    tg.handle_updates(t, [_photo(1, "记账")], 0, {})
     assert t.calls == [("media", None)]
 
 
 def test_unsupported_doc_drops_caption(monkeypatch):
     sent = _setup(monkeypatch)
     t = Rec()
-    tg.handle_updates(t, [_doc(1, "a.docx", "记账")], 0)
+    tg.handle_updates(t, [_doc(1, "a.docx", "记账")], 0, {})
     assert t.calls == [] and "暂不支持" in sent[0]
 
 
@@ -68,21 +68,34 @@ def _text(uid, text):
 def test_caption_takes_only_own_media_text_takes_none(monkeypatch):
     _setup(monkeypatch)
     t = Rec()
-    tg.handle_updates(t, [_photo(1, "记账", fid="r"), _text(2, "顺便问天气")], 0)
+    tg.handle_updates(t, [_photo(1, "记账", fid="r"), _text(2, "顺便问天气")], 0, {})
     assert t.calls == [("text", "记账", ["r.jpg"]), ("text", "顺便问天气", None)]
 
 
 def test_album_caption_gets_whole_album(monkeypatch):
     _setup(monkeypatch)
-    t = Rec()
+    t, albums = Rec(), {}
     tg.handle_updates(t, [_photo(1, "记账", fid="a", group="g"),
                           _photo(2, fid="b", group="g"),
-                          _photo(3, fid="c", group="g")], 0)
+                          _photo(3, fid="c", group="g")], 0, albums)
+    tg.handle_updates(t, [], 3, albums)
     assert t.calls == [("text", "记账", ["a.jpg", "b.jpg", "c.jpg"])]
+
+
+def test_album_split_across_batches_waits(monkeypatch):
+    _setup(monkeypatch)
+    t, albums = Rec(), {}
+    tg.handle_updates(t, [_photo(1, "记账", fid="a", group="g")], 0, albums)
+    assert t.calls == []                                  # 可能还有后续张
+    tg.handle_updates(t, [_photo(2, fid="b", group="g")], 1, albums)
+    assert t.calls == []
+    tg.handle_updates(t, [], 2, albums)                   # 一批没新张 → 发出
+    assert t.calls == [("text", "记账", ["a.jpg", "b.jpg"])] and albums == {}
 
 
 def test_uncaptioned_media_held(monkeypatch):
     _setup(monkeypatch)
-    t = Rec()
-    tg.handle_updates(t, [_photo(1, fid="a"), _photo(2, fid="b", group="g")], 0)
+    t, albums = Rec(), {}
+    tg.handle_updates(t, [_photo(1, fid="a"), _photo(2, fid="b", group="g")], 0, albums)
+    tg.handle_updates(t, [], 2, albums)
     assert t.calls == [("media", "a.jpg"), ("media", "b.jpg")]
