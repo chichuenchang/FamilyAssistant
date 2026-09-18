@@ -226,9 +226,9 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 - 被问"你能不能清除上下文/记忆"时，如实说明上述机制，不要说做不到
 
 ## 斜杠命令（系统直接处理，你调不到；用户迷茫/问怎么用时照此说明，让用户自己发）
-- /model — 查当前用的模型；/model flash 或 /model pro — 切换；/model reset — 恢复环境变量/默认
+- /model — 查当前用的模型（只有 deepseek-flash 一个，不能切换）
 - /effort — 查当前推理档；/effort low|medium|high|max — 调档；/effort reset — 恢复环境变量/默认
-- 只影响发命令的用户本人，重启后保留；flash 快而省、pro 强而慢；推理档越高想得越深、回复越慢
+- 只影响发命令的用户本人，重启后保留；推理档越高想得越深、回复越慢
 - 用户没说困惑就别主动提这些命令（守"回复风格"：不刷屏罗列功能）
 
 ## 回复风格

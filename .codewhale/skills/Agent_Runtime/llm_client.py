@@ -1,7 +1,7 @@
-"""DeepSeek 调用 + 每用户 model/effort 覆盖（/model /effort）。
+"""DeepSeek 调用 + 每用户 effort 覆盖（/effort；/model 只查）。
 
 agent_core 只做编排；模型表、覆盖状态文件、HTTP 调用全在这里。
-状态存 data/.state/.llm_overrides.json：{user: {"model": ..., "effort": ...}}，
+状态存 data/.state/.llm_overrides.json：{user: {"effort": ...}}，
 只在启动与切换命令时读写——消息路径零文件 IO。
 """
 
@@ -19,16 +19,14 @@ import paths as _paths
 
 _log = logging.getLogger("familyassist.agent")
 
-MODELS = ("deepseek-flash", "deepseek-v4-pro")
-MODEL_ALIASES = {"flash": "deepseek-flash", "pro": "deepseek-v4-pro"}
 EFFORTS = ("low", "medium", "high", "max")
-DEFAULT_MODEL = "deepseek-flash"
+DEFAULT_MODEL = "deepseek-flash"   # 唯一模型：/model 只查不切
 DEFAULT_EFFORT = "high"
 
 _ENV = {"model": "DEEPSEEK_MODEL", "effort": "DEEPSEEK_REASONING_EFFORT"}
 _LABEL = {"model": "模型", "effort": "推理档"}
-_USAGE = {"model": "/model [flash|pro|reset]", "effort": "/effort [low|medium|high|max|reset]"}
-_VALID = {"model": MODELS, "effort": EFFORTS}
+_USAGE = {"model": "/model（只有一个模型，仅查看）", "effort": "/effort [low|medium|high|max|reset]"}
+_VALID = {"effort": EFFORTS}   # 可按用户覆盖的项
 _DEFAULT = {"model": DEFAULT_MODEL, "effort": DEFAULT_EFFORT}
 
 
@@ -51,7 +49,7 @@ def load_overrides() -> dict:
     for user, entry in (raw.items() if isinstance(raw, dict) else []):
         if not isinstance(entry, dict):
             continue
-        clean = {k: entry[k] for k in ("model", "effort") if entry.get(k) in _VALID[k]}
+        clean = {k: entry[k] for k in _VALID if entry.get(k) in _VALID[k]}
         if clean:
             out[user] = clean
     return out
@@ -109,7 +107,7 @@ def parse_command(text: str):
         return kind, None
     arg = parts[1] if len(parts) > 1 else ""
     if kind == "model":
-        arg = MODEL_ALIASES.get(arg, arg)
+        return kind, None if arg else ""
     if arg and arg != "reset" and arg not in _VALID[kind]:
         return kind, None
     return kind, arg
