@@ -60,7 +60,7 @@ class Transport:
 
     def __init__(self, agent: Agent | None = None):
         self._agent = agent
-        self._pending: dict[str, list[str]] = {}   # 频道内用户 id → 待文字指令的来件路径
+        self._pending: dict[str, list[tuple[str, float]]] = {}   # 用户 id → [(来件路径, 收到时刻)]
         self._pending_lock = threading.Lock()      # 频道回调可能并发
 
     @property
@@ -107,6 +107,7 @@ class Transport:
     # ── 收消息 ──────────────────────────────────────────────
     def on_text(self, target, user, member: str, text: str, quoted=None) -> None:
         """攒着的来件随这条文字一起交 Agent（文字即指令）；没有来件走普通对话。
+        攒超 Agent.idle_clear_seconds 的来件作废（同闲置清上下文：隔久了多半是新话题）。
         命令（/clear、/model…）绕开来件照常执行：/clear 连来件一起清，其余命令来件继续等。
         来件与文字是否相关由 LLM 判（无关即作废）；交出去就不再攒，处理出错则放回。"""
         self.tick()
@@ -114,7 +115,14 @@ class Transport:
         with self._pending_lock:
             if is_clear_command(text):
                 self._pending.pop(key, None)
-            media = [] if is_command(text) else self._pending.pop(key, [])
+            held = [] if is_command(text) else self._pending.pop(key, [])
+        ttl = getattr(self.agent, "idle_clear_seconds", 0)
+        if ttl > 0:
+            fresh = [h for h in held if time.time() - h[1] < ttl]
+            if len(fresh) < len(held):
+                log.debug("来件超时作废 %d 件 from %s", len(held) - len(fresh), user)
+            held = fresh
+        media = [p for p, _ in held]
         log.debug("文字 from %s(%s) 引用=%s 来件=%d: %s", user, member, quoted or "-",
                   len(media), text)
         try:
@@ -128,9 +136,9 @@ class Transport:
             self.deliver(target, reply)
         except Exception as e:
             log.exception("文字处理出错")
-            if media:   # 放回，用户重发指令即可，不必重传
+            if held:   # 放回，用户重发指令即可，不必重传
                 with self._pending_lock:
-                    self._pending[key] = media + self._pending.get(key, [])
+                    self._pending[key] = held + self._pending.get(key, [])
             self._safe_send(target, f"处理出错: {e}")
 
     def on_media(self, target, user, member: str, path: Path | str | None) -> None:
@@ -142,7 +150,7 @@ class Transport:
             return
         log.debug("来件 from %s(%s) → %s（待文字指令）", user, member, path)
         with self._pending_lock:
-            self._pending.setdefault(str(user), []).append(str(path))
+            self._pending.setdefault(str(user), []).append((str(path), time.time()))
 
     # ── 投递 ────────────────────────────────────────────────
     def deliver(self, target, reply: str) -> None:

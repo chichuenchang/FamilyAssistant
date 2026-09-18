@@ -148,6 +148,24 @@ def test_failed_media_turn_keeps_media(monkeypatch, tmp_path):
     assert agent.seen[-1][:2] == ("media", [str(tmp_path / "a.jpg")])
 
 
+def test_stale_media_expires_with_idle_clear(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
+    agent = FakeAgent()
+    agent.idle_clear_seconds = 3600
+    t = FakeTransport(agent=agent)
+    now = [1000.0]
+    monkeypatch.setattr(tb.time, "time", lambda: now[0])
+    t.on_media("tgt", 1, "Alex", tmp_path / "old.jpg")
+    now[0] += 3600
+    t.on_media("tgt", 1, "Alex", tmp_path / "new.jpg")
+    t.on_text("tgt", 1, "Alex", "记账")
+    assert agent.seen[-1][:2] == ("media", [str(tmp_path / "new.jpg")])
+    t.on_media("tgt", 1, "Alex", tmp_path / "x.jpg")
+    now[0] += 3600
+    t.on_text("tgt", 1, "Alex", "记一笔 午餐45块")     # 只剩过期来件 → 普通对话
+    assert agent.seen[-1] == ("text", "记一笔 午餐45块", "1", "Alex")
+
+
 def test_commands_bypass_pending_media(monkeypatch, tmp_path):
     monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
     agent = FakeAgent()
