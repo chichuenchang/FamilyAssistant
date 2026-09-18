@@ -243,6 +243,74 @@ def _send_reply(chat_id, reply: str) -> None:
 
 # ── 主循环 ──────────────────────────────────────────────────
 
+def handle_updates(t: Transport, updates: list[dict], offset: int) -> int:
+    """处理一批 getUpdates 结果，返回推进后的 offset。"""
+    # 图/PDF 附言 = 文字指令；本批来件全落盘后再发（相册附言只在第一张上）。
+    # 落盘失败/不支持的文件不留附言——否则附言会领走别的攒着的来件。
+    captions: list[tuple[int, str, str]] = []
+    for update in updates:
+        # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
+        offset = max(offset, update["update_id"])
+        msg = update.get("message", {})
+        if not msg:
+            continue
+
+        chat_id = msg["chat"]["id"]
+        member = t.gate(chat_id)
+        if member is None:
+            continue
+        user_name = msg.get("from", {}).get("first_name", "unknown")
+        text = msg.get("text", "")
+
+        if msg.get("entities") and msg["entities"][0].get("type") == "bot_command":
+            if text.strip().split()[0] == "/start":
+                send_message(chat_id,
+                    "👋 你好！我是 Family Assistant。\n"
+                    "可以直接跟我说话，比如：\n"
+                    "  • \"花了45块 午餐\" — 记账\n"
+                    "  • \"这个月花了多少\" — 查账\n"
+                    "  • \"美元汇率\" — 查汇率")
+            continue
+
+        caption = (msg.get("caption") or "").strip()
+
+        # 图片 → 下载到发送成员 inbox，等文字指令
+        photos = msg.get("photo") or []
+        if photos:
+            print(f"[tg] 图片消息 from {user_name}")
+            file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
+            path = download_photo(file_id, member) if file_id else None
+            t.on_media(chat_id, chat_id, member, path)
+            if path and caption:
+                captions.append((chat_id, member, caption))
+            continue
+
+        # 文档（PDF）→ 下载到 inbox，等文字指令
+        doc = msg.get("document")
+        if doc:
+            name = doc.get("file_name", "") or ""
+            is_pdf = name.lower().endswith(".pdf") or \
+                doc.get("mime_type") == "application/pdf"
+            if is_pdf:
+                file_id = doc.get("file_id", "")
+                path = download_document(file_id, name, member) if file_id else None
+                t.on_media(chat_id, chat_id, member, path)
+                if path and caption:
+                    captions.append((chat_id, member, caption))
+            else:
+                send_message(chat_id, f"收到文件 {name}（暂不支持，PDF 可以）")
+            continue
+
+        if not text:
+            continue
+        print(f"[tg] {user_name}: {text[:60]}")
+        t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
+
+    for chat_id, member, caption in captions:
+        t.on_text(chat_id, chat_id, member, caption)
+    return offset
+
+
 def run() -> None:
     """长轮询主循环。"""
     if not TOKEN:
@@ -279,66 +347,7 @@ def run() -> None:
         if not resp or not resp.get("ok"):
             continue
 
-        # 图/PDF 附言 = 文字指令；本批来件全落盘后再发（相册附言只在第一张上）
-        captions: list[tuple[int, str, str]] = []
-        for update in resp.get("result", []):
-            # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
-            offset = max(offset, update["update_id"])
-            msg = update.get("message", {})
-            if not msg:
-                continue
-
-            chat_id = msg["chat"]["id"]
-            member = t.gate(chat_id)
-            if member is None:
-                continue
-            user_name = msg.get("from", {}).get("first_name", "unknown")
-            text = msg.get("text", "")
-
-            if msg.get("entities") and msg["entities"][0].get("type") == "bot_command":
-                if text.strip().split()[0] == "/start":
-                    send_message(chat_id,
-                        "👋 你好！我是 Family Assistant。\n"
-                        "可以直接跟我说话，比如：\n"
-                        "  • \"花了45块 午餐\" — 记账\n"
-                        "  • \"这个月花了多少\" — 查账\n"
-                        "  • \"美元汇率\" — 查汇率")
-                continue
-
-            caption = (msg.get("caption") or "").strip()
-            if caption and (msg.get("photo") or msg.get("document")):
-                captions.append((chat_id, member, caption))
-
-            # 图片 → 下载到发送成员 inbox，等文字指令
-            photos = msg.get("photo") or []
-            if photos:
-                print(f"[tg] 图片消息 from {user_name}")
-                file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
-                t.on_media(chat_id, chat_id, member,
-                           download_photo(file_id, member) if file_id else None)
-                continue
-
-            # 文档（PDF）→ 下载到 inbox，等文字指令
-            doc = msg.get("document")
-            if doc:
-                name = doc.get("file_name", "") or ""
-                is_pdf = name.lower().endswith(".pdf") or \
-                    doc.get("mime_type") == "application/pdf"
-                if is_pdf:
-                    file_id = doc.get("file_id", "")
-                    t.on_media(chat_id, chat_id, member,
-                               download_document(file_id, name, member) if file_id else None)
-                else:
-                    send_message(chat_id, f"收到文件 {name}（暂不支持，PDF 可以）")
-                continue
-
-            if not text:
-                continue
-            print(f"[tg] {user_name}: {text[:60]}")
-            t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
-
-        for chat_id, member, caption in captions:
-            t.on_text(chat_id, chat_id, member, caption)
+        offset = handle_updates(t, resp.get("result", []), offset)
         _save_offset(offset)
         t.background_tick()   # 到期提醒 + 懂王投递 + 备份节拍（每轮 ≤30s）
 
