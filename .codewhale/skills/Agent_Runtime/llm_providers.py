@@ -68,9 +68,10 @@ def _merge_sse(resp) -> dict:
     usage 取最后一次出现（DeepSeek 在 [DONE] 前单发一块，GLM 每块都带）。
     reasoning_content 拼起来保留：DeepSeek 思考模式同轮工具调用须原样回传，否则 400
     （agent_core 同轮 msgs 里留着，历史存干净结构时才去掉）。"""
-    msg: dict = {"role": "assistant", "content": ""}
-    calls: dict[int, dict] = {}
-    reasoning = ""
+    # 逐块 += 是二次方拷贝（长回复上万块）：先攒 list，收完一次 join
+    content: list[str] = []
+    reasoning: list[str] = []
+    calls: dict[int, dict] = {}          # index → {id, name, args: list[str]}
     finish = usage = None
     for raw in resp:
         line = raw.decode("utf-8", "replace").strip()
@@ -86,23 +87,25 @@ def _merge_sse(resp) -> dict:
         for choice in chunk.get("choices") or []:
             delta = choice.get("delta") or {}
             if isinstance(delta.get("content"), str):
-                msg["content"] += delta["content"]
+                content.append(delta["content"])
             if isinstance(delta.get("reasoning_content"), str):
-                reasoning += delta["reasoning_content"]
+                reasoning.append(delta["reasoning_content"])
             for tc in delta.get("tool_calls") or []:
-                cur = calls.setdefault(tc.get("index") or 0, {
-                    "id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                cur = calls.setdefault(tc.get("index") or 0, {"id": "", "name": "", "args": []})
                 fn = tc.get("function") or {}
                 cur["id"] = tc.get("id") or cur["id"]
-                cur["function"]["name"] = fn.get("name") or cur["function"]["name"]
-                cur["function"]["arguments"] += fn.get("arguments") or ""
+                cur["name"] = fn.get("name") or cur["name"]
+                cur["args"].append(fn.get("arguments") or "")
             finish = choice.get("finish_reason") or finish
-    if finish is None and not msg["content"] and not calls:
+    if finish is None and not content and not calls:
         raise RuntimeError("流式无内容即结束")   # 连接建立后服务端空关：视同无响应
+    msg: dict = {"role": "assistant", "content": "".join(content)}
     if calls:
-        msg["tool_calls"] = [calls[i] for i in sorted(calls)]
+        msg["tool_calls"] = [{"id": c["id"], "type": "function",
+                              "function": {"name": c["name"], "arguments": "".join(c["args"])}}
+                             for _, c in sorted(calls.items())]
     if reasoning:
-        msg["reasoning_content"] = reasoning
+        msg["reasoning_content"] = "".join(reasoning)
     return {"choices": [{"message": msg, "finish_reason": finish}], "usage": usage or {}}
 
 
