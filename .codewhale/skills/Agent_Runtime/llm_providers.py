@@ -52,6 +52,17 @@ def _post(url: str, headers: dict, payload: dict, timeout: int) -> dict | None:
     return None
 
 
+def _parse(fn, resp: dict | None) -> dict | None:
+    """回复形态异常（代理 / Ollama 变体缺字段）→ 记日志返回 None，不让 KeyError 穿到传输层。"""
+    if not resp:
+        return None
+    try:
+        return fn(resp)
+    except (KeyError, IndexError, TypeError, AttributeError):
+        _log.error("LLM 回复形态异常: %s", str(resp)[:300])
+        return None
+
+
 def _public(msg: dict) -> dict:
     return {k: v for k, v in msg.items() if not k.startswith("_")}
 
@@ -82,13 +93,11 @@ def openai_compat(spec: dict, messages, tools, effort: str, *,
         payload["tools"] = tools
     resp = _post(f"{_base_url(spec)}/v1/chat/completions",
                  {"Authorization": f"Bearer {_auth(spec)}"}, payload, timeout)
-    if not resp:
-        return None
-    try:
-        choice = resp["choices"][0]
-    except (KeyError, IndexError, TypeError):
-        _log.error("LLM 回复缺 choices: %s", str(resp)[:300])
-        return None
+    return _parse(_parse_openai, resp)
+
+
+def _parse_openai(resp: dict) -> dict:
+    choice = resp["choices"][0]
     finish = choice.get("finish_reason")
     _log.debug("LLM finish=%s tokens=%s tool_calls=%d", finish,
                resp.get("usage", {}).get("completion_tokens"),
@@ -159,12 +168,12 @@ def anthropic(spec: dict, messages, tools, effort: str, *,
     resp = _post(f"{_base_url(spec)}/v1/messages",
                  {"x-api-key": _auth(spec), "anthropic-version": _ANTHROPIC_VERSION},
                  payload, timeout)
-    if not resp or not isinstance(resp.get("content"), list):
-        if resp:
-            _log.error("LLM 回复缺 content: %s", str(resp)[:300])
-        return None
+    return _parse(_parse_anthropic, resp)
+
+
+def _parse_anthropic(resp: dict) -> dict:
     blocks = resp["content"]
-    text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+    text = "".join(b["text"] for b in blocks if b.get("type") == "text")
     tool_calls = [{"id": b["id"], "type": "function",
                    "function": {"name": b["name"],
                                 "arguments": json.dumps(b.get("input") or {}, ensure_ascii=False)}}

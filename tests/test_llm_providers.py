@@ -69,9 +69,16 @@ def test_http_error_body_logged_returns_none(capture, caplog):
     assert "bad key" in caplog.text
 
 
-def test_openai_compat_malformed_reply_returns_none(capture):
-    capture["reply"] = {"error": "x"}
+@pytest.mark.parametrize("reply", [
+    {"error": "x"},
+    {"choices": []},
+    {"choices": [{"finish_reason": "stop"}]},          # 缺 message（代理/Ollama 变体）
+    {"choices": [{"message": "text"}]},                # message 非 dict
+])
+def test_openai_compat_malformed_reply_returns_none(capture, caplog, reply):
+    capture["reply"] = reply
     assert prov.openai_compat(DS, [], None, "high") is None
+    assert "形态异常" in caplog.text
 
 
 # ── anthropic ───────────────────────────────────────────────
@@ -149,9 +156,16 @@ def test_anthropic_finish_mapping(capture, stop, finish):
     assert "tools" not in capture["body"] and "system" not in capture["body"]
 
 
-def test_anthropic_malformed_reply_returns_none(capture):
-    capture["reply"] = {"type": "error", "error": {"message": "x"}}
+@pytest.mark.parametrize("reply", [
+    {"type": "error", "error": {"message": "x"}},
+    {"content": "not a list"},
+    {"content": [{"type": "tool_use", "input": {}}]},   # tool_use 缺 id/name
+    {"content": [{"type": "text"}]},                    # text 块缺 text
+])
+def test_anthropic_malformed_reply_returns_none(capture, caplog, reply):
+    capture["reply"] = reply
     assert prov.anthropic(CLAUDE, [{"role": "user", "content": "hi"}], None, "high") is None
+    assert "形态异常" in caplog.text
 
 
 # ── 模型表 ──────────────────────────────────────────────────
