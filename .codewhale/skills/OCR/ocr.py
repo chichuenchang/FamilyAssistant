@@ -170,7 +170,7 @@ def ocr_image(image_path: str) -> Optional[str]:
 def ocr_image_words(image_path: str) -> Optional[list]:
     """通用识别（带坐标）。返回 [{"text","x","y","w","h"}]（图片像素坐标）；
     None = OCR 不可用/失败。仅支持图片——PDF 先由调用方逐页渲染成图。
-    Form_Filler 平面表格的标签定位用。
+    PDF_Editor 扫描页的版面定位用。
     """
     p = Path(image_path)
     if not p.exists():

@@ -225,8 +225,8 @@ class TelegramTransport(Transport):
     channel = "telegram"
     tag = "tg"
 
-    def send_text(self, target, text: str) -> None:
-        send_message(target, text)
+    def send_text(self, target, text: str) -> bool:
+        return send_message(target, text)
 
     def send_photo(self, target, path: str) -> None:
         send_photo(target, path)

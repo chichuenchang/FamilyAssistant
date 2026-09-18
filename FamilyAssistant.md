@@ -10,9 +10,10 @@
 | **Expense Tracker** | 记账、查账、汇总、存款、报税、汇率 | [SKILL.md](.codewhale/skills/Expense_Tracker/SKILL.md) | 记账、查账、汇总、存款、报税、汇率、票据 |
 | **OCR** | 图片文字识别、票据结构化提取 | [SKILL.md](.codewhale/skills/OCR/SKILL.md) | 图片文字识别、票据结构化提取 |
 | **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒、家庭成员资料（profiles，家庭共享） | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
-| **Form Filler** | PDF 表格代填：识别可填写/扫描表格字段，逐字段问答收集（会话落盘可断点续填），生成填好的 PDF 发回（pypdf / pypdfium2+Pillow 可选依赖，缺席优雅降级） | [SKILL.md](.codewhale/skills/Form_Filler/SKILL.md) | 填表、帮我填这个表、PDF 表格、移民表格 |
+| **PDF Editor** | 一句指令改 PDF：填表单（原生字段）、任意位置写字/打勾、白底覆盖改写、贴签名、画线、删页/旋转/重排/合并；会话落盘可续改（pypdf / reportlab / pypdfium2 可选依赖，缺席优雅降级） | [SKILL.md](.codewhale/skills/PDF_Editor/SKILL.md) | 填表、改 PDF、签名、删页、合并 PDF、移民表格 |
 | **Note Keeper** | 个人备忘（杂项信息长期记忆，按成员私有，支持图片 OCR 入忘、置顶常驻上下文） | [SKILL.md](.codewhale/skills/Note_Keeper/SKILL.md) | 记一下、帮我记住、备忘、我记过什么 |
 | **Calendar Keeper** | 按成员私有的日程与待办（活动/待办分库），与各成员自己的远程日历静默同步，每次日程操作实时核对本地↔远端一致性并自动修复（作者已实现 Google Calendar + Tasks provider，按成员/域选择，用户可按契约换其他日历服务） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
+| **Mail Keeper** | 按成员私有的邮箱：查收/读全文/回信/发新信，可带附件（发信须用户下一条消息确认才发出，闸门在代码里；回信收件人由原信决定），可选新邮件播报（只报发件人+主题；说"这种别推"即学会忽略该类）；当前 Gmail provider，可按契约换 | [SKILL.md](.codewhale/skills/Mail_Keeper/SKILL.md) | 邮件、邮箱、Gmail、回邮件、查收邮件 |
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Web Reach** | 只读联网：搜最新资讯、抓取/总结网页、转写 YouTube 字幕（无需 key；YouTube 需 yt-dlp，缺失优雅降级） | [SKILL.md](.codewhale/skills/Web_Reach/SKILL.md) | 最新新闻、查一下、外面在发生什么、总结链接、YouTube、视频 |
 | **Any Search** | 高质量实时联网搜索：垂直领域（finance/health/academic/code 等）结构化结果 + 网页全文抽取（可选 `ANYSEARCH_API_KEY`，未配置走匿名）；问最新资讯时优先，Web Reach 兜底 | [SKILL.md](.codewhale/skills/Any_Search/SKILL.md) | 最新资讯、实时搜索、行情、垂直领域查询 |
@@ -84,8 +85,9 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `config.json` — 全局配置（分类/币种/路径/命令白名单的单一事实来源）
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
 - `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒；documents.db 独立家庭文档库，含 documents + profiles 表）
-- `.codewhale/skills/Form_Filler/` — PDF 表格代填 skill（cli.py 入口 + form_session.py 会话 + form_fill.py AcroForm + form_overlay.py 平面表盖字；按成员私有）
+- `.codewhale/skills/PDF_Editor/` — PDF 编辑 skill（cli.py 入口 + pdf_layout.py 版面 + pdf_plan.py 会话与排版 + pdf_apply.py 应用；按成员私有）
 - `.codewhale/skills/Note_Keeper/` — 个人备忘 skill（cli.py 入口 + note_db.py 数据层；按成员私有）
 - `.codewhale/skills/Remote_Backup/` — 用户数据云盘镜像 skill（backup_provider.py 当前为 Google Drive 实现；按其文件头契约重写即可换成其他云盘）
 - `.codewhale/skills/Calendar_Keeper/` — 按成员私有的日程/待办 + 远程日历同步 skill（活动/待办分库；按成员/域选 provider，providers.py 注册表，calendar_provider.py 为 Google Calendar + Tasks 实现；image_gc.py 清理陈旧来图）
+- `.codewhale/skills/Mail_Keeper/` — 按成员私有邮箱 skill（gmail_provider.py Gmail 实现 + mail_draft.py 两轮发信闸门 + mail_watch.py 新邮件播报 + mail_rules.py 忽略规则；无 cli.py，工具进程内跑）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层 + knowking_jobs.py 懂王舆情桥），详见其 SKILL.md

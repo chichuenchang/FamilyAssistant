@@ -29,7 +29,8 @@ class FakeAgent:
     def __init__(self, reply="ok", boom=False):
         self.reply, self.boom, self.seen = reply, boom, []
 
-    def handle(self, text, user="", member=""):
+    def handle(self, text, user="", member="", said=None):
+        self.said = said
         self.seen.append(("text", text, user, member))
         if self.boom:
             raise RuntimeError("llm down")
@@ -95,6 +96,7 @@ def test_on_text_ticks_quotes_and_delivers(monkeypatch):
     t.on_text("tgt", 42, "Alex", "你好", quoted="上一条")
     assert ticks == ["cal", "gc"]
     assert agent.seen == [("text", tb.with_quote("你好", "上一条"), "42", "Alex")]
+    assert agent.said == "你好"          # 确认闸门只认用户亲手打的字，不含引用
     assert ("text", "tgt", "回") in t.calls
 
 

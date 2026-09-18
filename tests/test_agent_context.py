@@ -51,7 +51,7 @@ def test_save_history_trims_whole_turns_no_orphan_tool_msgs():
             {"role": "user", "content": f"问{i}" + "字" * 10},
             {"role": "assistant", "content": "",
              "tool_calls": [{"id": f"t{i}", "function": {
-                 "name": "fill_form_next", "arguments": "{}"}}]},
+                 "name": "pdf_edit_list", "arguments": "{}"}}]},
             {"role": "tool", "tool_call_id": f"t{i}", "content": "下一个字段: 17" + "字" * 10},
             {"role": "assistant", "content": f"答{i}" + "字" * 10},
         ])

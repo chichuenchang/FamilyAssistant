@@ -137,6 +137,7 @@ _CONTEXT_TOOLS = REGISTRY.context_tools
 _UNTRUSTED_TOOLS = REGISTRY.untrusted_tools
 _IMAGE_TOOLS = REGISTRY.image_tools
 _DOC_TOOLS = REGISTRY.doc_tools
+_SHOW_TOOLS = REGISTRY.show_tools
 
 
 def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
@@ -150,13 +151,17 @@ def _apply_member(tool_name: str, targs: dict, member: str) -> dict:
 
 
 def _apply_context(tool_name: str, targs: dict, channel: str, user: str,
-                   member: str) -> dict:
-    """CONTEXT_TOOLS：注入发起频道 + 发起人 id + 成员名（异步投递需要），
-    确定性来自代码而非 LLM。其余工具原样放行。"""
+                   member: str, turn_id: int = 0, text: str = "") -> dict:
+    """CONTEXT_TOOLS：注入发起频道 + 发起人 id + 成员名（异步投递需要）
+    + 本轮序号 __turn_id（每用户单调递增）与用户原话 __text（对外不可撤回动作的
+    两轮确认闸门，见 Mail_Keeper/mail_draft.check）。确定性来自代码而非 LLM。
+    其余工具原样放行。"""
     if tool_name in _CONTEXT_TOOLS:
         targs = dict(targs)
         targs["__channel"] = channel or ""
         targs["__user"] = str(user) if user else ""
+        targs["__turn_id"] = int(turn_id)
+        targs["__text"] = text
         if member:
             targs["member"] = member
     return targs
@@ -313,15 +318,23 @@ class Agent:
         self.idle_clear_seconds = float(hours) * 3600
         self.history: dict[str, list[dict]] = defaultdict(list)
         self._last_active: dict[str, float] = {}
+        self._turn_seq: dict[str, int] = {}   # 用户 → 轮次序号（两轮确认闸门用，进程内单调）
         self._llm_overrides: dict[str, dict] = _load_llm_overrides()
 
-    def handle(self, text: str, user: str = "default", member: str = "") -> str:
+    def handle(self, text: str, user: str = "default", member: str = "", *,
+               said: str | None = None) -> str:
+        """said = 用户本人亲手打的字（确认闸门 __text 只认它）。text 可能掺了引用/OCR 等
+        外部内容，传输层须另传 said；缺省 = text（本地 CLI 等无掺杂入口）。"""
+        said = text if said is None else said
         # 防御纵深：传输层闸门漏掉的未注册来源，这里二次拦截，不碰 LLM
         if not member:
             return ""
         text = text.strip()
         if not text:
             return "收到空消息。"
+        # 每条用户消息 = 一轮（/clear、/model 这类也算，中间插一条就断掉待确认草稿的链）
+        turn_id = self._turn_seq.get(user, 0) + 1
+        self._turn_seq[user] = turn_id
 
         # 闲置自动清空：距该用户上次消息超过 idle_clear_hours → 旧话题上下文作废
         now = time.time()
@@ -365,12 +378,13 @@ class Agent:
         tool_counts: dict[str, int] = {}
         produced_images: list[str] = []  # 图片工具成功产出的 data 相对路径
         produced_docs: list[str] = []     # 文档工具成功产出的 data 相对路径
+        shown: dict[str, str] = {}        # SHOW_TOOLS 成功原文（每工具留最后一次），必达用户
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
         for _ in range(8):
             message = self._call_llm(msgs, user=user)
             if message is None:
-                return "抱歉，暂时出错了。"
+                return "\n\n".join(["抱歉，暂时出错了。", *shown.values()])
 
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
@@ -390,7 +404,8 @@ class Agent:
                     targs = {}
                 fn = _TOOL_MAP.get(name)
                 targs = _apply_member(name, targs, member)
-                targs = _apply_context(name, targs, self.channel, user, member)
+                targs = _apply_context(name, targs, self.channel, user, member,
+                                       turn_id=turn_id, text=said)
                 result = fn(targs) if fn else f"[错误] 未知工具: {name}"
                 # 回复里只按工具名计数（逐条列参数会刷屏）；明细进调试日志
                 brief = ", ".join(f"{k}={v}" for k, v in targs.items())
@@ -401,8 +416,10 @@ class Agent:
                         produced_images.extend(
                             ln.strip() for ln in result.splitlines() if ln.strip())
                     elif name in _DOC_TOOLS:
-                        # form-render 第一行是路径，后续可能有"警告:"行——哨兵只取首行
+                        # pdf-edit 第一行是路径，后续可能有"警告:"行——哨兵只取首行
                         produced_docs.append(result.strip().splitlines()[0])
+                    if name in _SHOW_TOOLS:
+                        shown[name] = result.replace("\x01", "")   # 外部文本不得伪造哨兵行
                 tool_counts[name] = tool_counts.get(name, 0) + 1
                 msgs.append({"role": "tool",
                              "tool_call_id": tc.get("id", ""),
@@ -421,6 +438,8 @@ class Agent:
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         turn.append({"role": "assistant", "content": reply})
         self._save_history(user, turn)
+        if shown:
+            final += "\n\n" + "\n\n".join(shown.values())
         for p in produced_images:
             final += f"\n{IMG_SENTINEL}{p}"
         for p in produced_docs:
@@ -443,7 +462,7 @@ class Agent:
                 f"判断内容，按以下情况处理（取最匹配的一条）：\n{routes}\n"
                 f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
             )
-            return self.handle(prompt, user=user, member=member)
+            return self.handle(prompt, user=user, member=member, said="")
         return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"
 
     def _handle_llm_command(self, text: str, user: str) -> str | None:

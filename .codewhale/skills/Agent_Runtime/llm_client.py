@@ -151,17 +151,19 @@ def chat(messages, tools, model: str, effort: str) -> dict | None:
     import urllib.request
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    body = json.dumps({
+    payload = {
         "model": model,
         "messages": messages,
-        "tools": tools,
         # DeepSeek V4 是推理模型，reasoning 占用 completion 预算，
         # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
         # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足；
         # 高档位推理更长，max_tokens 相应调高避免被截断成空 content。
         "reasoning_effort": effort,
         "temperature": 0.3, "max_tokens": 32000,
-    }).encode("utf-8")
+    }
+    if tools:      # 纯文本调用（PDF_Editor 排版）不带 tools 键
+        payload["tools"] = tools
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         f"{base_url}/v1/chat/completions", data=body,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},

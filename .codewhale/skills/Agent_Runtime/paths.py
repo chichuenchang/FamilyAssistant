@@ -7,7 +7,7 @@ Family Assistant — 磁盘布局解析（数据落盘位置的单一事实来�
     data/<成员目录>/tasks/tasks.db         成员待办（tasks），私有
     data/<成员目录>/notes/notes.db         成员备忘 + notes/YYYY-MM/ 图片，私有
     data/<成员目录>/inbox/YYYY-MM/          来图暂存（按发送成员归属）
-    data/<成员目录>/forms/                  填表会话 JSON 与填好的 PDF，私有
+    data/<成员目录>/pdf_edits/<id>/         PDF 编辑会话（plan/layout/产出），私有
     data/<成员目录>/cache/<名>/             可再生产物（charts / web_images），不入备份
     data/Family/ledger.db                   家庭账本（收支/定期/划转/报税/汇率，纯财务）
     data/Family/documents.db                家庭文档库（documents + profiles，家庭共享）
@@ -139,11 +139,18 @@ def member_inbox_dir(member: str, dt: date | None = None) -> Path:
     return d
 
 
-def member_forms_dir(member: str) -> Path:
-    """填表会话与产出 data/<成员>/forms/，不存在则创建。"""
-    d = member_dir(member) / "forms"
+def member_pdf_edits_dir(member: str) -> Path:
+    """PDF 编辑会话 data/<成员>/pdf_edits/，不存在则创建。"""
+    d = member_dir(member) / "pdf_edits"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def member_mail_rules(member: str) -> Path:
+    """成员的新邮件播报忽略规则 data/<成员>/mail/rules.json（用户教出来的偏好，入备份）。"""
+    d = member_dir(member) / "mail"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "rules.json"
 
 
 def member_cache_dir(member: str, name: str) -> Path:

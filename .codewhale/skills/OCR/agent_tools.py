@@ -32,7 +32,23 @@ def tool_ocr_image(args):
         return f"[OCR 错误] {e}"
 
 
-TOOLS = {"ocr_image": tool_ocr_image}
+def tool_ocr_read(args):
+    resolved = rt.data_path_guard(args.get("path", ""))
+    if resolved is None:
+        return f"[错误] 只允许识别数据目录内的文件: {_paths.data_root().resolve()}"
+    try:
+        from ocr import ocr_image, is_available
+        if not is_available():
+            return "[OCR 未配置]"
+        text = ocr_image(str(resolved))
+        if text is None:
+            return "[OCR 失败] 文件读不出文字（可能不是图片/PDF，或是加密扫描件）"
+        return text or "[未识别到文字]"
+    except Exception as e:
+        return f"[OCR 错误] {e}"
+
+
+TOOLS = {"ocr_image": tool_ocr_image, "ocr_read": tool_ocr_read}
 
 UNTRUSTED_TOOLS = set(TOOLS)
 
@@ -40,5 +56,10 @@ SCHEMAS = [
     fn("ocr_image", "OCR 识别票据/账单图片，逐笔提取交易明细（返回 transactions 数组，"
        "非账单总额）。拿到后逐笔调 add_transaction 记账", {
         "path": s("图片路径"),
+    }, ["path"]),
+    fn("ocr_read", "读任意图片/PDF 里的文字，返回原文（邮件附件、扫描件、截图、合同、"
+       "说明书、通知信…）。要的是逐笔交易明细就改用 ocr_image；其余一切\"这文件里写了什么\""
+       "都用本工具，拿到原文再自己判断怎么用", {
+        "path": s("文件路径（如 download_attachment 返回的那行）"),
     }, ["path"]),
 ]

@@ -100,7 +100,8 @@ class Transport:
         self.tick()
         log.debug("文字 from %s(%s) 引用=%s: %s", user, member, quoted or "-", text)
         try:
-            reply = self.agent.handle(with_quote(text, quoted), user=str(user), member=member)
+            reply = self.agent.handle(with_quote(text, quoted), user=str(user), member=member,
+                                      said=text)
             log.debug("文字回复 → %s", (reply or "")[:200])
             self.deliver(target, reply)
         except Exception as e:
@@ -151,9 +152,10 @@ class Transport:
             log.exception("发送失败: %s", text[:80])
 
     # ── 后台节拍 ────────────────────────────────────────────
-    def push_text(self, user, text: str) -> None:
-        """后台推送（提醒/懂王报告）：按频道内用户 id 发。默认与 send_text 同；微信覆写。"""
-        self.send_text(user, text)
+    def push_text(self, user, text: str) -> bool:
+        """后台推送（提醒/懂王报告/新邮件）：按频道内用户 id 发。没送达 = 返回 False 或抛错
+        （send_text 吞错只回 False 的频道如 Telegram 靠返回值；mail_watch 据此决定游标动不动）。"""
+        return self.send_text(user, text) is not False
 
     def slow_tick(self) -> None:
         run_ticks(REGISTRY.slow_ticks, self.push_text, self.channel)

@@ -161,7 +161,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 ## 安全
 
 - **命令白名单**：`config.json` 的 `wechat.allowed_commands` 是**记账族**命令白名单（`agent_core.ALLOWED_COMMANDS` 读取，config 缺失才回退内置集）；改它只影响记账族。备忘(note-*)/工作表(sheet-*)/图表(chart-render)/日程(cal-*)/文档(doc-* 除 doc-remove)/备份(backup-now/status/verify)/联网(web-*/any-*) 是 Agent 核心能力，`agent_core` 在装载时**恒定并入** `ALLOWED_COMMANDS`，不受本白名单增删影响。成员增删、doc-remove、backup-restore/reorg 等敏感命令既不在白名单也不并入 → Agent 调不到，仅限本机。
-- **磁盘布局**：所有数据落盘位置经 `Agent_Runtime/paths.py`（单一事实来源）。`config.json` `data_root`(默认 data)+`family_dir_name`(默认 Family) 定根。家庭共享在 `data/Family/`（ledger.db 财务、documents.db 文档+成员资料、receipts/、documents/）；成员私有在 `data/<成员>/`（notes/、schedule/、tasks/、inbox/、forms/）。来图先存发送者 `data/<成员>/inbox/`，分类后搬到对应位置。`agent_core.RECEIPTS_DIR`/`DOCUMENTS_DIR` 由 `paths` 计算，不硬编码。
+- **磁盘布局**：所有数据落盘位置经 `Agent_Runtime/paths.py`（单一事实来源）。`config.json` `data_root`(默认 data)+`family_dir_name`(默认 Family) 定根。家庭共享在 `data/Family/`（ledger.db 财务、documents.db 文档+成员资料、receipts/、documents/）；成员私有在 `data/<成员>/`（notes/、schedule/、tasks/、inbox/、pdf_edits/）。来图先存发送者 `data/<成员>/inbox/`，分类后搬到对应位置。`agent_core.RECEIPTS_DIR`/`DOCUMENTS_DIR` 由 `paths` 计算，不硬编码。
 - **成员注册表**：`data/members.json`（git 不跟踪 — 姓名/频道 id 属隐私）只在本机用 `Expense_Tracker/cli.py member-add/list/remove` 管理（成员命令挂在记账 CLI 上，非本目录；不在命令白名单内，Agent 调不到）。未注册频道 id 一律静默丢弃；写入类账目的归属由 `agent_core` 注入解析出的成员名，LLM 给的 member 一律剥离（防冒名）。
 - **外部内容围栏**：非本地来源文本经 `tool_runtime.fence` 才进 LLM——manifest `UNTRUSTED_TOOLS` 的工具结果、来件 OCR、引用消息、日程注入块的数据行。软防线：降低注入命中率，不限制损害；备忘/工作表/成员资料（本地库）未套。
 - **凭据本地化**：所有频道凭据（微信扫码态、Telegram token）只存本地，不外传。
@@ -178,6 +178,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 | `TELEGRAM_BOT_TOKEN` | Telegram 频道 | Telegram 时必需 |
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` | 图片 OCR（见 [OCR Skill](../OCR/SKILL.md)） | 收图片时 |
 | `GDRIVE_CLIENT_ID` / `GDRIVE_CLIENT_SECRET` / `GDRIVE_REFRESH_TOKEN` | 云盘备份（`backup_tick` 在传输层轮询里跑，见 [Remote Backup](../Remote_Backup/SKILL.md)） | backup.enabled 时 |
+| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN` | 成员邮箱（前缀取自 members.json `mail.cred_prefix`，见 [Mail Keeper](../Mail_Keeper/SKILL.md)） | 该成员有 mail 块时 |
 | `DATA_ROOT` | 数据根目录覆盖（优先于 config `data_root`；测试隔离用，见 `paths.py`） | ❌ |
 | `KNOWKING_DIR` | KnowKing 项目根覆盖（优先于 config `knowking.project_dir`） | ❌ |
 

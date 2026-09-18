@@ -112,6 +112,27 @@ def sync_pref(name: str, domain: str, members_path: Path | None = None) -> dict 
     return {"provider": d.get("provider", ""), "enabled": bool(d.get("enabled", False))}
 
 
+def mail_pref(name: str, members_path: Path | None = None) -> dict | None:
+    """成员的邮箱偏好。无 mail 块 → None（= 该成员没有邮箱能力，邮件工具拒绝）。
+
+    返回 {provider, cred_prefix, enabled, watch}；凭据走 {cred_prefix}_CLIENT_ID/SECRET/
+    REFRESH_TOKEN 环境变量（cred_prefix 缺省 GMAIL）。每人各自的邮箱，互相看不到。
+    watch = 新邮件主动播报（缺省 false，见 Mail_Keeper/mail_watch.py）。
+    """
+    entry = load_members(members_path).get(name)
+    if not isinstance(entry, dict):
+        return None
+    m = entry.get("mail")
+    if not isinstance(m, dict):
+        return None
+    return {
+        "provider": m.get("provider", "gmail"),
+        "cred_prefix": m.get("cred_prefix", "GMAIL"),
+        "enabled": bool(m.get("enabled", False)),
+        "watch": bool(m.get("watch", False)),
+    }
+
+
 def backup_pref(name: str, members_path: Path | None = None) -> dict | None:
     """成员的远程备份偏好。无 backup 块 → None（= 不备份，仅本地）。
 

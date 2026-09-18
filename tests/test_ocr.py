@@ -99,3 +99,30 @@ def test_ocr_image_words_unavailable(monkeypatch, tmp_path):
     monkeypatch.setattr(ocr, "_call_ocr", lambda payload: None)
     assert ocr.ocr_image_words(str(f)) is None
     assert ocr.ocr_image_words(str(tmp_path / "missing.png")) is None
+
+
+# ── agent 工具：通用文字识别 ────────────────────────────────
+
+import agent_core as ac
+import paths as _paths
+
+_ocr_at = ac.REGISTRY.modules["OCR"]
+
+
+def test_ocr_read_returns_plain_text(monkeypatch, tmp_path):
+    f = _paths.data_root() / "scan.jpg"
+    f.write_bytes(b"jpg")
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda p: "合同第一页")
+    assert _ocr_at.tool_ocr_read({"path": str(f)}) == "合同第一页"
+
+
+def test_ocr_read_refuses_path_outside_data_root(tmp_path):
+    out = _ocr_at.tool_ocr_read({"path": str(tmp_path / "secret.png")})
+    assert out.startswith("[错误]")
+
+
+def test_ocr_read_registered_and_untrusted():
+    names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
+    assert "ocr_read" in names and "ocr_read" in ac._TOOL_MAP
+    assert "ocr_read" in ac._UNTRUSTED_TOOLS
