@@ -2,7 +2,7 @@
 
 子类只做三件事：实现 send_text / send_photo / send_document，把 SDK 收到的消息
 翻译成 on_text / on_media 调用，以及决定后台节拍怎么跑（轮询循环内调 background_tick，
-或 start_background_threads 起守护线程）。闸门、来图落盘、哨兵拆分投递、异常兜底在这里，
+或 start_background_threads 起守护线程）。闸门、来图落盘、来件攒到下条文字、哨兵拆分投递、异常兜底在这里，
 各频道零复制。节拍钩子来自各 skill manifest（MESSAGE_TICKS / SLOW_TICKS / FAST_TICKS，
 契约见 skill_registry.py）；本模块不 import 任何 skill。
 
@@ -53,6 +53,8 @@ class Transport:
 
     def __init__(self, agent: Agent | None = None):
         self._agent = agent
+        self._pending: dict[str, list[str]] = {}   # 频道内用户 id → 待文字指令的来件路径
+        self._pending_lock = threading.Lock()      # 频道回调可能并发
 
     @property
     def agent(self) -> Agent:
@@ -97,11 +99,19 @@ class Transport:
 
     # ── 收消息 ──────────────────────────────────────────────
     def on_text(self, target, user, member: str, text: str, quoted=None) -> None:
+        """攒着的来件随这条文字一起交 Agent（文字即指令）；没有来件走普通对话。"""
         self.tick()
-        log.debug("文字 from %s(%s) 引用=%s: %s", user, member, quoted or "-", text)
+        with self._pending_lock:
+            media = self._pending.pop(str(user), [])
+        log.debug("文字 from %s(%s) 引用=%s 来件=%d: %s", user, member, quoted or "-",
+                  len(media), text)
         try:
-            reply = self.agent.handle(with_quote(text, quoted), user=str(user), member=member,
-                                      said=text)
+            body = with_quote(text, quoted)
+            if media:
+                reply = self.agent.handle_media(media, body, user=str(user), member=member,
+                                                said=text)
+            else:
+                reply = self.agent.handle(body, user=str(user), member=member, said=text)
             log.debug("文字回复 → %s", (reply or "")[:200])
             self.deliver(target, reply)
         except Exception as e:
@@ -109,19 +119,15 @@ class Transport:
             self._safe_send(target, f"处理出错: {e}")
 
     def on_media(self, target, user, member: str, path: Path | str | None) -> None:
-        """图片/PDF 已落盘 → OCR 分流。path 为 None = 下载失败。"""
+        """图片/PDF 已落盘 → 静默攒着，等用户下条文字指令（on_text）。path 为 None = 下载失败，
+        照样提示——否则用户以为已收到。"""
         self.tick()
         if not path:
             self._safe_send(target, "文件下载失败，请重发。")
             return
-        log.debug("来件 from %s(%s) → %s", user, member, path)
-        try:
-            reply = self.agent.handle_image(str(path), user=str(user), member=member)
-            log.debug("来件回复 → %s", (reply or "")[:200])
-            self.deliver(target, reply)
-        except Exception as e:
-            log.exception("来件处理出错")
-            self._safe_send(target, f"文件处理出错: {e}")
+        log.debug("来件 from %s(%s) → %s（待文字指令）", user, member, path)
+        with self._pending_lock:
+            self._pending.setdefault(str(user), []).append(str(path))
 
     # ── 投递 ────────────────────────────────────────────────
     def deliver(self, target, reply: str) -> None:

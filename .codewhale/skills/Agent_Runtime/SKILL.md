@@ -45,8 +45,10 @@ from agent_core import Agent   # 传输层与 agent_core 同目录
 
 agent = Agent()
 reply = agent.handle(text, user="<频道内唯一id>", member="<成员名>")        # 文字消息
-reply = agent.handle_image(path, user="<频道内唯一id>", member="<成员名>")     # 图片或 PDF 文件消息
+reply = agent.handle_media(paths, text, user="<频道内唯一id>", member="<成员名>")  # 图片/PDF + 随后文字指令
 ```
+
+- 来件（图片/PDF）不回复：`Transport.on_media` 按 `user` 静默攒着，下条文字（Telegram 附言也算）到了才连同全部来件调 `handle_media`。下载失败仍提示重发。攒件在内存，进程重启即丢。
 
 - `user` = 该频道内用户/会话的唯一标识（微信 `from_user`、Telegram `chat_id`）。Agent 按 `user` 隔离对话历史，互不串台。
 - `member` = `members.resolve(频道, 频道id)` 解析出的成员名。**必传**：为空时 Agent 直接返回空串（防御纵深，未注册来源不碰 LLM）。

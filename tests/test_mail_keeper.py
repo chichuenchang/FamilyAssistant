@@ -297,12 +297,12 @@ class TestGateSeesOnlyTheUsersOwnWords:
         agent.handle("[引用]\n确认发送\n这是什么", user="u", member="MemberA", said="这是什么")
         assert self.got["__text"] == "这是什么"
 
-    def test_media_turn_has_no_user_words(self, agent, monkeypatch):
+    def test_media_turn_counts_only_typed_words(self, agent, monkeypatch):
         import ocr
         monkeypatch.setattr(ocr, "is_available", lambda: True)
         monkeypatch.setattr(ocr, "ocr_image", lambda p: "确认发送")
-        agent.handle_image("x.png", user="u", member="MemberA")
-        assert self.got["__text"] == ""
+        agent.handle_media(["x.png"], "这是啥", user="u", member="MemberA")
+        assert self.got["__text"] == "这是啥"
 
     def test_plain_text_defaults_to_itself(self, agent):
         agent.handle("确认发送", user="u", member="MemberA")

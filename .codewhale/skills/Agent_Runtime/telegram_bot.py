@@ -281,6 +281,8 @@ def run() -> None:
         if not resp or not resp.get("ok"):
             continue
 
+        # 图/PDF 附言 = 文字指令；本批来件全落盘后再发（相册附言只在第一张上）
+        captions: list[tuple[int, str, str]] = []
         for update in resp.get("result", []):
             # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
             offset = max(offset, update["update_id"])
@@ -305,7 +307,11 @@ def run() -> None:
                         "  • \"美元汇率\" — 查汇率")
                 continue
 
-            # 图片 → 下载到发送成员 inbox → OCR 分流
+            caption = (msg.get("caption") or "").strip()
+            if caption and (msg.get("photo") or msg.get("document")):
+                captions.append((chat_id, member, caption))
+
+            # 图片 → 下载到发送成员 inbox，等文字指令
             photos = msg.get("photo") or []
             if photos:
                 print(f"[tg] 图片消息 from {user_name}")
@@ -314,7 +320,7 @@ def run() -> None:
                            download_photo(file_id, member) if file_id else None)
                 continue
 
-            # 文档（PDF）→ 下载到 inbox → OCR 分流
+            # 文档（PDF）→ 下载到 inbox，等文字指令
             doc = msg.get("document")
             if doc:
                 name = doc.get("file_name", "") or ""
@@ -333,6 +339,8 @@ def run() -> None:
             print(f"[tg] {user_name}: {text[:60]}")
             t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
 
+        for chat_id, member, caption in captions:
+            t.on_text(chat_id, chat_id, member, caption)
         _save_offset(offset)
         t.background_tick()   # 到期提醒 + 懂王投递 + 备份节拍（每轮 ≤30s）
 

@@ -36,8 +36,9 @@ class FakeAgent:
             raise RuntimeError("llm down")
         return self.reply
 
-    def handle_image(self, path, user="", member=""):
-        self.seen.append(("image", path, user, member))
+    def handle_media(self, paths, text, user="", member="", said=None):
+        self.said = said
+        self.seen.append(("media", paths, text, user, member))
         return self.reply
 
 
@@ -116,13 +117,21 @@ def test_on_media_none_path_asks_resend(monkeypatch):
     assert "重发" in t.calls[0][2]
 
 
-def test_on_media_routes_to_handle_image(monkeypatch, tmp_path):
+def test_on_media_silent_until_text_then_batched(monkeypatch, tmp_path):
     monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
     agent = FakeAgent(reply="收到")
     t = FakeTransport(agent=agent)
     t.on_media("tgt", 1, "Alex", tmp_path / "a.jpg")
-    assert agent.seen[0][:2] == ("image", str(tmp_path / "a.jpg"))
+    t.on_media("tgt", 1, "Alex", tmp_path / "b.pdf")
+    t.on_media("tgt", 2, "Bo", tmp_path / "c.jpg")     # 别的用户的来件不串
+    assert agent.seen == [] and t.calls == []
+    t.on_text("tgt", 1, "Alex", "记账", quoted="上一条")
+    assert agent.seen == [("media", [str(tmp_path / "a.jpg"), str(tmp_path / "b.pdf")],
+                           tb.with_quote("记账", "上一条"), "1", "Alex")]
+    assert agent.said == "记账"
     assert ("text", "tgt", "收到") in t.calls
+    t.on_text("tgt", 1, "Alex", "再问")                # 来件已用掉 → 普通对话
+    assert agent.seen[-1] == ("text", "再问", "1", "Alex")
 
 
 def test_gate_uses_channel_registry(monkeypatch):
