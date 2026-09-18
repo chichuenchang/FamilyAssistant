@@ -32,6 +32,17 @@ def test_handle_appends_said_and_reply(monkeypatch, archive_file):
         "wechat", "u", "发票多少钱", "42 元")
 
 
+def test_llm_failure_after_tool_still_archived(monkeypatch, archive_file):
+    agent = _agent(monkeypatch)
+    calls = iter([{"content": "", "tool_calls": [{"id": "1", "function": {
+        "name": "chat_history", "arguments": "{}"}}]}, None])
+    monkeypatch.setattr(agent, "_call_llm", lambda msgs, user="": next(calls))
+    out = agent.handle("机票订了吗", user="u", member="爸爸")
+    assert "工具已执行" in out
+    row = json.loads(archive_file.read_text(encoding="utf-8").splitlines()[0])
+    assert row["said"] == "机票订了吗"
+
+
 def test_commands_not_archived(monkeypatch, archive_file):
     agent = _agent(monkeypatch)
     agent.handle("/clear", user="u", member="爸爸")

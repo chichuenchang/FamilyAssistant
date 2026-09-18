@@ -403,6 +403,8 @@ class Agent:
         for _ in range(8):
             message = self._call_llm(msgs, user=user)
             if message is None:
+                if tool_counts:
+                    break   # 工具已生效：走收尾，照常进历史与存档
                 return "\n\n".join(["抱歉，暂时出错了。", *shown.values()])
             usage = message.pop("_usage", None) or {}   # 私有键，不得回传 API
             cut = message.pop("_finish", None) == "length"
