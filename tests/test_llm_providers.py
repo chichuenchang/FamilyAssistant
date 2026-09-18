@@ -5,6 +5,7 @@ import urllib.error
 import urllib.request
 
 import pytest
+from types import SimpleNamespace
 
 import llm_client
 import llm_providers as prov
@@ -41,7 +42,10 @@ def capture(monkeypatch):
         r = box["reply"]
         if isinstance(r, Exception):
             raise r
-        return io.BytesIO(r if isinstance(r, bytes) else json.dumps(r).encode())
+        resp = io.BytesIO(r if isinstance(r, bytes) else json.dumps(r).encode())
+        sock = SimpleNamespace(settimeout=lambda s: box.__setitem__("silence", s))
+        resp.fp = SimpleNamespace(raw=SimpleNamespace(_sock=sock))   # 模拟 HTTPResponse 底层 socket
+        return resp
 
     monkeypatch.setattr(urllib.request, "urlopen", fake)
     return box
@@ -111,7 +115,8 @@ def test_sse_keeps_reasoning_skips_comment_lines(capture):
 
 
 def test_glm_spec_knobs(capture, monkeypatch):
-    """chat_path 替换 /v1 前缀；effort_map 改档；stream_usage=false 不发 stream_options；spec.timeout 压过调用方。"""
+    """chat_path 替换 /v1 前缀；effort_map 改档；stream_usage=false 不发 stream_options；
+    调用方 timeout 管建连+首块，spec.timeout 只在首块后换成 socket 静默上限。"""
     monkeypatch.setenv("ZHIPU_API_KEY", "z")
     monkeypatch.delenv("ZHIPU_BASE_URL", raising=False)
     capture["reply"] = sse(delta("ok", finish="stop"))
@@ -122,9 +127,11 @@ def test_glm_spec_knobs(capture, monkeypatch):
     assert capture["body"]["model"] == "glm-5.3-flash"
     assert capture["body"]["reasoning_effort"] == "high"
     assert "stream_options" not in capture["body"]
-    assert capture["timeout"] == 30
+    assert capture["timeout"] == 90 and capture["silence"] == 30
+    capture.pop("silence")
     prov.openai_compat(glm, [], None, "high", timeout=90)
     assert capture["body"]["reasoning_effort"] == "high" and capture["timeout"] == 90
+    assert "silence" not in capture   # 无 spec.timeout：socket 超时不动
 
 
 def test_openai_compat_merges_leading_system_messages(capture):
