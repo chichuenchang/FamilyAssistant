@@ -178,9 +178,10 @@ def gather(member: str, day: date, cfg: dict) -> Digest:
     tasks = cal_db.list_range(kind="task", include_undated=True,
                               db_path=str(_paths.member_store(member, "tasks")))
     today = day.isoformat()
-    return Digest(day=day, events=_cap([_event_line(r) for r in events], EVENT_CAP),
-                  tasks=_cap([_task_line(r, today) for r in tasks], TASK_CAP), mails=_mail(member), stale=stale, days=days,
-                  task_total=len(tasks))
+    return Digest(day=day,
+                  events=_cap([_event_line(r) for r in events], EVENT_CAP),
+                  tasks=_cap([_task_line(r, today) for r in tasks], TASK_CAP),
+                  mails=_mail(member), stale=stale, days=days, task_total=len(tasks))
 
 
 # ── 成文 ────────────────────────────────────────────────────
@@ -206,9 +207,14 @@ def template(d: Digest) -> str:
         mail = "，无未读邮件" if d.mails is not None else ""
         return "\n".join([f"{_head(d)}：未来{d.days}天无日程，无待办{mail}。", *stale])
     lines = [_head(d)]
-    lines += ([f"📅 未来{d.days}天日程："] + [f"- {e}" for e in d.events]
-              if d.events else [f"📅 未来{d.days}天无日程"])
-    lines += [f"☐ 待办 {d.task_total or len(d.tasks)} 项："] + [f"- {t}" for t in d.tasks] if d.tasks else ["☐ 无待办"]
+    if d.events:
+        lines += [f"📅 未来{d.days}天日程："] + [f"- {e}" for e in d.events]
+    else:
+        lines += [f"📅 未来{d.days}天无日程"]
+    if d.tasks:
+        lines += [f"☐ 待办 {d.task_total or len(d.tasks)} 项："] + [f"- {t}" for t in d.tasks]
+    else:
+        lines += ["☐ 无待办"]
     if d.mails is not None:
         lines += [f"📬 未读邮件 {len(d.mails)} 封" + ("：" if d.mails else "")]
         lines += [f"- {m}" for m in d.mails]
@@ -271,6 +277,17 @@ def deliver(push_text, channel: str, member: str, ids: list[str], day: date, cfg
             _running.discard((channel, member))
 
 
+def _claim(key: tuple[str, str], today: str) -> bool:
+    """锁内占位：今天没推、没在跑、不在退避期才占。"""
+    with _lock:
+        now = time.monotonic()
+        if _sent.get(key) == today or key in _running or now - _last_try.get(key, float("-inf")) < RETRY_S:
+            return False
+        _running.add(key)
+        _last_try[key] = now
+        return True
+
+
 def _spawn(fn, *args) -> None:
     threading.Thread(target=fn, args=args, daemon=True, name="daily-banner").start()
 
@@ -291,11 +308,8 @@ def tick(push_text, channel: str, *, now: datetime | None = None, cfg: dict | No
         if sent.get(member) == today:
             continue
         key = (channel, member)
-        with _lock:
-            if _sent.get(key) == today or key in _running or time.monotonic() - _last_try.get(key, float("-inf")) < RETRY_S:
-                continue
-            _running.add(key)
-            _last_try[key] = time.monotonic()
+        if not _claim(key, today):
+            continue
         try:
             (spawn or _spawn)(deliver, push_text, channel, member, ids, now.date(), cfg)
         except Exception:
