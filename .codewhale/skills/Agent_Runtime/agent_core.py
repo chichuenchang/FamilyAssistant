@@ -50,6 +50,7 @@ if sys.platform == "win32":
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
+import chat_archive
 import context_budget as _budget
 import llm_client as _llm
 import members as _members_registry
@@ -357,14 +358,14 @@ class Agent:
         last = self._last_active.get(user)
         if (last is not None and self.idle_clear_seconds > 0
                 and now - last >= self.idle_clear_seconds and user in self.history):
-            self.history.pop(user, None)
+            chat_archive.stash(user, self.history.pop(user))
             _log.debug("用户 %s 闲置 %.1f 小时，自动清除对话上下文",
                        user, (now - last) / 3600)
         self._last_active[user] = now
 
         # 频道无关命令：清除本用户对话上下文（不经 LLM，零 token）
         if is_clear_command(text):
-            self.history.pop(user, None)
+            chat_archive.stash(user, self.history.pop(user, []))
             return "✅ 对话上下文已清除。"
 
         # 频道无关命令：/model /effort 运行时切换 LLM（不经 LLM，零 token）
@@ -551,7 +552,9 @@ class Agent:
         """
         h = self.history[user]
         h.extend(turn_msgs)
+        before = list(h)
         trimmed = _budget.trim_history(h, self.history_size, self.context_max_tokens)
+        chat_archive.stash(user, before[:len(before) - len(h)])   # 裁剪只删最旧前缀
         if trimmed:
             _log.debug("用户 %s 对话历史超 %d token 预算，丢弃最旧 %d 轮",
                        user, self.context_max_tokens, trimmed)

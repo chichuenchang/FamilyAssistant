@@ -12,10 +12,11 @@
 ├── agent_core.py       ← 频道无关 Agent（共用大脑）
 ├── llm_client.py       ← DeepSeek 调用 + /model /effort 每用户覆盖
 ├── context_budget.py   ← 历史 token 粗估 + 整轮裁剪（纯函数）
+├── chat_archive.py     ← 移出上下文的对话存内存，chat_history 工具回读
 ├── transport_base.py   ← 频道共用生命周期（闸门/投递/后台节拍）；新增频道继承它
 ├── skill_registry.py   ← 发现/合并各 skill 的 agent_tools.py（manifest 契约见模块头）
 ├── tool_runtime.py     ← manifest 共用：run_cli / schema 助手 / 路径闸门
-├── agent_tools.py      ← 本目录自带工具（knowking / send_file）
+├── agent_tools.py      ← 本目录自带工具（knowking / send_file / chat_history）
 ├── bootstrap.py        ← sys.path 单一入口
 ├── backup_hook.py      ← 各 CLI 写入后 mark_dirty
 ├── jsonfile.py         ← config.json / 状态文件读写（缺失/损坏读作 {}）
@@ -54,7 +55,7 @@ reply = agent.handle_media(paths, text, user="<频道内唯一id>", member="<成
 - `member` = `members.resolve(频道, 频道id)` 解析出的成员名。**必传**：为空时 Agent 直接返回空串（防御纵深，未注册来源不碰 LLM）。
 - `handle` 返回的字符串即最终回复，原样发回频道即可。
 - `Agent()` 构造时从 `config.json` 提取合法值组装 system prompt（不嵌入 FamilyAssistant.md，省 token），进程内常驻复用，不要每条消息都 new。
-- **上下文自动管理**（旋钮在 `config.json` `agent` 块，`Agent()` 构造参数可覆盖，0=关闭）：`context_max_tokens`（默认 30000）= 每用户对话历史 token 预算，超出从最旧一问一答成对丢弃，保留最近上下文；`idle_clear_hours`（默认 4）= 用户闲置超过 N 小时后，下一条消息前自动清空其对话历史。用户随时可发 `/clear`（或"清除上下文"）手动清空。
+- **上下文自动管理**（旋钮在 `config.json` `agent` 块，`Agent()` 构造参数可覆盖，0=关闭）：`context_max_tokens`（默认 30000）= 每用户对话历史 token 预算，超出从最旧一问一答成对丢弃，保留最近上下文；`idle_clear_hours`（默认 4）= 用户闲置超过 N 小时后，下一条消息前自动清空其对话历史。用户随时可发 `/clear`（或"清除上下文"）手动清空。三种移出的轮进 `chat_archive`（每用户最近 100 轮，只留原话 + 最终回复，内存不落盘，重启即丢），LLM 按需调 `chat_history` 回读。
 - `max_tokens` 截断（`finish_reason=length`）：残缺 `tool_calls` 不执行（参数 JSON 残缺则解析为空参数照跑），改注入 `TRUNCATED_TOOLS_NOTE` 让模型拆批重来；残缺文本回复加 `TRUNCATED_REPLY_MARK`，历史只存标记。
 
 ## 现有频道
