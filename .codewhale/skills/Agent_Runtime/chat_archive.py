@@ -29,26 +29,24 @@ _thread_lock = threading.Lock()
 _LOCK_AT = 0x7FFFFFFF   # Windows 锁是强制锁：锁文件尾外一字节，不挡 _rows 读正文
 
 
+def _file_lock(f, lock: bool) -> None:
+    if msvcrt:
+        f.seek(_LOCK_AT)
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK if lock else msvcrt.LK_UNLCK, 1)   # 抢不到重试约 10 s 后 OSError
+    else:
+        fcntl.flock(f, fcntl.LOCK_EX if lock else fcntl.LOCK_UN)
+
+
 @contextmanager
 def _locked(f):
     """同进程多线程 + 微信/Telegram 多进程互斥追加（Windows 追加 = 先 seek 再写，非原子）。"""
     with _thread_lock:
-        if msvcrt:
-            f.seek(_LOCK_AT)
-            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)   # 抢不到重试约 10 s 后 OSError
-            try:
-                yield
-            finally:
-                f.flush()
-                f.seek(_LOCK_AT)
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                f.flush()
-                fcntl.flock(f, fcntl.LOCK_UN)
+        _file_lock(f, True)
+        try:
+            yield
+        finally:
+            f.flush()
+            _file_lock(f, False)
 
 
 def _path() -> Path:
@@ -93,8 +91,7 @@ def read(channel: str, user, query: str = "", limit: int = 20) -> str:
     """该用户最近 limit 轮（旧在前），query 非空时只留问或答含该词的轮（不分大小写）。"""
     needle = query.strip().lower()
     turns = [r for r in _rows(channel or "", str(user))
-             if not needle or needle in r.get("said", "").lower()
-             or needle in r.get("reply", "").lower()]
+             if not needle or any(needle in r.get(k, "").lower() for k in ("said", "reply"))]
     turns = turns[-max(1, min(int(limit or 20), 50)):]
     if not turns:
         return EMPTY
