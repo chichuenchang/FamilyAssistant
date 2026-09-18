@@ -23,7 +23,7 @@ MODELS = ("deepseek-flash", "deepseek-v4-pro")
 MODEL_ALIASES = {"flash": "deepseek-flash", "pro": "deepseek-v4-pro"}
 EFFORTS = ("low", "medium", "high", "max")
 DEFAULT_MODEL = "deepseek-flash"
-DEFAULT_EFFORT = "max"
+DEFAULT_EFFORT = "high"
 
 _ENV = {"model": "DEEPSEEK_MODEL", "effort": "DEEPSEEK_REASONING_EFFORT"}
 _LABEL = {"model": "模型", "effort": "推理档"}
