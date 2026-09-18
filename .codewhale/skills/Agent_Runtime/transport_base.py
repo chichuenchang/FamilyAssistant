@@ -21,7 +21,8 @@ from pathlib import Path
 import backup_hook
 import paths as _paths
 import tool_runtime as rt
-from agent_core import Agent, REGISTRY, member_inbox_dir, split_reply
+from agent_core import (Agent, REGISTRY, is_clear_command, is_command, member_inbox_dir,
+                        split_reply)
 from members import resolve
 from skill_registry import run_ticks
 
@@ -99,10 +100,14 @@ class Transport:
 
     # ── 收消息 ──────────────────────────────────────────────
     def on_text(self, target, user, member: str, text: str, quoted=None) -> None:
-        """攒着的来件随这条文字一起交 Agent（文字即指令）；没有来件走普通对话。"""
+        """攒着的来件随这条文字一起交 Agent（文字即指令）；没有来件走普通对话。
+        命令（/clear、/model…）绕开来件照常执行：/clear 连来件一起清，其余命令来件继续等。
+        来件与文字是否相关由 LLM 判（无关即作废）；交出去就不再攒。"""
         self.tick()
         with self._pending_lock:
-            media = self._pending.pop(str(user), [])
+            if is_clear_command(text):
+                self._pending.pop(str(user), None)
+            media = [] if is_command(text) else self._pending.pop(str(user), [])
         log.debug("文字 from %s(%s) 引用=%s 来件=%d: %s", user, member, quoted or "-",
                   len(media), text)
         try:

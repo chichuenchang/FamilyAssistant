@@ -77,6 +77,7 @@ def test_handle_media_ocr_and_instruction_drive_handle(monkeypatch):
     assert out == "ok"
     assert "x.pdf" in cap["p"] and "y.jpg" in cap["p"] and "CONSENT FORM TEXT" in cap["p"]
     assert "2 份材料" in cap["p"] and "签好发给学校" in cap["p"]
+    assert "明显与这些材料无关" in cap["p"]              # 无关指令 → LLM 让材料作废
     assert cap["s"] == "签好发给学校"
     # 分流条目来自各 skill 的 IMAGE_ROUTES，按 ORDER 编号
     p = cap["p"]

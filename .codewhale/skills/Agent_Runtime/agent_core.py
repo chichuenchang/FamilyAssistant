@@ -244,6 +244,17 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 IMG_SENTINEL = "\x01IMG:"
 DOC_SENTINEL = "\x01DOC:"
 
+CLEAR_COMMANDS = ("/clear", "清除上下文", "清空上下文", "清空记忆")
+
+
+def is_clear_command(text: str) -> bool:
+    return text.strip().lower() in CLEAR_COMMANDS
+
+
+def is_command(text: str) -> bool:
+    """不经 LLM 的频道无关命令（/clear 类、/model、/effort）。传输层据此绕开攒着的来件。"""
+    return is_clear_command(text) or _llm.parse_command(text.strip()) is not None
+
 
 def split_reply(reply: str) -> tuple[str, list[str], list[str]]:
     """剥离 \\x01IMG:/\\x01DOC: 哨兵行，返回 (可见文本, [图片], [文档]) 三元组。"""
@@ -347,7 +358,7 @@ class Agent:
         self._last_active[user] = now
 
         # 频道无关命令：清除本用户对话上下文（不经 LLM，零 token）
-        if text.lower() in ("/clear", "清除上下文", "清空上下文", "清空记忆"):
+        if is_clear_command(text):
             self.history.pop(user, None)
             return "✅ 对话上下文已清除。"
 
@@ -464,7 +475,8 @@ class Agent:
         prompt = (
             f"用户发来 {len(paths)} 份材料（图片或 PDF），已保存：\n" + "\n\n".join(parts)
             + f"\n\n用户随后的指示:\n{text}\n\n"
-            f"按用户指示处理这些材料。指示没说清归类时，按以下情况判断（取最匹配的一条）：\n{routes}\n"
+            f"指示明显与这些材料无关（如另起话题）→ 材料作废：不处理、不提及，只回应指示。\n"
+            f"否则按用户指示处理这些材料。指示没说清归类时，按以下情况判断（取最匹配的一条）：\n{routes}\n"
             f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
         )
         return self.handle(prompt, user=user, member=member,

@@ -134,6 +134,19 @@ def test_on_media_silent_until_text_then_batched(monkeypatch, tmp_path):
     assert agent.seen[-1] == ("text", "再问", "1", "Alex")
 
 
+def test_commands_bypass_pending_media(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
+    agent = FakeAgent()
+    t = FakeTransport(agent=agent)
+    t.on_media("tgt", 1, "Alex", tmp_path / "a.jpg")
+    t.on_text("tgt", 1, "Alex", "/model")               # 命令照常执行，来件继续等
+    assert agent.seen == [("text", "/model", "1", "Alex")]
+    t.on_text("tgt", 1, "Alex", "/clear")               # /clear 连来件一起清
+    assert agent.seen[-1] == ("text", "/clear", "1", "Alex")
+    t.on_text("tgt", 1, "Alex", "你好")
+    assert agent.seen[-1] == ("text", "你好", "1", "Alex")
+
+
 def test_gate_uses_channel_registry(monkeypatch):
     seen = {}
 
