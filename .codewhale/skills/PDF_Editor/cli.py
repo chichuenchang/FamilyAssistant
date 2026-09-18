@@ -107,9 +107,11 @@ def cmd_edit(args):
                                           args.instruction)
     except pdf_plan.PlanError as e:
         _die(str(e))
+    planned = len(ops)
     ops, warnings = pdf_plan.validate_ops(
         ops, layout, lambda p: rt.resolve_sendable(p, args.member))
-    if not ops:
+    # 空列表 = 撤销全部编辑（合法）；只在"全被校验丢掉"或"本就无事可撤"时报错
+    if not ops and (planned or not plan["ops"]):
         _die("没有可执行的编辑。" + " ".join(notes + warnings))
     if any(o["op"] in pdf_plan.OVERLAY_OPS for o in ops) and not pdf_apply.has_reportlab():
         _die("写字/打勾/覆盖/贴图需要 reportlab。pip install reportlab")

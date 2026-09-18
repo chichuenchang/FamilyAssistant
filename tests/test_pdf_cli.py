@@ -192,6 +192,33 @@ def test_no_executable_ops_reports_planner_notes(cli, capsys, inbox, monkeypatch
     assert code == 1 and "没有可执行的编辑" in out and "指令没给名字的值" in out
 
 
+def test_empty_ops_undo_prior_edits(cli, capsys, inbox, data_root, monkeypatch):
+    pdf = build_digital_pdf(inbox / "form.pdf")
+    _planner(monkeypatch, [TEXT_OP])
+    _, out, _ = _run(cli, capsys, "pdf-edit", "--file", str(pdf),
+                     "--instruction", "a", "--member", "jim")
+    sid = _sid(out)
+    _planner(monkeypatch, [])
+    code, out2, _ = _run(cli, capsys, "pdf-edit", "--session", sid,
+                         "--instruction", "把名字删掉", "--member", "jim")
+    assert code == 0
+    assert "ZHANGSAN" not in page_texts(data_root / out2.splitlines()[0])[0]
+    assert pdf_plan.load("jim", sid)["ops"] == []
+
+
+def test_all_ops_invalid_keeps_prior_edits(cli, capsys, inbox, monkeypatch):
+    pdf = build_digital_pdf(inbox / "form.pdf")
+    _planner(monkeypatch, [TEXT_OP])
+    _, out, _ = _run(cli, capsys, "pdf-edit", "--file", str(pdf),
+                     "--instruction", "a", "--member", "jim")
+    sid = _sid(out)
+    _planner(monkeypatch, [{"op": "bogus"}])
+    code, out2, _ = _run(cli, capsys, "pdf-edit", "--session", sid,
+                         "--instruction", "b", "--member", "jim")
+    assert code == 1 and "没有可执行的编辑" in out2
+    assert pdf_plan.load("jim", sid)["ops"][0]["text"] == "ZHANGSAN"
+
+
 def test_planner_failure_is_reported(cli, capsys, inbox, monkeypatch):
     pdf = build_digital_pdf(inbox / "form.pdf")
 
