@@ -16,11 +16,11 @@ def test_load_llm_overrides_validates_values(tmp_path, monkeypatch):
         "u2": {"model": "gpt-99", "effort": "ludicrous"},   # 非法值整条丢弃
         "u3": "not-a-dict",
         "u4": {"model": "deepseek-flash"},                # 登记模型单键也合法
-        "u5": {"model": "CLAUDE", "effort": 3},           # 别名不分大小写 → 规范名
+        "u5": {"model": "GLM", "effort": 3},           # 别名不分大小写 → 规范名
     }), encoding="utf-8")
     assert agent_core._load_llm_overrides() == {
         "u1": {"effort": "high"}, "u4": {"model": "deepseek-flash"},
-        "u5": {"model": "claude-opus-5"}}
+        "u5": {"model": "glm-5.3-flash"}}
 
 
 def test_load_llm_overrides_corrupt_json(tmp_path, monkeypatch):
@@ -41,7 +41,7 @@ def _agent(tmp_path, monkeypatch):
     """干净环境下的 Agent：数据根隔离，LLM 相关环境变量清空。"""
     monkeypatch.setenv("DATA_ROOT", str(tmp_path))
     for v in ("LLM_MODEL", "LLM_EFFORT", "DEEPSEEK_MODEL", "DEEPSEEK_REASONING_EFFORT",
-              "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"):
+              "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "ZHIPU_API_KEY"):
         monkeypatch.delenv(v, raising=False)
     return agent_core.Agent(idle_clear_hours=0)
 
@@ -56,8 +56,8 @@ def test_llm_settings_env_beats_default(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")   # 未登记名字原样直发
     monkeypatch.setenv("LLM_EFFORT", "max")
     assert a._llm_settings("u1") == ("deepseek-v4-pro", "max")
-    monkeypatch.setenv("LLM_MODEL", "Claude")            # 别名 → 规范名
-    assert a._llm_settings("u1")[0] == "claude-opus-5"
+    monkeypatch.setenv("LLM_MODEL", "Glm")               # 别名 → 规范名
+    assert a._llm_settings("u1")[0] == "glm-5.3-flash"
 
 
 def test_llm_settings_legacy_env_names(tmp_path, monkeypatch):
@@ -94,19 +94,19 @@ def test_model_command_query_lists_models(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
     r = a.handle("/model", user="u1", member="Jim")
     assert "当前模型：deepseek-flash（默认）" in r
-    assert "claude-opus-5（claude/opus），未配置 ANTHROPIC_API_KEY" in r
+    assert "glm-5.3-flash（glm/zhipu），未配置 ZHIPU_API_KEY" in r
     assert "用法" in a.handle("/model pro", user="u1", member="Jim")
     assert a._llm_overrides == {}
 
 
 def test_model_command_switch_alias_reset(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    r = a.handle("/model Claude", user="u1", member="Jim")
-    assert "✅" in r and "claude-opus-5" in r
-    assert a._llm_settings("u1")[0] == "claude-opus-5"
+    monkeypatch.setenv("ZHIPU_API_KEY", "k")
+    r = a.handle("/model glm", user="u1", member="Jim")
+    assert "✅" in r and "glm-5.3-flash" in r
+    assert a._llm_settings("u1")[0] == "glm-5.3-flash"
     assert a._llm_settings("u2")[0] == "deepseek-flash"   # 不影响其他用户
-    assert "claude-opus-5（你的个人覆盖）" in a.handle("/model", user="u1", member="Jim")
+    assert "glm-5.3-flash（你的个人覆盖）" in a.handle("/model", user="u1", member="Jim")
     a.handle("/model reset", user="u1", member="Jim")
     assert a._llm_settings("u1")[0] == "deepseek-flash"
     assert agent_core._load_llm_overrides() == {}
@@ -114,29 +114,29 @@ def test_model_command_switch_alias_reset(tmp_path, monkeypatch):
 
 def test_model_command_refuses_unconfigured_key(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
-    r = a.handle("/model claude", user="u1", member="Jim")
-    assert r == "模型 claude-opus-5 未配置 ANTHROPIC_API_KEY，无法切换。"
+    r = a.handle("/model glm", user="u1", member="Jim")
+    assert r == "模型 glm-5.3-flash 未配置 ZHIPU_API_KEY，无法切换。"
     assert a._llm_overrides == {}
 
 
 def test_handle_reports_missing_key_of_selected_model(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    a.handle("/model opus", user="u1", member="Jim")
-    monkeypatch.delenv("ANTHROPIC_API_KEY")
-    assert a.handle("hi", user="u1", member="Jim") == "未配置 ANTHROPIC_API_KEY。"
+    monkeypatch.setenv("ZHIPU_API_KEY", "k")
+    a.handle("/model glm", user="u1", member="Jim")
+    monkeypatch.delenv("ZHIPU_API_KEY")
+    assert a.handle("hi", user="u1", member="Jim") == "未配置 ZHIPU_API_KEY。"
 
 
 def test_call_llm_routes_by_user_model(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
-    a.handle("/model claude", user="u1", member="Jim")
+    monkeypatch.setenv("ZHIPU_API_KEY", "k")
+    a.handle("/model glm", user="u1", member="Jim")
     seen = {}
     monkeypatch.setattr(agent_core._llm, "chat",
                         lambda msgs, tools, model, effort: seen.update(model=model, effort=effort))
     a._call_llm([], user="u1")
-    assert seen == {"model": "claude-opus-5", "effort": "high"}
+    assert seen == {"model": "glm-5.3-flash", "effort": "high"}
 
 
 def test_effort_command_set_show_reset(tmp_path, monkeypatch):

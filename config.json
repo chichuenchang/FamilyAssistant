@@ -59,13 +59,6 @@
         "effort_map": {"medium": "high"},
         "stream_usage": false,
         "aliases": ["glm", "zhipu"]
-      },
-      "claude-opus-5": {
-        "provider": "anthropic",
-        "api_key_env": "ANTHROPIC_API_KEY",
-        "base_url": "https://api.anthropic.com",
-        "base_url_env": "ANTHROPIC_BASE_URL",
-        "aliases": ["claude", "opus"]
       }
     }
   },

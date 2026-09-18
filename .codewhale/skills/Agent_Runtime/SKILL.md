@@ -178,7 +178,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 |------|------|------|
 | `DEEPSEEK_API_KEY` | 默认模型 `deepseek-flash` 的密钥（所有频道共用） | ✅ |
 | `DEEPSEEK_BASE_URL` | DeepSeek 自定义端点（默认官方） | ❌ |
-| `ANTHROPIC_API_KEY` | `claude-opus-5`（config.json `llm.models` 示例条目）；其他模型的密钥变量按各自 `api_key_env` | 切到该模型时 |
+| `ZHIPU_API_KEY` | `glm-5.3-flash`（config.json `llm.models` 条目，DeepSeek 无响应时自动顶替）；其他模型的密钥变量按各自 `api_key_env` | 切到该模型/顶替时 |
 | `LLM_MODEL` | 启动默认模型（模型表键或别名；未登记名字按 DeepSeek 原始 id 直发），默认 `deepseek-flash` | ❌ |
 | `LLM_EFFORT` | 推理档启动默认，默认 `high`；可设 `max` 升档 | ❌ |
 | `TELEGRAM_BOT_TOKEN` | Telegram 频道 | Telegram 时必需 |

@@ -351,10 +351,10 @@ def test_spec_fallback_honours_config_override_of_default():
 
 
 def test_missing_key_and_ready_note(monkeypatch):
-    for v in ("LLM_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"):
+    for v in ("LLM_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "ZHIPU_API_KEY"):
         monkeypatch.delenv(v, raising=False)
     assert llm_client.missing_key("deepseek-flash") == "DEEPSEEK_API_KEY"
-    assert llm_client.missing_key("claude-opus-5") == "ANTHROPIC_API_KEY"
+    assert llm_client.missing_key("glm-5.3-flash") == "ZHIPU_API_KEY"
     assert llm_client.ready_note() == "LLM: deepseek-flash 未配置 — 设置 DEEPSEEK_API_KEY"
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
     assert llm_client.missing_key("deepseek-flash") == ""
@@ -362,17 +362,21 @@ def test_missing_key_and_ready_note(monkeypatch):
 
 
 def test_chat_dispatches_by_provider(monkeypatch):
-    seen = {}
-    monkeypatch.setitem(prov.PROVIDERS, "anthropic",
-                        lambda spec, m, t, e, **o: seen.update(spec=spec, e=e, o=o) or {"content": "c"})
-    out = llm_client.chat([{"role": "user", "content": "x"}], None, "claude-opus-5", "low", timeout=5)
-    assert out == {"content": "c"}
-    assert seen["spec"]["api_model"] == "claude-opus-5" and seen["e"] == "low" and seen["o"] == {"timeout": 5}
+    llm_client.load_models({"llm": {"models": {"claude-opus-5": CLAUDE}}})   # 注入 anthropic 条目
+    try:
+        seen = {}
+        monkeypatch.setitem(prov.PROVIDERS, "anthropic",
+                            lambda spec, m, t, e, **o: seen.update(spec=spec, e=e, o=o) or {"content": "c"})
+        out = llm_client.chat([{"role": "user", "content": "x"}], None, "claude-opus-5", "low", timeout=5)
+        assert out == {"content": "c"}
+        assert seen["spec"]["api_model"] == "claude-opus-5" and seen["e"] == "low" and seen["o"] == {"timeout": 5}
+    finally:
+        llm_client.load_models()   # 恢复真实 config.json
 
 
-def test_config_ships_claude_entry():
-    assert llm_client.MODELS["claude-opus-5"]["provider"] == "anthropic"
-    assert llm_client.canon_model("opus") == "claude-opus-5"
+def test_config_ships_no_claude_entry():
+    assert "claude-opus-5" not in llm_client.MODELS
+    assert llm_client.canon_model("opus") is None
 
 
 def test_config_ships_glm_entry_as_deepseek_fallback():
