@@ -108,12 +108,13 @@ class Transport:
     def on_text(self, target, user, member: str, text: str, quoted=None) -> None:
         """攒着的来件随这条文字一起交 Agent（文字即指令）；没有来件走普通对话。
         命令（/clear、/model…）绕开来件照常执行：/clear 连来件一起清，其余命令来件继续等。
-        来件与文字是否相关由 LLM 判（无关即作废）；交出去就不再攒。"""
+        来件与文字是否相关由 LLM 判（无关即作废）；交出去就不再攒，处理出错则放回。"""
         self.tick()
+        key = str(user)
         with self._pending_lock:
             if is_clear_command(text):
-                self._pending.pop(str(user), None)
-            media = [] if is_command(text) else self._pending.pop(str(user), [])
+                self._pending.pop(key, None)
+            media = [] if is_command(text) else self._pending.pop(key, [])
         log.debug("文字 from %s(%s) 引用=%s 来件=%d: %s", user, member, quoted or "-",
                   len(media), text)
         try:
@@ -127,6 +128,9 @@ class Transport:
             self.deliver(target, reply)
         except Exception as e:
             log.exception("文字处理出错")
+            if media:   # 放回，用户重发指令即可，不必重传
+                with self._pending_lock:
+                    self._pending[key] = media + self._pending.get(key, [])
             self._safe_send(target, f"处理出错: {e}")
 
     def on_media(self, target, user, member: str, path: Path | str | None) -> None:

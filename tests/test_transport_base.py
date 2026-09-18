@@ -39,6 +39,8 @@ class FakeAgent:
     def handle_media(self, paths, text, user="", member="", said=None):
         self.said = said
         self.seen.append(("media", paths, text, user, member))
+        if self.boom:
+            raise RuntimeError("ocr down")
         return self.reply
 
 
@@ -132,6 +134,18 @@ def test_on_media_silent_until_text_then_batched(monkeypatch, tmp_path):
     assert ("text", "tgt", "收到") in t.calls
     t.on_text("tgt", 1, "Alex", "再问")                # 来件已用掉 → 普通对话
     assert agent.seen[-1] == ("text", "再问", "1", "Alex")
+
+
+def test_failed_media_turn_keeps_media(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
+    agent = FakeAgent(boom=True)
+    t = FakeTransport(agent=agent)
+    t.on_media("tgt", 1, "Alex", tmp_path / "a.jpg")
+    t.on_text("tgt", 1, "Alex", "记账")
+    assert t.calls[0][2].startswith("处理出错")
+    agent.boom = False
+    t.on_text("tgt", 1, "Alex", "记账")                 # 重发指令，来件还在
+    assert agent.seen[-1][:2] == ("media", [str(tmp_path / "a.jpg")])
 
 
 def test_commands_bypass_pending_media(monkeypatch, tmp_path):
