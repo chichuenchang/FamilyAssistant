@@ -187,6 +187,15 @@ def test_spec_unknown_name_falls_back_to_deepseek_raw_id():
     assert s["api_key_env"] == "DEEPSEEK_API_KEY"
 
 
+def test_spec_fallback_honours_config_override_of_default():
+    llm_client.load_models({"llm": {"models": {"deepseek-flash": {"base_url": "http://proxy:8080"}}}})
+    try:
+        s = llm_client.spec("deepseek-v4-pro")
+        assert s["base_url"] == "http://proxy:8080" and s["api_model"] == "deepseek-v4-pro"
+    finally:
+        llm_client.load_models()
+
+
 def test_missing_key_and_ready_note(monkeypatch):
     for v in ("LLM_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(v, raising=False)

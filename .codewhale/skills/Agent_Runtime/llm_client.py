@@ -78,7 +78,7 @@ def canon_model(name) -> str | None:
 
 def spec(model: str) -> dict:
     """模型表条目；未登记的名字按 DeepSeek 原始模型 id 直发（LLM_MODEL=deepseek-v4-pro 之类）。"""
-    return MODELS.get(model) or {**_BUILTIN_MODELS[DEFAULT_MODEL], "api_model": model}
+    return MODELS.get(model) or {**MODELS[DEFAULT_MODEL], "api_model": model}
 
 
 def missing_key(model: str) -> str:
