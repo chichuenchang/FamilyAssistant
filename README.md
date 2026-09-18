@@ -301,4 +301,4 @@ FamilyAssistant/
 
 ## 技术栈
 
-Python 3.10+ · SQLite · DeepSeek V4 Flash · [weixin-ilink](https://pypi.org/project/weixin-ilink/)
+Python 3.10+ · SQLite · DeepSeek V4.1 Flash · [weixin-ilink](https://pypi.org/project/weixin-ilink/)

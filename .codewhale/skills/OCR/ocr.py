@@ -240,13 +240,13 @@ def ocr_extract(image_path: str) -> Optional[dict]:
     import urllib.request
     base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     body = json.dumps({
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "messages": [
             {"role": "system", "content": "你是逐笔交易提取器，从票据/账单里抽取每一笔消费收支。只输出JSON。"},
             {"role": "user", "content": prompt},
         ],
         "temperature": 0,
-        # deepseek-v4-flash 是推理模型，reasoning 占用 completion 预算。
+        # deepseek-flash 是推理模型，reasoning 占用 completion 预算。
         # 单张票据约 ~480 token；多页账单逐笔提取（实测 22 笔需 ~5300）。
         # DeepSeek 价格低，预算给足，避免逐笔交易被截断或 content 为空。
         "max_tokens": 10000,

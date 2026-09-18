@@ -19,10 +19,10 @@ import paths as _paths
 
 _log = logging.getLogger("familyassist.agent")
 
-MODELS = ("deepseek-v4-flash", "deepseek-v4-pro")
-MODEL_ALIASES = {"flash": "deepseek-v4-flash", "pro": "deepseek-v4-pro"}
+MODELS = ("deepseek-flash", "deepseek-v4-pro")
+MODEL_ALIASES = {"flash": "deepseek-flash", "pro": "deepseek-v4-pro"}
 EFFORTS = ("low", "medium", "high", "max")
-DEFAULT_MODEL = "deepseek-v4-flash"
+DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_EFFORT = "max"
 
 _ENV = {"model": "DEEPSEEK_MODEL", "effort": "DEEPSEEK_REASONING_EFFORT"}

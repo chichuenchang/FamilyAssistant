@@ -15,11 +15,11 @@ def test_load_llm_overrides_validates_values(tmp_path, monkeypatch):
         "u1": {"model": "deepseek-v4-pro", "effort": "high"},
         "u2": {"model": "gpt-99", "effort": "ludicrous"},   # 非法值整条丢弃
         "u3": "not-a-dict",
-        "u4": {"model": "deepseek-v4-flash"},                # 单键也合法
+        "u4": {"model": "deepseek-flash"},                # 单键也合法
     }), encoding="utf-8")
     assert agent_core._load_llm_overrides() == {
         "u1": {"model": "deepseek-v4-pro", "effort": "high"},
-        "u4": {"model": "deepseek-v4-flash"},
+        "u4": {"model": "deepseek-flash"},
     }
 
 
@@ -47,7 +47,7 @@ def _agent(tmp_path, monkeypatch):
 
 def test_llm_settings_defaults(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
-    assert a._llm_settings("u1") == ("deepseek-v4-flash", "max")
+    assert a._llm_settings("u1") == ("deepseek-flash", "max")
 
 
 def test_llm_settings_env_beats_default(tmp_path, monkeypatch):
@@ -59,10 +59,10 @@ def test_llm_settings_env_beats_default(tmp_path, monkeypatch):
 
 def test_llm_settings_override_beats_env(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
-    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-flash")
     a._llm_overrides["u1"] = {"model": "deepseek-v4-pro", "effort": "low"}
     assert a._llm_settings("u1") == ("deepseek-v4-pro", "low")
-    assert a._llm_settings("u2") == ("deepseek-v4-flash", "max")  # 不影响其他用户
+    assert a._llm_settings("u2") == ("deepseek-flash", "max")  # 不影响其他用户
 
 
 def test_handle_passes_user_to_call_llm(tmp_path, monkeypatch):
@@ -86,7 +86,7 @@ def test_model_command_set_show_reset(tmp_path, monkeypatch):
     r = a.handle("/model", user="u1", member="Jim")
     assert "deepseek-v4-pro" in r and "覆盖" in r
     r = a.handle("/model reset", user="u1", member="Jim")
-    assert "✅" in r and a._llm_settings("u1") == ("deepseek-v4-flash", "max")
+    assert "✅" in r and a._llm_settings("u1") == ("deepseek-flash", "max")
 
 
 def test_effort_command_set_show_reset(tmp_path, monkeypatch):
@@ -103,13 +103,13 @@ def test_commands_accept_full_id_and_alias(tmp_path, monkeypatch):
     a.handle("/model deepseek-v4-pro", user="u1", member="Jim")
     assert a._llm_settings("u1")[0] == "deepseek-v4-pro"
     a.handle("/model flash", user="u1", member="Jim")
-    assert a._llm_settings("u1")[0] == "deepseek-v4-flash"
+    assert a._llm_settings("u1")[0] == "deepseek-flash"
 
 
 def test_command_invalid_arg_shows_usage_no_state_change(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
     r = a.handle("/model turbo", user="u1", member="Jim")
-    assert "用法" in r and a._llm_settings("u1")[0] == "deepseek-v4-flash"
+    assert "用法" in r and a._llm_settings("u1")[0] == "deepseek-flash"
     r = a.handle("/effort xhigh", user="u1", member="Jim")
     assert "用法" in r and a._llm_settings("u1")[1] == "max"
 
@@ -164,7 +164,7 @@ def test_agent_knows_own_model_and_effort(tmp_path, monkeypatch):
     a._call_llm = lambda msgs, user="": seen.append(msgs) or {"content": "好"}
     a.handle("你好", user="u1", member="Jim")
     sysmsg = seen[0][0]["content"]
-    assert "deepseek-v4-flash" in sysmsg and "运行，推理档 max" in sysmsg
+    assert "deepseek-flash" in sysmsg and "运行，推理档 max" in sysmsg
     a.handle("/model pro", user="u1", member="Jim")
     a.handle("/effort low", user="u1", member="Jim")
     a.handle("你现在用什么模型", user="u1", member="Jim")
@@ -175,7 +175,7 @@ def test_agent_knows_own_model_and_effort(tmp_path, monkeypatch):
 def test_command_extra_args_shows_usage(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
     r = a.handle("/model pro 怎么样", user="u1", member="Jim")
-    assert "用法" in r and a._llm_settings("u1")[0] == "deepseek-v4-flash"
+    assert "用法" in r and a._llm_settings("u1")[0] == "deepseek-flash"
 
 
 def test_command_case_insensitive_and_models_fallthrough(tmp_path, monkeypatch):
