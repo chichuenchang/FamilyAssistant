@@ -84,6 +84,20 @@ def test_sse_merges_tool_call_deltas_by_index(capture):
     assert out["content"] == "" and out["_finish"] == "tool_calls" and out["_usage"] == {}
 
 
+def test_sse_tool_call_deltas_without_index(capture):
+    """无 index 变体：带新 id 的块开新槽，无 id / 同 id 的块续上一槽，不得全塌进槽 0。"""
+    capture["reply"] = sse(
+        delta(tool_calls=[{"id": "c1", "function": {"name": "add", "arguments": '{"a"'}}]),
+        delta(tool_calls=[{"function": {"arguments": ": 1}"}}]),
+        delta(tool_calls=[{"id": "c1", "function": {"arguments": ""}}]),
+        delta(tool_calls=[{"id": "c2", "function": {"name": "list", "arguments": '{"b": 2}'}}]),
+        delta(finish="tool_calls"))
+    out = prov.openai_compat(DS, [], [{"type": "function"}], "high")
+    assert out["tool_calls"] == [
+        {"id": "c1", "type": "function", "function": {"name": "add", "arguments": '{"a": 1}'}},
+        {"id": "c2", "type": "function", "function": {"name": "list", "arguments": '{"b": 2}'}}]
+
+
 def test_sse_keeps_reasoning_skips_comment_lines(capture):
     """reasoning_content 拼起来留在消息里（同轮工具调用须回传 DeepSeek）；无则不带键。"""
     capture["reply"] = sse(": keep-alive", {"choices": [{"delta": {"reasoning_content": "思"}}]},

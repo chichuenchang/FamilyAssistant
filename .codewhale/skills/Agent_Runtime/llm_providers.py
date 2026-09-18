@@ -91,7 +91,12 @@ def _merge_sse(resp) -> dict:
             if isinstance(delta.get("reasoning_content"), str):
                 reasoning.append(delta["reasoning_content"])
             for tc in delta.get("tool_calls") or []:
-                cur = calls.setdefault(tc.get("index") or 0, {"id": "", "name": "", "args": []})
+                idx = tc.get("index")
+                if idx is None:   # 变体（Ollama / 部分代理）不带 index：新 id 开新槽，否则续上一槽
+                    last = max(calls) if calls else -1
+                    same = calls and (not tc.get("id") or tc["id"] == calls[last]["id"])
+                    idx = last if same else last + 1
+                cur = calls.setdefault(idx, {"id": "", "name": "", "args": []})
                 fn = tc.get("function") or {}
                 cur["id"] = tc.get("id") or cur["id"]
                 cur["name"] = fn.get("name") or cur["name"]
