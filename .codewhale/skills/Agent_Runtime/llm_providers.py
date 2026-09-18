@@ -138,7 +138,7 @@ def _to_anthropic(messages) -> tuple[str, list[dict]]:
     return "\n\n".join(s for s in system if s), out
 
 
-def _to_openai_tool(t: dict) -> dict:
+def _to_anthropic_tool(t: dict) -> dict:
     fn = t.get("function") or t
     return {"name": fn["name"], "description": fn.get("description", ""),
             "input_schema": fn.get("parameters") or {"type": "object", "properties": {}}}
@@ -155,7 +155,7 @@ def anthropic(spec: dict, messages, tools, effort: str, *,
     if spec.get("effort", True):
         payload["output_config"] = {"effort": effort}
     if tools:
-        payload["tools"] = [_to_openai_tool(t) for t in tools]
+        payload["tools"] = [_to_anthropic_tool(t) for t in tools]
     resp = _post(f"{_base_url(spec)}/v1/messages",
                  {"x-api-key": _auth(spec), "anthropic-version": _ANTHROPIC_VERSION},
                  payload, timeout)
