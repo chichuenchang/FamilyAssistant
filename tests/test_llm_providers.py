@@ -161,6 +161,8 @@ def test_http_error_body_logged_returns_none(capture, caplog):
     sse({"error": {"message": "overloaded"}}),        # 流里的错误块
     sse(),                                            # 建连后空关：无 finish 无内容
     b"",                                              # 连 [DONE] 都没有
+    sse(delta("半截")),                                # 有内容但无 finish_reason 就 [DONE]：半截
+    b"data: " + json.dumps(delta("half")).encode() + b"\n\n",   # 半截后 EOF
     sse("data: {not json"),                           # 坏行
     sse({"choices": [{"delta": "text"}]}),            # delta 非 dict
     sse(delta("x"), {"choices": "nope"}, delta(finish="stop")),

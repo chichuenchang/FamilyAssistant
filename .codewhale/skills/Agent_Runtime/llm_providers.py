@@ -102,8 +102,8 @@ def _merge_sse(resp) -> dict:
                 cur["name"] = fn.get("name") or cur["name"]
                 cur["args"].append(fn.get("arguments") or "")
             finish = choice.get("finish_reason") or finish
-    if finish is None and not content and not calls:
-        raise RuntimeError("流式无内容即结束")   # 连接建立后服务端空关：视同无响应
+    if finish is None:   # 空关 / 代理半途正常收尾：半截内容不能当完整回复发出去，视同无响应
+        raise RuntimeError(f"流未收到 finish_reason 即结束（已收 {sum(map(len, content))} 字）")
     msg: dict = {"role": "assistant", "content": "".join(content)}
     if calls:
         msg["tool_calls"] = [{"id": c["id"], "type": "function",
