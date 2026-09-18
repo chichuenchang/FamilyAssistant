@@ -296,6 +296,12 @@ def tick(push_text, channel: str, *, now: datetime | None = None, cfg: dict | No
                 continue
             _running.add(key)
             _last_try[key] = time.monotonic()
-        (spawn or _spawn)(deliver, push_text, channel, member, ids, now.date(), cfg)
+        try:
+            (spawn or _spawn)(deliver, push_text, channel, member, ids, now.date(), cfg)
+        except Exception:
+            _log.exception("早报线程启动失败: %s", member)
+            with _lock:
+                _running.discard(key)             # 否则 deliver 的 finally 永不跑，卡到重启
+            continue
         started.append(member)
     return started

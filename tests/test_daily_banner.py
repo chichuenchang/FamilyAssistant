@@ -122,6 +122,12 @@ class TestTick:
                            spawn=lambda f, *a: started.append(a)) == []
         assert len(started) == 1
 
+    def test_spawn_failure_releases_guard(self, env):
+        def boom(f, *a):
+            raise RuntimeError("can't start new thread")
+        assert banner.tick(Sent(), "telegram", now=AT_0830, cfg=CFG, spawn=boom) == []
+        assert banner._running == set()
+
     def test_build_exception_releases_guard(self, env, monkeypatch):
         def bad(member, day, cfg):
             raise RuntimeError("x")
