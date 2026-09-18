@@ -10,7 +10,7 @@
               "_usage"  {"prompt_tokens", "completion_tokens"}
               "_finish" stop | tool_calls | length | 其他原样
               "_blocks" （仅 anthropic）原始 content 块，同一轮回传时原样重放
-              失败返回 None。
+              失败返回 None；请求本身被拒（RequestRejected，见下）则抛出。
     以 "_" 开头的键是本进程私有，发请求前一律剥掉。
     开头的 system 消息可多条，静态在前、易变（时间戳/成员/状态）放最后一条：
     openai_compat 合并成一条发；anthropic 逐条成 block，倒数第二条打 cache_control
@@ -47,6 +47,14 @@ DEFAULT_TIMEOUT = 120
 ANTHROPIC_TIMEOUT = 600
 
 
+class RequestRejected(Exception):
+    """4xx 请求本身有错（密钥错 / 上下文超长 / 工具 schema 非法）：换模型重发结果一样，
+    llm_client 不顶替，免得错配被 fallback 无限期掩盖。402 余额 / 408 / 429 限流例外：算无响应。"""
+
+
+_UNRESPONSIVE_4XX = {402, 408, 429}
+
+
 def _post(url: str, headers: dict, payload: dict, timeout: int,
           silence: int | None = None) -> dict | None:
     """payload["stream"] 为真时按 SSE 收并合并成非流式形态；timeout / silence 见模块 docstring。"""
@@ -60,6 +68,8 @@ def _post(url: str, headers: dict, payload: dict, timeout: int,
         detail = e.read().decode("utf-8", "replace")[:500]
         print(f"[agent] LLM 调用失败: {e} {detail}", file=sys.stderr)
         _log.error("LLM HTTP %s %s: %s", e.code, url, detail)
+        if 400 <= e.code < 500 and e.code not in _UNRESPONSIVE_4XX:
+            raise RequestRejected(f"HTTP {e.code}: {detail[:200]}") from e
     except Exception as e:
         print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
         _log.exception("LLM 调用失败")

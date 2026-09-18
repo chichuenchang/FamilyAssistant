@@ -245,15 +245,19 @@ def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
     """按模型表分发到提供商。返回 OpenAI 风格 message dict（可能含 tool_calls）；失败 None。
     附私有键 "_usage"/"_finish"（及 anthropic 的 "_blocks"，顶替时 "_fallback"=顶替模型键）：
     再次发给 API 前调用方须 pop 掉 _usage/_finish/_fallback；_blocks 留着同轮重放。
-    opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次。"""
+    opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次；
+    请求本身被拒（4xx，见 llm_providers.RequestRejected）直接 None，不顶替。"""
     def call(name):
         s = spec(name)
         return _providers.PROVIDERS[s["provider"]](s, messages, tools, effort, **opts)
 
-    out = call(model)
-    if out is None and (fb := fallback_of(model)):
-        _log.warning("模型 %s 无响应，改用 %s", model, fb)   # logger 已挂 stderr handler，不再 print
-        out = call(fb)
-        if out is not None:
-            out["_fallback"] = fb
-    return out
+    try:
+        out = call(model)
+        if out is None and (fb := fallback_of(model)):
+            _log.warning("模型 %s 无响应，改用 %s", model, fb)   # logger 已挂 stderr handler，不再 print
+            out = call(fb)
+            if out is not None:
+                out["_fallback"] = fb
+        return out
+    except _providers.RequestRejected:
+        return None

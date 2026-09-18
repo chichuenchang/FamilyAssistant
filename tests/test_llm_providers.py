@@ -158,10 +158,19 @@ def test_openai_compat_base_url_env_and_effort_off(capture, monkeypatch):
     assert "reasoning_effort" not in capture["body"] and "tools" not in capture["body"]
 
 
-def test_http_error_body_logged_returns_none(capture, caplog):
+def test_http_4xx_logged_and_rejected(capture, caplog):
+    """401/400 = 请求本身有错：记日志后抛 RequestRejected（llm_client 据此不顶替）。"""
     capture["reply"] = urllib.error.HTTPError("u", 401, "Unauthorized", {}, io.BytesIO(b'{"error":"bad key"}'))
-    assert prov.openai_compat(DS, [], None, "high") is None
+    with pytest.raises(prov.RequestRejected):
+        prov.openai_compat(DS, [], None, "high")
     assert "bad key" in caplog.text
+
+
+@pytest.mark.parametrize("code", [402, 408, 429, 500, 503])
+def test_http_unresponsive_codes_return_none(capture, code):
+    """余额 / 超时 / 限流 / 5xx 算无响应：None，交给 fallback。"""
+    capture["reply"] = urllib.error.HTTPError("u", code, "x", {}, io.BytesIO(b"{}"))
+    assert prov.openai_compat(DS, [], None, "high") is None
 
 
 @pytest.mark.parametrize("reply", [
@@ -390,6 +399,8 @@ def two_models(monkeypatch):
 
     def primary(spec, *a, **o):
         calls["m"] += 1
+        if isinstance(calls["m_reply"], Exception):
+            raise calls["m_reply"]
         return calls["m_reply"]
 
     def backup(spec, m, t, e, **o):
@@ -408,6 +419,13 @@ def test_chat_falls_back_when_primary_returns_none(two_models, caplog):
     assert two_models["fb"] == [("fb", [{"role": "user", "content": "q"}], [{"t": 1}], "low",
                                  {"timeout": 5})]
     assert "改用 fb" in caplog.text
+
+
+def test_chat_no_fallback_when_request_rejected(two_models):
+    """主模型 4xx 拒收（密钥错 / 上下文超长）：None，不重发给备模型。"""
+    two_models["m_reply"] = prov.RequestRejected("HTTP 401")
+    assert llm_client.chat([], None, "m", "low") is None
+    assert two_models["fb"] == []
 
 
 def test_chat_no_fallback_when_primary_ok(two_models):
