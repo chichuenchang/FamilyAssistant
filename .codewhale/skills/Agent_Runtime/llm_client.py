@@ -147,7 +147,8 @@ def apply_command(overrides: dict, user: str, text: str, persist) -> str | None:
 
 def chat(messages, tools, model: str, effort: str) -> dict | None:
     """DeepSeek chat completions（native function calling）。
-    返回 choices[0].message 整个 dict（可能含 tool_calls）；失败返回 None。"""
+    返回 choices[0].message 整个 dict（可能含 tool_calls）；失败返回 None。
+    message 附私有键 "_usage"（API usage 原样）：再次发给 API 前调用方须 pop 掉。"""
     import urllib.request
     api_key = os.environ.get("DEEPSEEK_API_KEY", "")
     base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -177,7 +178,7 @@ def chat(messages, tools, model: str, effort: str) -> dict | None:
                    len(choice["message"].get("tool_calls") or []))
         if choice.get("finish_reason") == "length":
             _log.warning("LLM 输出被 max_tokens 截断（推理模型预算不足的信号）")
-        return choice["message"]
+        return {**choice["message"], "_usage": resp.get("usage") or {}}
     except Exception as e:
         print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
         _log.exception("LLM 调用失败")

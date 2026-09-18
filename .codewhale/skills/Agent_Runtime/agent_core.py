@@ -387,6 +387,7 @@ class Agent:
         reply = ""
         tool_log = ""  # 回复里展示的工具调用摘要（按名计数）
         tool_counts: dict[str, int] = {}
+        tokens = {"in": 0, "out": 0}      # 本轮所有 LLM 调用 usage 累计，随工具摘要展示
         produced_images: list[str] = []  # 图片工具成功产出的 data 相对路径
         produced_docs: list[str] = []     # 文档工具成功产出的 data 相对路径
         shown: dict[str, str] = {}        # SHOW_TOOLS 成功原文（每工具留最后一次），必达用户
@@ -396,6 +397,9 @@ class Agent:
             message = self._call_llm(msgs, user=user)
             if message is None:
                 return "\n\n".join(["抱歉，暂时出错了。", *shown.values()])
+            usage = message.pop("_usage", None) or {}   # 私有键，不得回传 API
+            tokens["in"] += usage.get("prompt_tokens") or 0
+            tokens["out"] += usage.get("completion_tokens") or 0
 
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
@@ -441,11 +445,16 @@ class Agent:
                              "content": _apply_fence(
                                  name, _budget.clip_tool_result(result))})
 
+        badge = []
         if tool_counts:
-            tool_log = "⚙️ " + ", ".join(
-                f"{n}×{c}" if c > 1 else n for n, c in tool_counts.items()) + "\n"
+            badge.append("⚙️ " + ", ".join(
+                f"{n}×{c}" if c > 1 else n for n, c in tool_counts.items()))
+        if tokens["in"] or tokens["out"]:
+            badge.append(f"🪙 {tokens['in']:,} in / {tokens['out']:,} out")
+        if badge:
+            tool_log = " · ".join(badge) + "\n"
         if not reply:
-            reply = "（工具已执行，但生成回复失败）" if tool_log else "抱歉，暂时出错了。"
+            reply = "（工具已执行，但生成回复失败）" if tool_counts else "抱歉，暂时出错了。"
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         turn.append({"role": "assistant", "content": reply})
         self._save_history(user, turn)

@@ -227,3 +227,18 @@ def test_chat_omits_tools_key_when_empty(monkeypatch):
     assert "tools" not in sent
     llm_client.chat([{"role": "user", "content": "hi"}], [{"type": "function"}], "m", "low")
     assert sent["tools"] == [{"type": "function"}]
+
+
+def test_reply_badge_sums_tokens_and_strips_usage(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
+    replies = iter([
+        {"content": "", "tool_calls": [{"id": "1", "function": {"name": "nope", "arguments": "{}"}}],
+         "_usage": {"prompt_tokens": 1000, "completion_tokens": 20}},
+        {"content": "好", "_usage": {"prompt_tokens": 1200, "completion_tokens": 5}},
+    ])
+    seen = []
+    a._call_llm = lambda msgs, user="": seen.append([dict(m) for m in msgs]) or next(replies)
+    r = a.handle("hi", user="u1", member="Jim")
+    assert r.splitlines()[0] == "⚙️ nope · 🪙 2,200 in / 25 out"
+    assert all("_usage" not in m for m in seen[1])   # 私有键不回传 API
