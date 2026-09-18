@@ -101,3 +101,14 @@ def test_describe_with_and_without_coords(tmp_path):
     assert '字段 name="married" | 标签: Married | checkbox[/Yes]' in full
     plain = pdf_layout.describe(layout, coords=False)
     assert '字段 name="name" | 标签: Full name | text' in plain and "x=" not in plain
+
+
+def test_scanned_form_with_fields_still_ocrs(tmp_path, monkeypatch):
+    import ocr
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image_words",
+                        lambda p: [{"text": "姓名", "x": 10, "y": 20, "w": 60, "h": 24}])
+    monkeypatch.setattr(pdf_layout, "acro_fields", lambda r, g: [
+        {"name": "n", "label": "", "type": "text", "options": [], "widgets": []}])
+    layout = pdf_layout.build(build_blank_pdf(tmp_path / "s.pdf"))
+    assert layout["kind"] == "acroform" and layout["lines"]["0"][0]["text"] == "姓名"

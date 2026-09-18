@@ -202,7 +202,7 @@ def build(pdf_path) -> dict:
     else:
         notes.append("缺 pypdfium2：取不到版面文字坐标（表单字段与页级操作仍可用）。"
                      "pip install pypdfium2")
-    if textless and not fields:
+    if textless:                          # 扫描表单带几个字段也要 OCR：字段只给自身框
         import ocr
         if ocr.is_available():
             got, failed = _ocr_lines(pdf_path, textless)
