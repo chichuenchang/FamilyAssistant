@@ -166,6 +166,18 @@ def test_stale_media_expires_with_idle_clear(monkeypatch, tmp_path):
     assert agent.seen[-1] == ("text", "记一笔 午餐45块", "1", "Alex")
 
 
+def test_explicit_media_leaves_held_alone(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
+    agent = FakeAgent()
+    t = FakeTransport(agent=agent)
+    t.on_media("tgt", 1, "Alex", tmp_path / "old.jpg")
+    t.on_text("tgt", 1, "Alex", "记账", media=[tmp_path / "r.jpg"])
+    assert agent.seen[-1][:2] == ("media", [str(tmp_path / "r.jpg")])
+    t.on_text("tgt", 1, "Alex", "/model", media=[tmp_path / "c.jpg"])   # 命令附言：来件照攒
+    t.on_text("tgt", 1, "Alex", "这两张")
+    assert agent.seen[-1][:2] == ("media", [str(tmp_path / "old.jpg"), str(tmp_path / "c.jpg")])
+
+
 def test_commands_bypass_pending_media(monkeypatch, tmp_path):
     monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
     agent = FakeAgent()

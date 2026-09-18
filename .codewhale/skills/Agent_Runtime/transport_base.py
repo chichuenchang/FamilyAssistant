@@ -105,17 +105,27 @@ class Transport:
         backup_hook.mark_dirty()
 
     # ── 收消息 ──────────────────────────────────────────────
-    def on_text(self, target, user, member: str, text: str, quoted=None) -> None:
+    def on_text(self, target, user, member: str, text: str, quoted=None,
+                media: list[str] | None = None) -> None:
         """攒着的来件随这条文字一起交 Agent（文字即指令）；没有来件走普通对话。
         攒超 Agent.idle_clear_seconds 的来件作废（同闲置清上下文：隔久了多半是新话题）。
         命令（/clear、/model…）绕开来件照常执行：/clear 连来件一起清，其余命令来件继续等。
-        来件与文字是否相关由 LLM 判（无关即作废）；交出去就不再攒，处理出错则放回。"""
+        来件与文字是否相关由 LLM 判（无关即作废）；交出去就不再攒，处理出错则放回。
+        media 给定 = 附言自带的来件（Telegram 图/PDF 附言）：只配这些，攒着的不动。"""
         self.tick()
         key = str(user)
+        own = [(str(p), time.time()) for p in media or []]
         with self._pending_lock:
             if is_clear_command(text):
                 self._pending.pop(key, None)
-            held = [] if is_command(text) else self._pending.pop(key, [])
+            if is_command(text):
+                held = []
+                if own:   # 附言是命令：来件照攒
+                    self._pending.setdefault(key, []).extend(own)
+            elif media is not None:
+                held = own
+            else:
+                held = self._pending.pop(key, [])
         ttl = getattr(self.agent, "idle_clear_seconds", 0)
         if ttl > 0:
             fresh = [h for h in held if time.time() - h[1] < ttl]

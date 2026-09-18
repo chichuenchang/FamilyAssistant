@@ -14,14 +14,16 @@ class Rec:
     def on_media(self, target, user, member, path):
         self.calls.append(("media", str(path) if path else None))
 
-    def on_text(self, target, user, member, text, quoted=None):
-        self.calls.append(("text", text))
+    def on_text(self, target, user, member, text, quoted=None, media=None):
+        self.calls.append(("text", text, media))
 
 
-def _photo(uid, caption="", fid="f"):
+def _photo(uid, caption="", fid="f", group=None):
     msg = {"chat": {"id": 1}, "photo": [{"file_id": fid}]}
     if caption:
         msg["caption"] = caption
+    if group:
+        msg["media_group_id"] = group
     return {"update_id": uid, "message": msg}
 
 
@@ -57,3 +59,30 @@ def test_unsupported_doc_drops_caption(monkeypatch):
     t = Rec()
     tg.handle_updates(t, [_doc(1, "a.docx", "记账")], 0)
     assert t.calls == [] and "暂不支持" in sent[0]
+
+
+def _text(uid, text):
+    return {"update_id": uid, "message": {"chat": {"id": 1}, "text": text}}
+
+
+def test_caption_takes_only_own_media_text_takes_none(monkeypatch):
+    _setup(monkeypatch)
+    t = Rec()
+    tg.handle_updates(t, [_photo(1, "记账", fid="r"), _text(2, "顺便问天气")], 0)
+    assert t.calls == [("text", "记账", ["r.jpg"]), ("text", "顺便问天气", None)]
+
+
+def test_album_caption_gets_whole_album(monkeypatch):
+    _setup(monkeypatch)
+    t = Rec()
+    tg.handle_updates(t, [_photo(1, "记账", fid="a", group="g"),
+                          _photo(2, fid="b", group="g"),
+                          _photo(3, fid="c", group="g")], 0)
+    assert t.calls == [("text", "记账", ["a.jpg", "b.jpg", "c.jpg"])]
+
+
+def test_uncaptioned_media_held(monkeypatch):
+    _setup(monkeypatch)
+    t = Rec()
+    tg.handle_updates(t, [_photo(1, fid="a"), _photo(2, fid="b", group="g")], 0)
+    assert t.calls == [("media", "a.jpg"), ("media", "b.jpg")]

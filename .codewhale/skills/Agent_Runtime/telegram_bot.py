@@ -245,9 +245,10 @@ def _send_reply(chat_id, reply: str) -> None:
 
 def handle_updates(t: Transport, updates: list[dict], offset: int) -> int:
     """处理一批 getUpdates 结果，返回推进后的 offset。"""
-    # 图/PDF 附言 = 文字指令；本批来件全落盘后再发（相册附言只在第一张上）。
-    # 落盘失败/不支持的文件不留附言——否则附言会领走别的攒着的来件。
-    captions: list[tuple[int, str, str]] = []
+    # 图/PDF 附言 = 这件（整本相册）的文字指令，只配自己的来件，不领别的攒着的。
+    # 相册每张是一条 update、附言只在第一张 → 按 media_group_id 收齐本批再发。
+    # 落盘失败/不支持的文件不留附言。
+    albums: dict[str, dict] = {}
     for update in updates:
         # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
         offset = max(offset, update["update_id"])
@@ -272,43 +273,55 @@ def handle_updates(t: Transport, updates: list[dict], offset: int) -> int:
                     "  • \"美元汇率\" — 查汇率")
             continue
 
-        caption = (msg.get("caption") or "").strip()
-
-        # 图片 → 下载到发送成员 inbox，等文字指令
+        # 图片 / PDF → 下载到发送成员 inbox
         photos = msg.get("photo") or []
+        doc = msg.get("document")
         if photos:
             print(f"[tg] 图片消息 from {user_name}")
             file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
             path = download_photo(file_id, member) if file_id else None
-            t.on_media(chat_id, chat_id, member, path)
-            if path and caption:
-                captions.append((chat_id, member, caption))
-            continue
-
-        # 文档（PDF）→ 下载到 inbox，等文字指令
-        doc = msg.get("document")
-        if doc:
+        elif doc:
             name = doc.get("file_name", "") or ""
             is_pdf = name.lower().endswith(".pdf") or \
                 doc.get("mime_type") == "application/pdf"
-            if is_pdf:
-                file_id = doc.get("file_id", "")
-                path = download_document(file_id, name, member) if file_id else None
-                t.on_media(chat_id, chat_id, member, path)
-                if path and caption:
-                    captions.append((chat_id, member, caption))
-            else:
+            if not is_pdf:
                 send_message(chat_id, f"收到文件 {name}（暂不支持，PDF 可以）")
+                continue
+            file_id = doc.get("file_id", "")
+            path = download_document(file_id, name, member) if file_id else None
+        else:
+            if not text:
+                continue
+            print(f"[tg] {user_name}: {text[:60]}")
+            t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
             continue
 
-        if not text:
-            continue
-        print(f"[tg] {user_name}: {text[:60]}")
-        t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
+        caption = (msg.get("caption") or "").strip()
+        gid = msg.get("media_group_id")
+        if not path:
+            t.on_media(chat_id, chat_id, member, None)   # 提示重发
+        elif gid:
+            a = albums.setdefault(gid, {"chat_id": chat_id, "member": member,
+                                        "caption": "", "paths": []})
+            a["paths"].append(str(path))
+            a["caption"] = a["caption"] or caption
+        elif caption:
+            t.on_text(chat_id, chat_id, member, caption, media=[str(path)])
+        else:
+            t.on_media(chat_id, chat_id, member, path)   # 等文字指令
 
-    for chat_id, member, caption in captions:
-        t.on_text(chat_id, chat_id, member, caption)
+    for a in albums.values():
+        _flush_album(t, a)
     return offset
+
+
+def _flush_album(t: Transport, a: dict) -> None:
+    """有附言 → 附言配整本相册；无附言 → 每张照攒，等文字指令。"""
+    if a["caption"]:
+        t.on_text(a["chat_id"], a["chat_id"], a["member"], a["caption"], media=a["paths"])
+    else:
+        for p in a["paths"]:
+            t.on_media(a["chat_id"], a["chat_id"], a["member"], p)
 
 
 def run() -> None:
