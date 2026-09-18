@@ -8,8 +8,16 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+    import fcntl
 
 import paths as _paths
 
@@ -17,6 +25,30 @@ CLIP = 500    # 回读时每条文字最多字符数
 EMPTY = "（没有对话记录）"
 
 _log = logging.getLogger("familyassist.agent")
+_thread_lock = threading.Lock()
+_LOCK_AT = 0x7FFFFFFF   # Windows 锁是强制锁：锁文件尾外一字节，不挡 _rows 读正文
+
+
+@contextmanager
+def _locked(f):
+    """同进程多线程 + 微信/Telegram 多进程互斥追加（Windows 追加 = 先 seek 再写，非原子）。"""
+    with _thread_lock:
+        if msvcrt:
+            f.seek(_LOCK_AT)
+            msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)   # 抢不到重试约 10 s 后 OSError
+            try:
+                yield
+            finally:
+                f.flush()
+                f.seek(_LOCK_AT)
+                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                f.flush()
+                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _path() -> Path:
@@ -29,7 +61,7 @@ def append(channel: str, user, said: str, reply: str) -> None:
            "user": str(user), "said": said, "reply": reply}
     data = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
     try:
-        with _path().open("a+b") as f:
+        with _path().open("a+b") as f, _locked(f):
             if f.seek(0, 2):
                 f.seek(-1, 2)
                 if f.read(1) != b"\n":

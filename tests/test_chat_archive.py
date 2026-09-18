@@ -1,5 +1,8 @@
 # tests/test_chat_archive.py — 对话长期存档（jsonl 追加）+ chat_history 工具回读。
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -64,6 +67,26 @@ def test_partial_line_without_newline_keeps_next_row(archive_file):
     archive_file.write_text('{"半行', encoding="utf-8")
     chat_archive.append("wechat", "u", "机票订了吗", "订了")
     assert "机票" in chat_archive.read("wechat", "u")
+
+
+_WRITER = """
+import sys, threading, pathlib, chat_archive
+f = pathlib.Path(sys.argv[1])
+chat_archive._path = lambda: f
+ts = [threading.Thread(target=lambda t=t: [chat_archive.append("wechat", "u", f"{sys.argv[2]}-{t}-{i}", "x")
+                                           for i in range(25)]) for t in range(4)]
+[t.start() for t in ts]
+[t.join() for t in ts]
+"""
+
+
+def test_concurrent_appends_lose_nothing(archive_file):
+    procs = [subprocess.Popen([sys.executable, "-c", _WRITER, str(archive_file), str(p)],
+                              env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)})
+             for p in range(3)]
+    assert all(p.wait(timeout=60) == 0 for p in procs)
+    rows = [json.loads(ln) for ln in archive_file.read_text(encoding="utf-8").splitlines()]
+    assert len({r["said"] for r in rows}) == 3 * 4 * 25
 
 
 def test_missing_file_is_empty():
