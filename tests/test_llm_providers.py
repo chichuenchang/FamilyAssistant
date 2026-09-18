@@ -154,6 +154,7 @@ def test_anthropic_finish_mapping(capture, stop, finish):
     assert out["_finish"] == finish and "tool_calls" not in out
     assert out["_usage"] == {"prompt_tokens": 0, "completion_tokens": 0}
     assert "tools" not in capture["body"] and "system" not in capture["body"]
+    assert capture["timeout"] == 600   # 非流式 + thinking：默认超时须远大于 openai_compat 的 120
 
 
 @pytest.mark.parametrize("reply", [

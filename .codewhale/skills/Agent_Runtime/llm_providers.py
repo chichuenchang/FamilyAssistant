@@ -34,6 +34,9 @@ DEFAULT_TEMPERATURE = 0.3
 # content 空、无 tool_calls。账单 OCR 后逐笔记账尤其费 token，预算和超时都给足。
 DEFAULT_MAX_TOKENS = 32000
 DEFAULT_TIMEOUT = 120
+# Claude 默认自适应 thinking，effort high/max 下工具密集轮（账单逐笔记账）整段响应
+# 可达数分钟；非流式调用整包到齐才返回，120s 会在账单已产生后超时丢掉结果。
+ANTHROPIC_TIMEOUT = 600
 
 
 def _post(url: str, headers: dict, payload: dict, timeout: int) -> dict | None:
@@ -156,7 +159,7 @@ def _to_anthropic_tool(t: dict) -> dict:
 def anthropic(spec: dict, messages, tools, effort: str, *,
               temperature: float = DEFAULT_TEMPERATURE,   # 当前 Claude 拒收 temperature，忽略
               max_tokens: int = DEFAULT_MAX_TOKENS,
-              timeout: int = DEFAULT_TIMEOUT) -> dict | None:
+              timeout: int = ANTHROPIC_TIMEOUT) -> dict | None:
     system, msgs = _to_anthropic(messages)
     payload = {"model": spec["api_model"], "max_tokens": max_tokens, "messages": msgs}
     if system:
