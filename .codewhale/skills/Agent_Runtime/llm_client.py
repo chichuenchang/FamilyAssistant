@@ -1,7 +1,11 @@
-"""DeepSeek 调用 + 每用户 effort 覆盖（/effort；/model 只查）。
+"""模型无关的 LLM 入口 + 每用户 model/effort 覆盖（/model /effort）。
 
-agent_core 只做编排；模型表、覆盖状态文件、HTTP 调用全在这里。
-状态存 data/.state/.llm_overrides.json：{user: {"effort": ...}}，
+agent_core 只做编排；模型表、覆盖状态文件、提供商分发全在这里，
+HTTP/格式翻译在 llm_providers。
+模型表 = 内置 deepseek-flash + config.json "llm.models"（键名即 /model 用的名字）。
+条目可带 "fallback": 另一模型键——主模型无响应（None）时同参重发一次，回复标 "_fallback"
+（DeepSeek 曾整站宕机）；请求被拒（4xx）不顶替。超时语义见 llm_providers 模块 docstring。
+状态存 data/.state/.llm_overrides.json：{user: {"model": ..., "effort": ...}}，
 只在启动与切换命令时读写——消息路径零文件 IO。
 """
 
@@ -10,30 +14,103 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 import tempfile
 from pathlib import Path
 
-
+import llm_providers as _providers
 import paths as _paths
+import tool_runtime as _rt
 
 _log = logging.getLogger("familyassist.agent")
 
 EFFORTS = ("low", "medium", "high", "max")
-DEFAULT_MODEL = "deepseek-flash"   # 唯一模型：/model 只查不切
+DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_EFFORT = "high"
 
-_ENV = {"model": "DEEPSEEK_MODEL", "effort": "DEEPSEEK_REASONING_EFFORT"}
+_BUILTIN_MODELS = {
+    DEFAULT_MODEL: {"provider": "openai_compat", "api_model": "deepseek-flash",
+                    "api_key_env": "DEEPSEEK_API_KEY", "base_url_env": "DEEPSEEK_BASE_URL",
+                    "base_url": "https://api.deepseek.com", "aliases": ["deepseek", "flash"]},
+}
+# 启动默认的环境变量（旧名保留兼容）
+_ENV = {"model": ("LLM_MODEL", "DEEPSEEK_MODEL"),
+        "effort": ("LLM_EFFORT", "DEEPSEEK_REASONING_EFFORT")}
 _LABEL = {"model": "模型", "effort": "推理档"}
-_USAGE = {"model": "/model（只有一个模型，仅查看）", "effort": "/effort [low|medium|high|max|reset]"}
-_VALID = {"effort": EFFORTS}   # 可按用户覆盖的项
 _DEFAULT = {"model": DEFAULT_MODEL, "effort": DEFAULT_EFFORT}
+
+MODELS: dict[str, dict] = {}
+_NAMES: dict[str, str] = {}   # 小写键名/别名 → 模型表键（键名优先于别名）
+
+
+# ── 模型表 ──────────────────────────────────────────────────
+
+def load_models(cfg: dict | None = None) -> dict[str, dict]:
+    """内置表 + config.json llm.models 合并（同名条目字段覆盖内置）。非法条目跳过并告警。"""
+    global MODELS, _NAMES
+    cfg = (_rt.CONFIG if cfg is None else cfg).get("llm") or {}
+    models = {k: dict(v) for k, v in _BUILTIN_MODELS.items()}
+    for name, spec in (cfg.get("models") or {}).items():
+        if name.startswith("_"):
+            continue
+        merged = {**models.get(name, {}), **spec} if isinstance(spec, dict) else {}
+        merged.setdefault("api_model", name)
+        complete = (merged.get("provider") in _providers.PROVIDERS and merged.get("api_key_env")
+                    and (merged.get("base_url") or merged.get("base_url_env")))
+        if not complete:
+            _log.warning("config.json llm.models[%r] 缺 provider/api_key_env/base_url，已忽略", name)
+            continue
+        models[name] = merged
+    MODELS = models
+    _NAMES = {a.lower(): n for n, s in models.items() for a in s.get("aliases") or []}
+    _NAMES.update({n.lower(): n for n in models})
+    return models
+
+
+load_models()
+
+
+def canon_model(name) -> str | None:
+    """名字/别名（不分大小写）→ 模型表键；未登记返回 None。"""
+    return _NAMES.get(name.lower()) if isinstance(name, str) else None
+
+
+def spec(model: str) -> dict:
+    """模型表条目；未登记的名字按 DeepSeek 原始模型 id 直发（LLM_MODEL=deepseek-v4-pro 之类）。"""
+    return MODELS.get(model) or {**MODELS[DEFAULT_MODEL], "api_model": model}
+
+
+def missing_key(model: str) -> str:
+    """该模型缺的 API key 环境变量名；已配置返回 ""。"""
+    env = spec(model)["api_key_env"]
+    return "" if os.environ.get(env) else env
+
+
+def ready_note() -> str:
+    """启动横幅一行：当前默认模型是否可用。"""
+    model = settings({}, "")[0]
+    missing = missing_key(model)
+    state = f"未配置 — 设置 {missing}" if missing else "已启用"
+    return f"LLM: {model} {state}"
+
+
+def _models_line() -> str:
+    parts = []
+    for name, s in MODELS.items():
+        alias = "/".join(s.get("aliases") or [])
+        missing = missing_key(name)
+        parts.append(name + (f"（{alias}）" if alias else "")
+                     + (f"，未配置 {missing}" if missing else ""))
+    return "；".join(parts)
 
 
 # ── 覆盖状态文件 ────────────────────────────────────────────
 
 def overrides_path() -> Path:
     return _paths.state_file(".llm_overrides.json")
+
+
+_CANON = {"model": canon_model,
+          "effort": lambda a: a if a in EFFORTS else None}   # 可按用户覆盖的项
 
 
 def load_overrides() -> dict:
@@ -49,7 +126,7 @@ def load_overrides() -> dict:
     for user, entry in (raw.items() if isinstance(raw, dict) else []):
         if not isinstance(entry, dict):
             continue
-        clean = {k: entry[k] for k in _VALID if entry.get(k) in _VALID[k]}
+        clean = {k: v for k, canon in _CANON.items() if (v := canon(entry.get(k)))}
         if clean:
             out[user] = clean
     return out
@@ -75,42 +152,59 @@ def save_overrides(overrides: dict) -> None:
 
 # ── 解析 / 命令 / 调用 ──────────────────────────────────────
 
+def _env(kind: str) -> str:
+    """启动默认值：新旧环境变量名按 _ENV 顺序取第一个非空。"""
+    for name in _ENV[kind]:
+        if os.environ.get(name):
+            return os.environ[name]
+    return ""
+
+
+def _resolve(overrides: dict, user: str, kind: str) -> tuple[str, str]:
+    """该用户某项的 (生效值, 来源)：个人覆盖 > 环境变量 > 默认。环境变量值规范化后仍未登记则原样用。"""
+    value = (overrides.get(user) or {}).get(kind)
+    if value:
+        return value, "你的个人覆盖"
+    value = _env(kind)
+    if value:
+        return _CANON[kind](value) or value, "环境变量"
+    return _DEFAULT[kind], "默认"
+
+
 def settings(overrides: dict, user: str) -> tuple[str, str]:
-    """该用户生效的 (model, effort)：个人覆盖 > 环境变量 > 默认。"""
-    ov = overrides.get(user) or {}
-    return tuple(ov.get(k) or os.environ.get(_ENV[k]) or _DEFAULT[k]
-                 for k in ("model", "effort"))
+    """该用户生效的 (model, effort)。"""
+    return _resolve(overrides, user, "model")[0], _resolve(overrides, user, "effort")[0]
 
 
 def status_note(overrides: dict, user: str) -> str:
     """注入 system 的当前 LLM 设置：被问"你用什么模型/推理档"时如实答。"""
-    model, effort = settings(overrides, user)
-    ov = overrides.get(user) or {}
-
-    def _src(kind: str) -> str:
-        if ov.get(kind):
-            return "你的个人覆盖"
-        return "环境变量" if os.environ.get(_ENV[kind]) else "默认"
-
+    model, model_src = _resolve(overrides, user, "model")
+    effort, effort_src = _resolve(overrides, user, "effort")
     return (f"\n\n## 当前 LLM 设置\n本轮你以 {model} 运行，推理档 {effort}"
-            f"（模型来源：{_src('model')}；推理档来源：{_src('effort')}）。"
+            f"（模型来源：{model_src}；推理档来源：{effort_src}）。"
             f"被问用什么模型/推理档时如实告知；用户想改，让他自己发 /model 或 /effort。")
 
 
+def _cmd_usage(kind: str) -> str:
+    if kind == "model":
+        return f"/model [{'|'.join(MODELS)}|reset]（不带参数查当前值；别名见 /model）"
+    return "/effort [low|medium|high|max|reset]"
+
+
 def parse_command(text: str):
-    """/model /effort 解析。非切换命令 → None；否则 (kind, arg | None 表示用法错误)。"""
-    parts = text.lower().split()
-    if not parts or parts[0] not in ("/model", "/effort"):
+    """/model /effort 解析。非切换命令 → None；否则 (kind, arg)：
+    arg "" = 查询，"reset" = 清除，规范化后的值 = 切换，None = 用法错误。"""
+    parts = text.split()
+    head = parts[0].lower() if parts else ""
+    if head not in ("/model", "/effort"):
         return None
-    kind = parts[0][1:]
+    kind = head[1:]
     if len(parts) > 2:
         return kind, None
-    arg = parts[1] if len(parts) > 1 else ""
-    if kind == "model":
-        return kind, None if arg else ""
-    if arg and arg != "reset" and arg not in _VALID[kind]:
-        return kind, None
-    return kind, arg
+    arg = parts[1].lower() if len(parts) > 1 else ""
+    if not arg or arg == "reset":
+        return kind, arg
+    return kind, _CANON[kind](arg)
 
 
 def apply_command(overrides: dict, user: str, text: str, persist) -> str | None:
@@ -119,17 +213,13 @@ def apply_command(overrides: dict, user: str, text: str, persist) -> str | None:
     if parsed is None:
         return None
     kind, arg = parsed
-    label, usage = _LABEL[kind], _USAGE[kind]
+    label = _LABEL[kind]
     if arg is None:
-        return f"用法: {usage}"
+        return f"用法: {_cmd_usage(kind)}"
     if not arg:  # 查询当前生效值与来源
-        ov = (overrides.get(user) or {}).get(kind)
-        env = os.environ.get(_ENV[kind])
-        if ov:
-            return f"当前{label}：{ov}（你的个人覆盖）。"
-        if env:
-            return f"当前{label}：{env}（环境变量）。"
-        return f"当前{label}：{_DEFAULT[kind]}（默认）。"
+        value, src = _resolve(overrides, user, kind)
+        cur = f"当前{label}：{value}（{src}）。"
+        return cur + (f"\n可切换：{_models_line()}" if kind == "model" else "")
     if arg == "reset":
         entry = overrides.get(user)
         if entry:
@@ -138,48 +228,36 @@ def apply_command(overrides: dict, user: str, text: str, persist) -> str | None:
                 overrides.pop(user)
         note = "" if persist(user) else "（状态文件写入失败，旧覆盖重启后可能恢复）"
         return f"✅ 已清除你的{label}覆盖，回到环境变量/默认。{note}"
+    if kind == "model" and (missing := missing_key(arg)):
+        return f"模型 {arg} 未配置 {missing}，无法切换。"
     overrides.setdefault(user, {})[kind] = arg
     note = "" if persist(user) else "（状态文件写入失败，重启后可能失效）"
     return f"✅ 你的{label}已切换为 {arg}（仅影响你）{note}。"
 
 
-def chat(messages, tools, model: str, effort: str) -> dict | None:
-    """DeepSeek chat completions（native function calling）。
-    返回 choices[0].message 整个 dict（可能含 tool_calls）；失败返回 None。
-    message 附私有键 "_usage"（API usage 原样）、"_finish"（finish_reason）：
-    再次发给 API 前调用方须 pop 掉。"""
-    import urllib.request
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    payload = {
-        "model": model,
-        "messages": messages,
-        # DeepSeek V4 是推理模型，reasoning 占用 completion 预算，
-        # 预算过低（曾 1500）会被推理耗尽 → content 空、无 tool_calls。
-        # 账单图片 OCR 后逐笔记账尤其费 token，预算和超时都给足；
-        # 高档位推理更长，max_tokens 相应调高避免被截断成空 content。
-        "reasoning_effort": effort,
-        "temperature": 0.3, "max_tokens": 32000,
-    }
-    if tools:      # 纯文本调用（PDF_Editor 排版）不带 tools 键
-        payload["tools"] = tools
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"{base_url}/v1/chat/completions", data=body,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-    )
+def fallback_of(model: str) -> str:
+    """spec.fallback 指向的可用模型键；无、自指、未登记或缺 key 返回 ""。"""
+    fb = spec(model).get("fallback") or ""
+    return fb if fb in MODELS and fb != model and not missing_key(fb) else ""
+
+
+def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
+    """按模型表分发到提供商。返回 OpenAI 风格 message dict（可能含 tool_calls）；失败 None。
+    附私有键 "_usage"/"_finish"（及 anthropic 的 "_blocks"，顶替时 "_fallback"=顶替模型键）：
+    再次发给 API 前调用方须 pop 掉 _usage/_finish/_fallback；_blocks 留着同轮重放。
+    opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次；
+    请求本身被拒（4xx，见 llm_providers.RequestRejected）直接 None，不顶替。"""
+    def call(name):
+        s = spec(name)
+        return _providers.PROVIDERS[s["provider"]](s, messages, tools, effort, **opts)
+
     try:
-        resp = json.loads(urllib.request.urlopen(req, timeout=120).read())
-        choice = resp["choices"][0]
-        _log.debug("LLM finish=%s tokens=%s tool_calls=%d",
-                   choice.get("finish_reason"),
-                   resp.get("usage", {}).get("completion_tokens"),
-                   len(choice["message"].get("tool_calls") or []))
-        if choice.get("finish_reason") == "length":
-            _log.warning("LLM 输出被 max_tokens 截断（推理模型预算不足的信号）")
-        return {**choice["message"], "_usage": resp.get("usage") or {},
-                "_finish": choice.get("finish_reason")}
-    except Exception as e:
-        print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
-        _log.exception("LLM 调用失败")
+        out = call(model)
+        if out is None and (fb := fallback_of(model)):
+            _log.warning("模型 %s 无响应，改用 %s", model, fb)   # logger 已挂 stderr handler，不再 print
+            out = call(fb)
+            if out is not None:
+                out["_fallback"] = fb
+        return out
+    except _providers.RequestRejected:
         return None
