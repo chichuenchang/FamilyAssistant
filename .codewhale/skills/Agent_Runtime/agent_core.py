@@ -244,6 +244,11 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 IMG_SENTINEL = "\x01IMG:"
 DOC_SENTINEL = "\x01DOC:"
 
+# max_tokens 截断（finish_reason=length）
+TRUNCATED_REPLY_MARK = "（回复超出长度上限被截断）"
+TRUNCATED_TOOLS_NOTE = ("[系统] 你上一条输出超出长度上限被截断，其中的工具调用参数不完整，"
+                        "全部未执行。请减少推理、把工作拆成更小的批次重新调用。")
+
 CLEAR_COMMANDS = ("/clear", "清除上下文", "清空上下文", "清空记忆")
 
 
@@ -385,6 +390,7 @@ class Agent:
         turn: list[dict] = [{"role": "user", "content": text}]
 
         reply = ""
+        truncated = False  # 最终回复因 max_tokens 被截断
         tool_log = ""  # 回复里展示的工具调用摘要（按名计数）
         tool_counts: dict[str, int] = {}
         tokens = {"in": 0, "out": 0}      # 本轮所有 LLM 调用 usage 累计，随工具摘要展示
@@ -398,12 +404,21 @@ class Agent:
             if message is None:
                 return "\n\n".join(["抱歉，暂时出错了。", *shown.values()])
             usage = message.pop("_usage", None) or {}   # 私有键，不得回传 API
+            cut = message.pop("_finish", None) == "length"
             tokens["in"] += usage.get("prompt_tokens") or 0
             tokens["out"] += usage.get("completion_tokens") or 0
 
             tool_calls = message.get("tool_calls") or []
+            if cut and tool_calls:
+                # 参数 JSON 可能残缺（解析失败会变空参数照跑工具）：一律不执行，
+                # 残缺消息不进 msgs/历史，改告诉模型重来
+                _log.warning("截断的 tool_calls 未执行: %s",
+                             [tc.get("function", {}).get("name") for tc in tool_calls])
+                msgs.append({"role": "user", "content": TRUNCATED_TOOLS_NOTE})
+                continue
             if not tool_calls:
                 reply = (message.get("content") or "").strip()
+                truncated = cut
                 break
 
             msgs.append(message)
@@ -453,10 +468,16 @@ class Agent:
             badge.append(f"🪙 {tokens['in']:,} in / {tokens['out']:,} out")
         if badge:
             tool_log = " · ".join(badge) + "\n"
-        if not reply:
-            reply = "（工具已执行，但生成回复失败）" if tool_counts else "抱歉，暂时出错了。"
+        if truncated:
+            # 残缺文本不进历史，免得模型下轮把半句当既成事实接着编
+            hist_reply = TRUNCATED_REPLY_MARK
+            reply = f"{reply}\n{TRUNCATED_REPLY_MARK}" if reply else TRUNCATED_REPLY_MARK
+        else:
+            if not reply:
+                reply = "（工具已执行，但生成回复失败）" if tool_counts else "抱歉，暂时出错了。"
+            hist_reply = reply
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
-        turn.append({"role": "assistant", "content": reply})
+        turn.append({"role": "assistant", "content": hist_reply})
         self._save_history(user, turn)
         if shown:
             final += "\n\n" + "\n\n".join(shown.values())

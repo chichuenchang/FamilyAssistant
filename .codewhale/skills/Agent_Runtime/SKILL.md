@@ -55,6 +55,7 @@ reply = agent.handle_media(paths, text, user="<频道内唯一id>", member="<成
 - `handle` 返回的字符串即最终回复，原样发回频道即可。
 - `Agent()` 构造时从 `config.json` 提取合法值组装 system prompt（不嵌入 FamilyAssistant.md，省 token），进程内常驻复用，不要每条消息都 new。
 - **上下文自动管理**（旋钮在 `config.json` `agent` 块，`Agent()` 构造参数可覆盖，0=关闭）：`context_max_tokens`（默认 30000）= 每用户对话历史 token 预算，超出从最旧一问一答成对丢弃，保留最近上下文；`idle_clear_hours`（默认 4）= 用户闲置超过 N 小时后，下一条消息前自动清空其对话历史。用户随时可发 `/clear`（或"清除上下文"）手动清空。
+- `max_tokens` 截断（`finish_reason=length`）：残缺 `tool_calls` 不执行（参数 JSON 残缺则解析为空参数照跑），改注入 `TRUNCATED_TOOLS_NOTE` 让模型拆批重来；残缺文本回复加 `TRUNCATED_REPLY_MARK`，历史只存标记。
 
 ## 现有频道
 
