@@ -191,8 +191,7 @@ def _opt(op: dict, key: str):
     return None if op.get(key) is None else _num(op, key, positive=True)
 
 
-def _page(op: dict, key: str, n: int) -> int:
-    v = op.get(key)
+def _page(v, n: int) -> int:
     if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < n:
         raise ValueError(f"页号不存在: {v}")
     return v
@@ -225,7 +224,7 @@ def _clean(op: dict, layout: dict, resolve_src) -> dict:
         return {"op": kind, "name": name,
                 "value": "" if op.get("value") is None else str(op["value"])}
     if kind in OVERLAY_OPS:
-        page = _page(op, "page", n)
+        page = _page(op.get("page"), n)
         g = layout["pages"][page]
         dims = (g["width"], g["height"])
         if kind == "line":
@@ -251,23 +250,23 @@ def _clean(op: dict, layout: dict, resolve_src) -> dict:
         pages = op.get("pages")
         if not isinstance(pages, list) or not pages:
             raise ValueError("pages 必须是非空数组")
-        return {"op": kind, "pages": [_page({"p": p}, "p", n) for p in pages]}
+        return {"op": kind, "pages": [_page(p, n) for p in pages]}
     if kind == "page_rotate":
         deg = int(_num(op, "deg")) % 360
         if deg not in (90, 180, 270):
             raise ValueError(f"deg 必须是 90 的倍数: {op.get('deg')}")
-        return {"op": kind, "page": _page(op, "page", n), "deg": deg}
+        return {"op": kind, "page": _page(op.get("page"), n), "deg": deg}
     if kind == "page_reorder":
         order = op.get("order")
         if not isinstance(order, list) or not order or len(set(map(str, order))) != len(order):
             raise ValueError("order 必须是不重复的非空页号数组")
-        return {"op": kind, "order": [_page({"p": p}, "p", n) for p in order]}
+        return {"op": kind, "order": [_page(p, n) for p in order]}
     if kind == "page_insert":
         after = op.get("after")
         if after is None:
             after = n - 1
         elif after != -1:
-            after = _page(op, "after", n)
+            after = _page(op.get("after"), n)
         return {"op": kind, "src": _src(op, resolve_src), "after": after}
     raise LookupError(kind)
 
