@@ -61,35 +61,37 @@ def _session_for_file(file: str, member: str, fresh: bool = False) -> dict:
     return _session_for_rel(_paths.to_rel(_gate(file, member)), member, fresh)
 
 
-def _latest_or_die(member: str, why: str) -> dict:
+def _latest_or_die(member: str, why: str) -> tuple[dict, str]:
     """LLM 跨消息容易忘掉/编造会话 id：兜底接续该成员最近的会话。
-    提示走 stderr —— pdf-edit 的 stdout 首行必须是文件路径（哨兵契约）。"""
+    返回 (会话, 提示)；提示由调用方印在路径行之后（stdout 首行=路径，哨兵契约；
+    stderr 在成功时被 run_cli 丢掉，Agent 看不到）。"""
     sessions = pdf_plan.list_sessions(member)
     if not sessions:
         _die(f"{why}，且没有可续用的编辑会话（传 file 新建）")
-    print(f"（{why}，已自动接续最近会话 {sessions[0]['id']}）", file=sys.stderr)
-    return sessions[0]
+    s = sessions[0]
+    return s, f"{why}，已自动接续最近会话 {s['id']}（{s['source_pdf']}）"
 
 
-def _resolve_plan(args) -> dict:
-    """file 优先于 session（LLM 常把旧 session 配新文件）；fresh 总是开新会话。"""
-    plan = None
+def _resolve_plan(args) -> tuple[dict, str]:
+    """file 优先于 session（LLM 常把旧 session 配新文件）；fresh 总是开新会话。
+    返回 (会话, 兜底接续提示或空串)。"""
+    plan, notice = None, ""
     if args.session:
         try:
             plan = pdf_plan.load(args.member, args.session)
         except (FileNotFoundError, ValueError) as e:
             if not args.file:
-                plan = _latest_or_die(args.member, str(e))
+                plan, notice = _latest_or_die(args.member, str(e))
     if args.file:
         rel = _paths.to_rel(_gate(args.file, args.member))
         if plan is not None and plan["source_pdf"] == rel and not args.fresh:
-            return plan
-        return _session_for_rel(rel, args.member, args.fresh)
+            return plan, notice
+        return _session_for_rel(rel, args.member, args.fresh), notice
     if plan is None:
-        plan = _latest_or_die(args.member, "没给 file 也没给 session")
+        plan, notice = _latest_or_die(args.member, "没给 file 也没给 session")
     if args.fresh:
-        return _session_for_rel(plan["source_pdf"], args.member, fresh=True)
-    return plan
+        return _session_for_rel(plan["source_pdf"], args.member, fresh=True), notice
+    return plan, notice
 
 
 def _layout_of(plan: dict, src: Path) -> dict:
@@ -108,7 +110,7 @@ def cmd_inspect(args):
 
 
 def cmd_edit(args):
-    plan = _resolve_plan(args)
+    plan, notice = _resolve_plan(args)
     src = _paths.resolve_rel(plan["source_pdf"])
     if not src.exists():
         _die(f"原始 PDF 不存在: {plan['source_pdf']}")
@@ -140,6 +142,8 @@ def cmd_edit(args):
     _mark_backup_dirty()
     print(plan["out"])                           # 第一行 = 路径（哨兵契约）
     print(f"session={plan['id']}")
+    if notice:
+        print(f"提示: {notice}")
     for n in notes:
         print(f"提示: {n}")
     for w in warnings:

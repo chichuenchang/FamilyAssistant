@@ -119,11 +119,11 @@ def test_bad_session_id_falls_back_to_latest(cli, capsys, inbox, monkeypatch):
     _planner(monkeypatch, [TEXT_OP])
     _, out, _ = _run(cli, capsys, "pdf-edit", "--file", str(pdf),
                      "--instruction", "a", "--member", "jim")
-    code, out2, err = _run(cli, capsys, "pdf-edit", "--session", "form.pdf",
-                           "--instruction", "b", "--member", "jim")
+    code, out2, _ = _run(cli, capsys, "pdf-edit", "--session", "form.pdf",
+                         "--instruction", "b", "--member", "jim")
     assert code == 0 and _sid(out2) == _sid(out)
     assert out2.splitlines()[0].endswith("form_edited.pdf")   # 首行仍是路径
-    assert "已自动接续" in err
+    assert "已自动接续" in out2 and "form.pdf" in out2           # stdout：run_cli 成功时丢 stderr
 
 
 def test_fresh_starts_a_new_session(cli, capsys, inbox, monkeypatch):
