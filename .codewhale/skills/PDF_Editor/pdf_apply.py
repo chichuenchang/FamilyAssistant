@@ -288,7 +288,7 @@ def apply(src_pdf: str, ops: list, layout: dict, out_pdf: str, resolve_src) -> l
             continue
         _overlay(writer.pages[index[orig]], page_ops,
                  layout["pages"][orig]["scale"], resolve_src, warnings)
-    if any(op["op"] == "erase" for ops_ in by_page.values() for op in ops_):
+    if any(op["op"] == "erase" for op in ops):
         warnings.append(ERASE_WARNING)
 
     for orig, deg in rotations.items():
