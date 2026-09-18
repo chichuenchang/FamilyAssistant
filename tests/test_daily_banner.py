@@ -168,6 +168,13 @@ class TestGather:
         d = banner.gather("Alex", DAY, CFG)
         assert d.events == ["09-19 周六 14:00 游泳课 @Y"]
 
+    def test_event_overflow_noted(self, data):
+        sched, _ = data
+        for i in range(banner.EVENT_CAP + 2):
+            cal_db.add_item("event", f"e{i}", "2026-09-17T10:00", db_path=sched)
+        d = banner.gather("Alex", DAY, CFG)
+        assert len(d.events) == banner.EVENT_CAP + 1 and d.events[-1] == "…还有 2 项"
+
     def test_tasks_overdue_first_undated_last(self, data):
         _, tasks = data
         cal_db.add_item("task", "无期限", db_path=tasks)

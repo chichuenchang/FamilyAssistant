@@ -164,6 +164,10 @@ def _mail(member: str) -> list[str] | None:
         return None
 
 
+def _cap(lines: list[str], cap: int) -> list[str]:
+    return lines if len(lines) <= cap else lines[:cap] + [f"…还有 {len(lines) - cap} 项"]
+
+
 def gather(member: str, day: date, cfg: dict) -> Digest:
     import cal_db
     days = int(cfg.get("lookahead_days") or 3)
@@ -174,11 +178,8 @@ def gather(member: str, day: date, cfg: dict) -> Digest:
     tasks = cal_db.list_range(kind="task", include_undated=True,
                               db_path=str(_paths.member_store(member, "tasks")))
     today = day.isoformat()
-    task_lines = [_task_line(r, today) for r in tasks]
-    if len(task_lines) > TASK_CAP:
-        task_lines = task_lines[:TASK_CAP] + [f"…还有 {len(task_lines) - TASK_CAP} 项"]
-    return Digest(day=day, events=[_event_line(r) for r in events][:EVENT_CAP],
-                  tasks=task_lines, mails=_mail(member), stale=stale, days=days,
+    return Digest(day=day, events=_cap([_event_line(r) for r in events], EVENT_CAP),
+                  tasks=_cap([_task_line(r, today) for r in tasks], TASK_CAP), mails=_mail(member), stale=stale, days=days,
                   task_total=len(tasks))
 
 
