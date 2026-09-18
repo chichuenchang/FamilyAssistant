@@ -100,6 +100,7 @@ class Digest:
     mails: list[str] | None      # None = 没配邮箱 / 取信失败（不提邮件）
     stale: bool                  # 远端刷新失败，用的本地缓存
     days: int = 3
+    task_total: int = 0          # 截断前待办数（tasks 含「…还有」行）
 
     @property
     def empty(self) -> bool:
@@ -177,7 +178,8 @@ def gather(member: str, day: date, cfg: dict) -> Digest:
     if len(task_lines) > TASK_CAP:
         task_lines = task_lines[:TASK_CAP] + [f"…还有 {len(task_lines) - TASK_CAP} 项"]
     return Digest(day=day, events=[_event_line(r) for r in events][:EVENT_CAP],
-                  tasks=task_lines, mails=_mail(member), stale=stale, days=days)
+                  tasks=task_lines, mails=_mail(member), stale=stale, days=days,
+                  task_total=len(tasks))
 
 
 # ── 成文 ────────────────────────────────────────────────────
@@ -205,7 +207,7 @@ def template(d: Digest) -> str:
     lines = [_head(d)]
     lines += ([f"📅 未来{d.days}天日程："] + [f"- {e}" for e in d.events]
               if d.events else [f"📅 未来{d.days}天无日程"])
-    lines += [f"☐ 待办 {len(d.tasks)} 项："] + [f"- {t}" for t in d.tasks] if d.tasks else ["☐ 无待办"]
+    lines += [f"☐ 待办 {d.task_total or len(d.tasks)} 项："] + [f"- {t}" for t in d.tasks] if d.tasks else ["☐ 无待办"]
     if d.mails is not None:
         lines += [f"📬 未读邮件 {len(d.mails)} 封" + ("：" if d.mails else "")]
         lines += [f"- {m}" for m in d.mails]

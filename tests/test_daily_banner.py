@@ -176,6 +176,14 @@ class TestGather:
         d = banner.gather("Alex", DAY, CFG)
         assert d.tasks == ["欠着（逾期 09-10）", "下周（截止 09-25）", "无期限"]
 
+    def test_task_overflow_counts_all(self, data):
+        _, tasks = data
+        for i in range(banner.TASK_CAP + 5):
+            cal_db.add_item("task", f"t{i}", db_path=tasks)
+        d = banner.gather("Alex", DAY, CFG)
+        assert d.tasks[-1] == "…还有 5 项"
+        assert f"待办 {banner.TASK_CAP + 5} 项" in banner.template(d)
+
     def test_done_task_excluded(self, data):
         _, tasks = data
         tid = cal_db.add_item("task", "做完了", "2026-09-17", db_path=tasks)
