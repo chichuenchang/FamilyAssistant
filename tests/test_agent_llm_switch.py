@@ -204,11 +204,11 @@ def test_agent_knows_own_model_and_effort(tmp_path, monkeypatch):
     seen = []
     a._call_llm = lambda msgs, user="": seen.append(msgs) or {"content": "好"}
     a.handle("你好", user="u1", member="Jim")
-    sysmsg = seen[0][0]["content"]
+    sysmsg = seen[0][1]["content"]   # 易变 system 条（静态文档在 [0]）
     assert "deepseek-flash" in sysmsg and "运行，推理档 high" in sysmsg
     a.handle("/effort low", user="u1", member="Jim")
     a.handle("你现在用什么模型", user="u1", member="Jim")
-    sysmsg = seen[1][0]["content"]
+    sysmsg = seen[1][1]["content"]
     assert "deepseek-flash" in sysmsg and "运行，推理档 low" in sysmsg
 
 

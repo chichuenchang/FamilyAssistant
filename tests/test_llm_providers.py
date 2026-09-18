@@ -55,6 +55,22 @@ def test_openai_compat_payload_and_private_key_stripping(capture, monkeypatch):
     assert b["tools"] == [{"type": "function"}]
 
 
+def test_openai_compat_merges_leading_system_messages(capture):
+    capture["reply"] = {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]}
+    prov.openai_compat(DS, [{"role": "system", "content": "静态"}, {"role": "system", "content": "## 当前时间"},
+                            {"role": "user", "content": "hi"}], None, "high")
+    assert capture["body"]["messages"] == [{"role": "system", "content": "静态\n\n## 当前时间"},
+                                           {"role": "user", "content": "hi"}]
+
+
+def test_anthropic_cache_breakpoint_on_second_to_last_system():
+    three = [{"role": "system", "content": s} for s in ("A", "B", "C")] + [{"role": "user", "content": "q"}]
+    system, _ = prov._to_anthropic(three)
+    assert [("cache_control" in b) for b in system] == [False, True, False]
+    one, _ = prov._to_anthropic([{"role": "system", "content": "A"}, {"role": "user", "content": "q"}])
+    assert one == [{"type": "text", "text": "A"}]
+
+
 def test_openai_compat_base_url_env_and_effort_off(capture, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "http://localhost:11434/")
     capture["reply"] = {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]}
@@ -99,7 +115,8 @@ def test_to_anthropic_translation():
         {"role": "user", "content": "next"},
     ]
     system, out = prov._to_anthropic(msgs)
-    assert system == "S1\n\nS2"
+    assert system == [{"type": "text", "text": "S1", "cache_control": {"type": "ephemeral"}},
+                      {"type": "text", "text": "S2"}]
     assert out == [
         {"role": "user", "content": "q"},
         {"role": "assistant", "content": [
@@ -133,7 +150,8 @@ def test_anthropic_request_and_response(capture, monkeypatch):
     assert capture["headers"]["x-api-key"] == "ak"
     assert capture["headers"]["anthropic-version"] == "2023-06-01"
     b = capture["body"]
-    assert b["system"] == "sys" and b["messages"] == [{"role": "user", "content": "hi"}]
+    assert b["system"] == [{"type": "text", "text": "sys"}]   # 单条：无断点
+    assert b["messages"] == [{"role": "user", "content": "hi"}]
     assert b["output_config"] == {"effort": "max"} and b["max_tokens"] == 123
     assert "temperature" not in b
     assert b["tools"] == [{"name": "add", "description": "记账",

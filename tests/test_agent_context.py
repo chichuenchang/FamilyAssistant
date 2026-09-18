@@ -144,13 +144,18 @@ class _FakeDatetime:
         return cls.fixed
 
 
+def _system_text(msgs) -> str:
+    return "\n\n".join(m["content"] for m in msgs if m["role"] == "system")
+
+
 def test_system_context_has_current_datetime(monkeypatch):
     agent, captured = _agent_with_captured_llm(monkeypatch)
     monkeypatch.setattr(agent_core, "datetime", _FakeDatetime, raising=False)
     agent.handle("现在几点", user="u", member="爸爸")
-    sys_content = captured[0][0]["content"]
-    assert captured[0][0]["role"] == "system"
+    assert captured[0][0]["role"] == captured[0][1]["role"] == "system"   # 静态文档 / 易变块两条
+    sys_content = _system_text(captured[0])
     assert "2026-07-11 00:08" in sys_content
+    assert "2026-07-11" not in captured[0][0]["content"]   # 时间戳不得混进可缓存的静态条
     assert "星期六" in sys_content  # 2026-07-11 是周六
 
 
@@ -162,9 +167,9 @@ def test_system_datetime_fresh_per_message(monkeypatch):
     agent.handle("test", user="u", member="爸爸")
     monkeypatch.setattr(_FakeDatetime, "fixed", datetime(2026, 7, 11, 0, 8))
     agent.handle("你现在这里几点", user="u", member="爸爸")
-    assert "2026-07-10 23:47" in captured[0][0]["content"]
-    assert "2026-07-11 00:08" in captured[1][0]["content"]
-    assert "2026-07-10 23:47" not in captured[1][0]["content"]
+    assert "2026-07-10 23:47" in _system_text(captured[0])
+    assert "2026-07-11 00:08" in _system_text(captured[1])
+    assert "2026-07-10 23:47" not in _system_text(captured[1])
 
 
 def test_config_defaults_applied():

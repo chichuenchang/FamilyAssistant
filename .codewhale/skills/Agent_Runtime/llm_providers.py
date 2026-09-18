@@ -12,6 +12,9 @@
               "_blocks" （仅 anthropic）原始 content 块，同一轮回传时原样重放
               失败返回 None。
     以 "_" 开头的键是本进程私有，发请求前一律剥掉。
+    开头的 system 消息可多条，静态在前、易变（时间戳/成员/状态）放最后一条：
+    openai_compat 合并成一条发；anthropic 逐条成 block，倒数第二条打 cache_control
+    （前缀缓存顺序 tools → system → messages，一个断点即覆盖 tools + 静态 system）。
 
 新增提供商：写一个 chat(spec, messages, tools, effort, **opts) 函数，登记进 PROVIDERS。
 spec 是 llm_client 模型表里的一条（provider / api_model / api_key_env / base_url /
@@ -70,6 +73,14 @@ def _public(msg: dict) -> dict:
     return {k: v for k, v in msg.items() if not k.startswith("_")}
 
 
+def _split_system(messages) -> tuple[list[str], list[dict]]:
+    """开头连续 system 消息的正文列表 + 其余消息。"""
+    n = 0
+    while n < len(messages) and messages[n].get("role") == "system":
+        n += 1
+    return [m.get("content") or "" for m in messages[:n]], list(messages[n:])
+
+
 def _base_url(spec: dict) -> str:
     env = spec.get("base_url_env")
     return ((os.environ.get(env) if env else "") or spec["base_url"]).rstrip("/")
@@ -85,9 +96,12 @@ def openai_compat(spec: dict, messages, tools, effort: str, *,
                   temperature: float = DEFAULT_TEMPERATURE,
                   max_tokens: int = DEFAULT_MAX_TOKENS,
                   timeout: int = DEFAULT_TIMEOUT) -> dict | None:
+    system, rest = _split_system(messages)
+    msgs = [_public(m) for m in rest]
+    if system:
+        msgs.insert(0, {"role": "system", "content": "\n\n".join(s for s in system if s)})
     payload = {
-        "model": spec["api_model"],
-        "messages": [_public(m) for m in messages],
+        "model": spec["api_model"], "messages": msgs,
         "temperature": temperature, "max_tokens": max_tokens,
     }
     if spec.get("effort", True):
@@ -116,14 +130,17 @@ _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_FINISH = {"end_turn": "stop", "tool_use": "tool_calls", "max_tokens": "length"}
 
 
-def _to_anthropic(messages) -> tuple[str, list[dict]]:
-    """OpenAI 消息 → (system, anthropic messages)。连续 tool 结果合成一条 user。"""
-    system, out = [], []
-    for m in messages:
+def _to_anthropic(messages) -> tuple[list[dict], list[dict]]:
+    """OpenAI 消息 → (system blocks, anthropic messages)。连续 tool 结果合成一条 user。
+    system ≥2 条时倒数第二条打 cache_control（见模块 docstring）。"""
+    texts, rest = _split_system(messages)
+    system = [{"type": "text", "text": t} for t in texts if t]
+    if len(system) >= 2:
+        system[-2]["cache_control"] = {"type": "ephemeral"}
+    out = []
+    for m in rest:
         role, content = m.get("role"), m.get("content") or ""
-        if role == "system":
-            system.append(content)
-        elif role == "tool":
+        if role == "tool":
             block = {"type": "tool_result", "tool_use_id": m.get("tool_call_id", ""),
                      "content": content}
             if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list) \
@@ -147,7 +164,7 @@ def _to_anthropic(messages) -> tuple[str, list[dict]]:
                 out.append({"role": "assistant", "content": blocks})
         else:
             out.append({"role": "user", "content": content})
-    return "\n\n".join(s for s in system if s), out
+    return system, out
 
 
 def _to_anthropic_tool(t: dict) -> dict:

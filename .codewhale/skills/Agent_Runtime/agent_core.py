@@ -379,8 +379,10 @@ class Agent:
 
         member_note = (f"\n\n## 当前对话成员\n{member} —— 写入类操作自动归到该成员名下；"
                        f"查询类工具可用 member 参数按成员过滤。")
-        msgs = [{"role": "system",
-                 "content": self.system_prompt + _now_context() + member_note
+        # 两条 system：静态项目文档单独一条（提供商可打前缀缓存），时间戳等易变内容在后
+        msgs = [{"role": "system", "content": self.system_prompt},
+                {"role": "system",
+                 "content": _now_context().lstrip() + member_note
                  + self._llm_status_note(user)
                  + REGISTRY.context(member)}]
         # 历史（含跨轮保留的工具调用/结果）由 _save_history 控制长度，这里全量带上
