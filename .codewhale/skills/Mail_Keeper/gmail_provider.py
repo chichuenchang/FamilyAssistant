@@ -5,8 +5,17 @@ Mail Keeper — Gmail REST v1 provider（零外部依赖，仅标准库 urllib�
 （prefix 来自成员 members.json 的 mail.cred_prefix，缺省 GMAIL）。
 一次性授权：python gmail_provider.py --auth [--prefix GMAIL]
 
-scope：gmail.readonly（搜/读）+ gmail.send（只发，不能删改信件）。
+scope：gmail.readonly（搜/读）+ gmail.send（发）+ gmail.modify（建标签、移旧信）
++ gmail.settings.basic（过滤器）。modify 不含永久删除；本模块只调 labels / filters /
+messages.batchModify，不删信。旧 token 缺后两个 scope → 403，抛 ScopeError。
 网络/API 错误抛 RuntimeError。代码里不得出现字面 token/key。
+
+过滤器（分拣到别的"收件箱"= 标签 + 跳过 INBOX）：
+    ensure_label(name, prefix) -> label_id                  嵌套 "A/B" 先建父
+    create_filter(criteria, label_id, skip_inbox, prefix) -> filter_id
+    list_filters(prefix) -> [{id, criteria, action}]；delete_filter(id, prefix)
+    count_matching(query, prefix) -> int（估计值）；move_matching(query, label_id, skip_inbox, prefix) -> 移动封数
+    过滤器只管以后的新信，旧信要 move_matching。
 
 收件附件：get_message 的 attachments 字段（元数据），字节走 get_attachment(msg_id, attachment_id, prefix)。
 发件附件：send_mail(attachments=[本地路径…])。走 messages.send 的 JSON raw（非 /upload URI），
@@ -51,7 +60,9 @@ if sys.platform == "win32":
         pass
 
 SCOPES = ("https://www.googleapis.com/auth/gmail.readonly "
-          "https://www.googleapis.com/auth/gmail.send")
+          "https://www.googleapis.com/auth/gmail.send "
+          "https://www.googleapis.com/auth/gmail.modify "           # 建标签、移旧信
+          "https://www.googleapis.com/auth/gmail.settings.basic")   # 建/删过滤器
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API = "https://gmail.googleapis.com/gmail/v1/users/me"
 DEFAULT_PREFIX = "GMAIL"
@@ -72,6 +83,10 @@ class ApiError(RuntimeError):
     def __init__(self, status: int, msg: str):
         super().__init__(msg)
         self.status = status
+
+
+class ScopeError(ApiError):
+    """token 授权时没给过滤器所需 scope（旧 token）——要重跑 --auth。"""
 
 
 def is_configured(prefix: str = DEFAULT_PREFIX) -> bool:
@@ -121,6 +136,9 @@ def _api(prefix: str, method: str, path: str, params: dict | list | None = None,
         data = json.dumps(payload).encode()
         headers["Content-Type"] = "application/json"
     status, body = _http(method, url, data, headers)
+    if status == 403 and b"insufficient" in body.lower():
+        raise ScopeError(status, f"邮箱授权缺少权限（旧授权没有过滤器/标签 scope），"
+                                 f"需重跑 gmail_provider.py --auth --prefix {prefix}")
     if status >= 300:
         raise ApiError(status, f"Gmail API {method} {path} → {status}: {body[:200]!r}")
     return json.loads(body) if body else {}
@@ -337,13 +355,103 @@ def send_mail(to: str, subject: str, body: str, prefix: str = DEFAULT_PREFIX, *,
     return r.get("id", "")
 
 
+# ── 过滤器 / 标签 ────────────────────────────────────────────
+
+FILTER_CRITERIA = ("from", "to", "subject", "query")   # Gmail filter criteria 里本模块开放的键
+MOVE_CAP = 1000            # move_matching 一次最多移几封（= batchModify 单次上限）
+
+
+def list_labels(prefix: str = DEFAULT_PREFIX) -> list[dict]:
+    """[{id, name, type}]（type: system / user）。"""
+    return _api(prefix, "GET", "/labels").get("labels") or []
+
+
+def ensure_label(name: str, prefix: str = DEFAULT_PREFIX) -> str:
+    """按名取标签 id，没有就建（"A/B" 先建 A——Gmail 不自动建父级）。名字比较不分大小写。"""
+    name = "/".join(p.strip() for p in (name or "").split("/") if p.strip())
+    if not name:
+        raise RuntimeError("标签名为空")
+    have = {lb["name"].lower(): lb["id"] for lb in list_labels(prefix)}
+    parts = name.split("/")
+    for i in range(1, len(parts) + 1):
+        sub = "/".join(parts[:i])
+        if sub.lower() not in have:
+            r = _api(prefix, "POST", "/labels", payload={
+                "name": sub, "labelListVisibility": "labelShow",
+                "messageListVisibility": "show"})
+            have[sub.lower()] = r["id"]
+    return have[name.lower()]
+
+
+def create_filter(criteria: dict, label_id: str, skip_inbox: bool = True,
+                  prefix: str = DEFAULT_PREFIX) -> str:
+    """建过滤器：命中的新信加 label_id，skip_inbox 则同时移出收件箱。返回 filter id。"""
+    crit = {k: str(v).strip() for k, v in criteria.items()
+            if k in FILTER_CRITERIA and str(v or "").strip()}
+    if not crit:
+        raise RuntimeError("过滤条件为空")
+    action = {"addLabelIds": [label_id]}
+    if skip_inbox:
+        action["removeLabelIds"] = ["INBOX"]
+    return _api(prefix, "POST", "/settings/filters",
+                payload={"criteria": crit, "action": action}).get("id", "")
+
+
+def list_filters(prefix: str = DEFAULT_PREFIX) -> list[dict]:
+    return _api(prefix, "GET", "/settings/filters").get("filter") or []
+
+
+def delete_filter(filter_id: str, prefix: str = DEFAULT_PREFIX) -> None:
+    _api(prefix, "DELETE", f"/settings/filters/{urllib.parse.quote(filter_id, safe='')}")
+
+
+def criteria_query(criteria: dict) -> str:
+    """过滤条件 → 等价 Gmail 搜索语法（数现有匹配、移旧信用）。"""
+    def q(v: str) -> str:
+        return f'"{v}"' if re.search(r"\s", v) and not v.startswith(("(", '"')) else v
+
+    out = [f"{k}:{q(str(criteria[k]).strip())}" for k in ("from", "to", "subject")
+           if str(criteria.get(k) or "").strip()]
+    if str(criteria.get("query") or "").strip():
+        out.append(f"({criteria['query'].strip()})")
+    return " ".join(out)
+
+
+def count_matching(query: str, prefix: str = DEFAULT_PREFIX) -> int:
+    """匹配封数（Gmail resultSizeEstimate，估计值）。"""
+    return int(_api(prefix, "GET", "/messages",
+                    {"q": query, "maxResults": 1}).get("resultSizeEstimate") or 0)
+
+
+def move_matching(query: str, label_id: str, skip_inbox: bool = True,
+                  prefix: str = DEFAULT_PREFIX) -> int:
+    """现有匹配信补上 label（skip_inbox 则移出收件箱），最多 MOVE_CAP 封。返回处理封数。"""
+    ids: list[str] = []
+    token = ""
+    while len(ids) < MOVE_CAP:
+        params = {"q": query, "maxResults": min(500, MOVE_CAP - len(ids))}
+        if token:
+            params["pageToken"] = token
+        r = _api(prefix, "GET", "/messages", params)
+        ids += [m["id"] for m in r.get("messages") or []]
+        token = r.get("nextPageToken") or ""
+        if not token:
+            break
+    if ids:
+        body = {"ids": ids, "addLabelIds": [label_id]}
+        if skip_inbox:
+            body["removeLabelIds"] = ["INBOX"]
+        _api(prefix, "POST", "/messages/batchModify", payload=body)
+    return len(ids)
+
+
 if __name__ == "__main__":
     prefix = DEFAULT_PREFIX
     if "--prefix" in sys.argv:
         prefix = sys.argv[sys.argv.index("--prefix") + 1]
     if "--auth" in sys.argv:
         google_oauth.run_loopback_auth(
-            prefix, SCOPES, consent="只授予 读邮件 + 发邮件 权限，不能删改",
+            prefix, SCOPES, consent="授予 读邮件 + 发邮件 + 标签/过滤器 权限（不删信）",
             client_hint="；可复用 GCAL 的同一客户端，需先启用 Gmail API",
             next_step="然后 data/members.json 给该成员加 mail 块，重启机器人。")
     else:

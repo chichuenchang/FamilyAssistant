@@ -1,6 +1,6 @@
 # Mail Keeper
 
-> 按成员私有的邮箱：查收、读全文、**两轮确认**后回信或发新信（可带附件）。只读 + 只发，不能删改信件。
+> 按成员私有的邮箱：查收、读全文、**两轮确认**后回信或发新信（可带附件）、建过滤器分拣到别的标签。不删信。
 > 当前 provider = Gmail REST v1（契约见 `gmail_provider.py` 文件头）。
 
 无 `cli.py`：发信闸门要 `__turn_id` / `__user` / `__text`（`agent_core._apply_context` 注入），
@@ -22,7 +22,7 @@
    无 `mail` 块 = 无邮箱能力，工具拒绝；`watch: true` 才主动播报新邮件。
 5. 重启 bot。
 
-scope：`gmail.readonly` + `gmail.send`（**restricted** scope —— OAuth 应用发布状态若是
+scope：`gmail.readonly` + `gmail.send` + `gmail.modify` + `gmail.settings.basic`（**restricted** scope —— OAuth 应用发布状态若是
 Testing，refresh token 7 天后失效需重授权；生产未验证状态个人用可长期有效，上限 100 用户）。
 
 ## 新邮件事件（默认关，成员 `mail` 块 `"watch": true` 开）
@@ -44,7 +44,7 @@ Testing，refresh token 7 天后失效需重授权；生产未验证状态个人
 
 - ❌ 主动查邮箱（工具只在用户开口时动；播报是独立的 `watch` 开关，且只给发件人+主题）
 - ❌ 抄送、一封多收件人、群发
-- ❌ 删信/改标签/标已读（scope 就没给）
+- ❌ 删信/标已读（代码不调；`gmail.modify` 只用于建标签、移旧信）
 - 正文优先 `text/plain`，只有 HTML 时去标签取文本，截断 `BODY_CAP` 6000 字
 - 收件附件：`read_mail` 列名字，`download_attachment` 才落盘到 `data/<成员>/inbox/YYYY-MM/`，
   内容要 OCR 的 `ocr_read`（OCR skill）。只收图片与 PDF、上限 `ATTACH_MAX_BYTES` 10 MB
@@ -56,3 +56,14 @@ Testing，refresh token 7 天后失效需重授权；生产未验证状态个人
   上限 `SEND_ATTACH_MAX_N` 5 个 / `SEND_ATTACH_MAX_BYTES` 3 MB：走 `messages.send` 的
   JSON `raw`（非 `/upload` URI），整封受 `RAW_SEND_CAP_BYTES` 5 MB 限制，base64 再涨 4/3。
   要发更大的，得改用 `uploadType=multipart` 的 `/upload` 端点
+
+## 过滤器（分拣到别的"收件箱"）
+
+Gmail 无第二收件箱：= 标签 + `removeLabelIds: ["INBOX"]`。provider 函数见 `gmail_provider.py` 文件头。
+
+- 闸门同发信：`draft_mail_filter` → 下一轮整句确认 → `apply_mail_filter`（`mail_draft` slot=`filter`，
+  与邮件草稿互不顶掉）。预览在 `SHOW_TOOLS`——过滤器能把信藏出收件箱，是注入目标。
+- 过滤器只管新信；旧信要 `apply_existing`（`messages.batchModify`，上限 `MOVE_CAP` 1000）。
+- 嵌套标签 `A/B`：Gmail 不自动建父，`ensure_label` 先建 `A`。
+- 2026-09 前授权的 token 无 `modify`/`settings.basic` → 403 `insufficient authentication scopes`
+  → `ScopeError`，草稿留着。每成员重跑 `--auth` 换 `REFRESH_TOKEN`。
