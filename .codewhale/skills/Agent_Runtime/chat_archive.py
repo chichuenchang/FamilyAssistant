@@ -27,9 +27,14 @@ def append(channel: str, user, said: str, reply: str) -> None:
     """追加一轮；写失败只记日志，不影响回复。"""
     row = {"ts": datetime.now().isoformat(timespec="seconds"), "channel": channel or "",
            "user": str(user), "said": said, "reply": reply}
+    data = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
     try:
-        with _path().open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        with _path().open("a+b") as f:
+            if f.seek(0, 2):
+                f.seek(-1, 2)
+                if f.read(1) != b"\n":
+                    f.write(b"\n")   # 上次写入中崩溃留的半行无换行：先补，免得本行接上去一起作废
+            f.write(data)
     except OSError:
         _log.warning("对话存档写入失败", exc_info=True)
 

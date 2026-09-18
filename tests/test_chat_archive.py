@@ -60,6 +60,12 @@ def test_read_query_limit_and_bad_lines(archive_file):
     assert "问题4" in last2 and "机票" in last2 and "问题3" not in last2
 
 
+def test_partial_line_without_newline_keeps_next_row(archive_file):
+    archive_file.write_text('{"半行', encoding="utf-8")
+    chat_archive.append("wechat", "u", "机票订了吗", "订了")
+    assert "机票" in chat_archive.read("wechat", "u")
+
+
 def test_missing_file_is_empty():
     assert chat_archive.read("wechat", "u") == chat_archive.EMPTY
 
