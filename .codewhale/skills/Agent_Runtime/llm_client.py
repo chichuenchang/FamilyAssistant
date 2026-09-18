@@ -158,27 +158,28 @@ def _env(kind: str) -> str:
     return ""
 
 
+def _resolve(overrides: dict, user: str, kind: str) -> tuple[str, str]:
+    """该用户某项的 (生效值, 来源)：个人覆盖 > 环境变量 > 默认。环境变量值规范化后仍未登记则原样用。"""
+    value = (overrides.get(user) or {}).get(kind)
+    if value:
+        return value, "你的个人覆盖"
+    value = _env(kind)
+    if value:
+        return _CANON[kind](value) or value, "环境变量"
+    return _DEFAULT[kind], "默认"
+
+
 def settings(overrides: dict, user: str) -> tuple[str, str]:
-    """该用户生效的 (model, effort)：个人覆盖 > 环境变量 > 默认。"""
-    ov = overrides.get(user) or {}
-    env_model = _env("model")
-    model = ov.get("model") or (canon_model(env_model) or env_model) or DEFAULT_MODEL
-    effort = ov.get("effort") or _env("effort") or DEFAULT_EFFORT
-    return model, effort
+    """该用户生效的 (model, effort)。"""
+    return _resolve(overrides, user, "model")[0], _resolve(overrides, user, "effort")[0]
 
 
 def status_note(overrides: dict, user: str) -> str:
     """注入 system 的当前 LLM 设置：被问"你用什么模型/推理档"时如实答。"""
-    model, effort = settings(overrides, user)
-    ov = overrides.get(user) or {}
-
-    def _src(kind: str) -> str:
-        if ov.get(kind):
-            return "你的个人覆盖"
-        return "环境变量" if _env(kind) else "默认"
-
+    model, model_src = _resolve(overrides, user, "model")
+    effort, effort_src = _resolve(overrides, user, "effort")
     return (f"\n\n## 当前 LLM 设置\n本轮你以 {model} 运行，推理档 {effort}"
-            f"（模型来源：{_src('model')}；推理档来源：{_src('effort')}）。"
+            f"（模型来源：{model_src}；推理档来源：{effort_src}）。"
             f"被问用什么模型/推理档时如实告知；用户想改，让他自己发 /model 或 /effort。")
 
 
@@ -214,14 +215,8 @@ def apply_command(overrides: dict, user: str, text: str, persist) -> str | None:
     if arg is None:
         return f"用法: {_cmd_usage(kind)}"
     if not arg:  # 查询当前生效值与来源
-        ov = (overrides.get(user) or {}).get(kind)
-        env = _env(kind)
-        if ov:
-            cur = f"当前{label}：{ov}（你的个人覆盖）。"
-        elif env:
-            cur = f"当前{label}：{env}（环境变量）。"
-        else:
-            cur = f"当前{label}：{_DEFAULT[kind]}（默认）。"
+        value, src = _resolve(overrides, user, kind)
+        cur = f"当前{label}：{value}（{src}）。"
         return cur + (f"\n可切换：{_models_line()}" if kind == "model" else "")
     if arg == "reset":
         entry = overrides.get(user)
