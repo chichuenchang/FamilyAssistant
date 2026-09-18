@@ -271,10 +271,12 @@ def is_available() -> bool:
 
 def main() -> int:
     import argparse
+    # 直接运行时 --extract 要 import llm_client：挂全部 skill 目录（进程内调用已由调用方挂好）
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702,F401
     parser = argparse.ArgumentParser(description="OCR — 图片文字识别 / 票据结构化提取")
     parser.add_argument("image", help="图片路径")
     parser.add_argument("--extract", action="store_true",
-                        help="结构化提取票据信息（需 DEEPSEEK_API_KEY），输出 JSON")
+                        help="结构化提取票据信息（需当前模型 API key，见 Agent_Runtime/SKILL.md 模型表），输出 JSON")
     args = parser.parse_args()
 
     if not is_available():
