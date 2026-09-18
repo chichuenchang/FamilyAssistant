@@ -137,6 +137,30 @@ def test_fresh_starts_a_new_session(cli, capsys, inbox, monkeypatch):
     assert _sid(out) != _sid(out2) and seen[1]["prior"] == []
 
 
+def test_file_wins_over_session_of_another_pdf(cli, capsys, inbox, data_root, monkeypatch):
+    old = build_digital_pdf(inbox / "old.pdf")
+    new = build_digital_pdf(inbox / "new.pdf")
+    _planner(monkeypatch, [TEXT_OP])
+    _, out, _ = _run(cli, capsys, "pdf-edit", "--file", str(old),
+                     "--instruction", "a", "--member", "jim")
+    code, out2, _ = _run(cli, capsys, "pdf-edit", "--file", str(new), "--session", _sid(out),
+                         "--instruction", "b", "--member", "jim")
+    assert code == 0 and _sid(out2) != _sid(out)
+    assert out2.splitlines()[0].endswith("new_edited.pdf")
+
+
+def test_fresh_with_session_drops_prior_ops(cli, capsys, inbox, monkeypatch):
+    pdf = build_digital_pdf(inbox / "form.pdf")
+    seen = []
+    _planner(monkeypatch, [TEXT_OP], seen=seen)
+    _, out, _ = _run(cli, capsys, "pdf-edit", "--file", str(pdf),
+                     "--instruction", "a", "--member", "jim")
+    for extra in ([], ["--file", str(pdf)]):
+        _, out2, _ = _run(cli, capsys, "pdf-edit", "--session", _sid(out), "--fresh", *extra,
+                          "--instruction", "b", "--member", "jim")
+        assert _sid(out2) != _sid(out) and seen[-1]["prior"] == []
+
+
 def test_no_file_no_session_no_history_is_an_error(cli, capsys, data_root, monkeypatch):
     _planner(monkeypatch, [TEXT_OP])
     code, out, _ = _run(cli, capsys, "pdf-edit", "--instruction", "a", "--member", "jim")

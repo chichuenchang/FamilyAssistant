@@ -49,14 +49,16 @@ def _build_layout(src: Path) -> dict:
         _die(f"PDF 解析失败: {e}")
 
 
-def _session_for_file(file: str, member: str, fresh: bool = False) -> dict:
-    src = _gate(file, member)
-    rel = _paths.to_rel(src)
+def _session_for_rel(rel: str, member: str, fresh: bool = False) -> dict:
     plan = None if fresh else pdf_plan.latest_for_source(member, rel)
     if plan is None:
-        plan = pdf_plan.new_session(member, rel, _build_layout(src))
+        plan = pdf_plan.new_session(member, rel, _build_layout(_paths.resolve_rel(rel)))
         _mark_backup_dirty()
     return plan
+
+
+def _session_for_file(file: str, member: str, fresh: bool = False) -> dict:
+    return _session_for_rel(_paths.to_rel(_gate(file, member)), member, fresh)
 
 
 def _latest_or_die(member: str, why: str) -> dict:
@@ -70,15 +72,24 @@ def _latest_or_die(member: str, why: str) -> dict:
 
 
 def _resolve_plan(args) -> dict:
+    """file 优先于 session（LLM 常把旧 session 配新文件）；fresh 总是开新会话。"""
+    plan = None
     if args.session:
         try:
-            return pdf_plan.load(args.member, args.session)
+            plan = pdf_plan.load(args.member, args.session)
         except (FileNotFoundError, ValueError) as e:
             if not args.file:
-                return _latest_or_die(args.member, str(e))
+                plan = _latest_or_die(args.member, str(e))
     if args.file:
-        return _session_for_file(args.file, args.member, args.fresh)
-    return _latest_or_die(args.member, "没给 file 也没给 session")
+        rel = _paths.to_rel(_gate(args.file, args.member))
+        if plan is not None and plan["source_pdf"] == rel and not args.fresh:
+            return plan
+        return _session_for_rel(rel, args.member, args.fresh)
+    if plan is None:
+        plan = _latest_or_die(args.member, "没给 file 也没给 session")
+    if args.fresh:
+        return _session_for_rel(plan["source_pdf"], args.member, fresh=True)
+    return plan
 
 
 def _layout_of(plan: dict, src: Path) -> dict:
