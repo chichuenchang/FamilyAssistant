@@ -37,14 +37,14 @@ _LABEL = {"model": "模型", "effort": "推理档"}
 _DEFAULT = {"model": DEFAULT_MODEL, "effort": DEFAULT_EFFORT}
 
 MODELS: dict[str, dict] = {}
-_ALIASES: dict[str, str] = {}
+_NAMES: dict[str, str] = {}   # 小写键名/别名 → 模型表键（键名优先于别名）
 
 
 # ── 模型表 ──────────────────────────────────────────────────
 
 def load_models(cfg: dict | None = None) -> dict[str, dict]:
     """内置表 + config.json llm.models 合并（同名条目字段覆盖内置）。非法条目跳过并告警。"""
-    global MODELS, _ALIASES
+    global MODELS, _NAMES
     cfg = (_rt.CONFIG if cfg is None else cfg).get("llm") or {}
     models = {k: dict(v) for k, v in _BUILTIN_MODELS.items()}
     for name, spec in (cfg.get("models") or {}).items():
@@ -52,13 +52,15 @@ def load_models(cfg: dict | None = None) -> dict[str, dict]:
             continue
         merged = {**models.get(name, {}), **spec} if isinstance(spec, dict) else {}
         merged.setdefault("api_model", name)
-        if merged.get("provider") not in _providers.PROVIDERS or not merged.get("api_key_env") \
-                or not (merged.get("base_url") or merged.get("base_url_env")):
+        complete = (merged.get("provider") in _providers.PROVIDERS and merged.get("api_key_env")
+                    and (merged.get("base_url") or merged.get("base_url_env")))
+        if not complete:
             _log.warning("config.json llm.models[%r] 缺 provider/api_key_env/base_url，已忽略", name)
             continue
         models[name] = merged
     MODELS = models
-    _ALIASES = {a.lower(): n for n, s in models.items() for a in s.get("aliases") or []}
+    _NAMES = {a.lower(): n for n, s in models.items() for a in s.get("aliases") or []}
+    _NAMES.update({n.lower(): n for n in models})
     return models
 
 
@@ -67,13 +69,7 @@ load_models()
 
 def canon_model(name) -> str | None:
     """名字/别名（不分大小写）→ 模型表键；未登记返回 None。"""
-    if not isinstance(name, str):
-        return None
-    low = name.lower()
-    for key in MODELS:
-        if key.lower() == low:
-            return key
-    return _ALIASES.get(low)
+    return _NAMES.get(name.lower()) if isinstance(name, str) else None
 
 
 def spec(model: str) -> dict:
@@ -91,7 +87,8 @@ def ready_note() -> str:
     """启动横幅一行：当前默认模型是否可用。"""
     model = settings({}, "")[0]
     missing = missing_key(model)
-    return f"LLM: {model} {'已启用' if not missing else f'未配置 — 设置 {missing}'}"
+    state = f"未配置 — 设置 {missing}" if missing else "已启用"
+    return f"LLM: {model} {state}"
 
 
 def _models_line() -> str:
@@ -127,11 +124,7 @@ def load_overrides() -> dict:
     for user, entry in (raw.items() if isinstance(raw, dict) else []):
         if not isinstance(entry, dict):
             continue
-        clean = {}
-        for k, canon in _CANON.items():
-            v = canon(entry.get(k))
-            if v:
-                clean[k] = v
+        clean = {k: v for k, canon in _CANON.items() if (v := canon(entry.get(k)))}
         if clean:
             out[user] = clean
     return out
@@ -158,7 +151,11 @@ def save_overrides(overrides: dict) -> None:
 # ── 解析 / 命令 / 调用 ──────────────────────────────────────
 
 def _env(kind: str) -> str:
-    return next((v for n in _ENV[kind] if (v := os.environ.get(n))), "")
+    """启动默认值：新旧环境变量名按 _ENV 顺序取第一个非空。"""
+    for name in _ENV[kind]:
+        if os.environ.get(name):
+            return os.environ[name]
+    return ""
 
 
 def settings(overrides: dict, user: str) -> tuple[str, str]:
