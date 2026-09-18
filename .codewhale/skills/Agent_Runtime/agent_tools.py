@@ -2,11 +2,13 @@
 
 - knowking：懂王舆情桥，后台跑；代码注入 __channel/__user（LLM 拿不到也不该拿）
 - send_file：把 data 内文件发给用户（闸门 tool_runtime.resolve_sendable）
+- chat_history：回读本用户长期对话存档（chat_archive）；代码注入 __channel/__user，读不到别人的
 """
 
 from __future__ import annotations
 
 
+import chat_archive
 import knowking_jobs as _knowking
 import tool_runtime as rt
 from tool_runtime import fn, s
@@ -33,11 +35,25 @@ def tool_send_file(args):
     return rel if rel else "[错误] 路径不允许或文件不存在"
 
 
-TOOLS = {"knowking": tool_knowking, "send_file": tool_send_file}
+def tool_chat_history(args):
+    user = args.get("__user", "")
+    if not user:
+        return "[错误] 当前无用户上下文"
+    try:
+        limit = int(args.get("limit") or 20)
+    except (TypeError, ValueError):
+        limit = 20
+    return chat_archive.read(args.get("__channel", ""), user,
+                             str(args.get("query") or ""), limit)
+
+
+TOOLS = {"knowking": tool_knowking, "send_file": tool_send_file,
+         "chat_history": tool_chat_history}
 FAST_TICKS = [_knowking.poll_and_deliver]
 
 MEMBER_LOCKED = {"send_file"}
-CONTEXT_TOOLS = {"knowking"}
+CONTEXT_TOOLS = {"knowking", "chat_history"}
+UNTRUSTED_TOOLS = {"chat_history"}   # 旧回复可能转述过网页/OCR 原文
 DOC_TOOLS = {"send_file"}
 
 SCHEMAS = [
@@ -53,8 +69,14 @@ SCHEMAS = [
        "不要等待、不要编造报告内容。", {
         "topic": s("要查的主题：去掉 knowking/kk/懂王 触发词，保留真正要查的内容 + 用户给的额外背景/角度/时间范围"),
     }, ["topic"]),
+    fn("chat_history", "回读与本用户的历史对话（长期存档，含已因闲置/清除/超长移出你上下文的，"
+       "也含最近几轮）。每轮带时间、用户原话和你的最终回复。", {
+        "query": s("可选关键词，只返回问或答含该词的轮；留空 = 最近几轮"),
+        "limit": {"type": "integer", "description": "最多返回几轮，默认 20，上限 50"},
+    }, []),
 ]
 
 PROMPT_RULES = [
+    '用户提到上下文里找不到的更早内容（"上次/之前/刚才说的""那个 X 怎么样了"）→ 先调 chat_history（可带关键词）回读再答；上下文够用就别调。回读不到就如实说',
     '用户**明确说出 knowking / kk / 懂王**（如"用 knowking 查大家怎么看 X""kk 一下 Y"）→ 调 knowking 做跨社交平台舆情搜集（topic 去掉触发词只留要查的内容）。这是**唯一**触发条件：没说这几个词就别用它，普通查事实/新闻用 anysearch_search。它耗时数分钟、后台跑、出报告自动推送——把返回的"已开始"提示原样转达即可，别等待、别自己编报告',
 ]

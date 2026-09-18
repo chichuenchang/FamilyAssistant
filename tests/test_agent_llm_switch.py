@@ -242,3 +242,32 @@ def test_reply_badge_sums_tokens_and_strips_usage(tmp_path, monkeypatch):
     r = a.handle("hi", user="u1", member="Jim")
     assert r.splitlines()[0] == "⚙️ nope · 🪙 2,200 in / 25 out"
     assert all("_usage" not in m for m in seen[1])   # 私有键不回传 API
+
+
+def test_truncated_tool_calls_not_executed(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
+    ran = []
+    monkeypatch.setitem(agent_core._TOOL_MAP, "boom", lambda args: ran.append(args) or "ok")
+    replies = iter([
+        {"content": "", "_finish": "length",
+         "tool_calls": [{"id": "1", "function": {"name": "boom", "arguments": '{"a": 1'}}]},
+        {"content": "好"},
+    ])
+    seen = []
+    a._call_llm = lambda msgs, user="": seen.append([dict(m) for m in msgs]) or next(replies)
+    assert a.handle("hi", user="u1", member="Jim") == "好"
+    assert ran == []
+    assert seen[1][-1] == {"role": "user", "content": agent_core.TRUNCATED_TOOLS_NOTE}
+    assert not any(m.get("tool_calls") for m in a.history["u1"])
+
+
+def test_truncated_reply_marked_and_not_saved(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
+    a._call_llm = lambda msgs, user="": {"content": "半句话", "_finish": "length"}
+    r = a.handle("hi", user="u1", member="Jim")
+    assert r == f"半句话\n{agent_core.TRUNCATED_REPLY_MARK}"
+    assert a.history["u1"][-1] == {"role": "assistant", "content": agent_core.TRUNCATED_REPLY_MARK}
+    a._call_llm = lambda msgs, user="": {"content": "", "_finish": "length"}
+    assert a.handle("hi", user="u1", member="Jim") == agent_core.TRUNCATED_REPLY_MARK
