@@ -89,14 +89,13 @@ def _qualified(annot) -> str:
         t = node.get("/T")
         if t is not None:
             parts.append(str(t))
-        parent = node.get("/Parent")
-        node = _obj(parent) if parent is not None else None
+        node = _obj(node.get("/Parent"))
     return ".".join(reversed(parts))
 
 
 def _widget_state(annot) -> str | None:
-    ap = _obj(annot.get("/AP")) if annot.get("/AP") is not None else None
-    normal = _obj(ap.get("/N")) if ap is not None and ap.get("/N") is not None else None
+    ap = _obj(annot.get("/AP"))
+    normal = _obj(ap.get("/N")) if ap is not None else None
     if normal is None or not hasattr(normal, "keys"):
         return None
     states = [str(k) for k in normal.keys() if str(k) != "/Off"]
