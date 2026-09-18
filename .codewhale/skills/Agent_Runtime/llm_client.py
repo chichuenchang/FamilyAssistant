@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 import tempfile
 from pathlib import Path
 
@@ -247,13 +246,14 @@ def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
     附私有键 "_usage"/"_finish"（及 anthropic 的 "_blocks"，顶替时 "_fallback"=顶替模型键）：
     再次发给 API 前调用方须 pop 掉 _usage/_finish/_fallback；_blocks 留着同轮重放。
     opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次。"""
-    s = spec(model)
-    out = _providers.PROVIDERS[s["provider"]](s, messages, tools, effort, **opts)
+    def call(name):
+        s = spec(name)
+        return _providers.PROVIDERS[s["provider"]](s, messages, tools, effort, **opts)
+
+    out = call(model)
     if out is None and (fb := fallback_of(model)):
-        _log.warning("模型 %s 无响应，改用 %s", model, fb)
-        print(f"[agent] {model} 无响应，改用 {fb}", file=sys.stderr)
-        f = MODELS[fb]
-        out = _providers.PROVIDERS[f["provider"]](f, messages, tools, effort, **opts)
+        _log.warning("模型 %s 无响应，改用 %s", model, fb)   # logger 已挂 stderr handler，不再 print
+        out = call(fb)
         if out is not None:
             out["_fallback"] = fb
     return out
