@@ -64,6 +64,13 @@
     "image_retention_years": 2,
     "image_prune_interval_days": 30
   },
+  "daily_banner": {
+    "_comment": "每日早报（Daily_Banner）。time=推送时刻（本机本地时间）；catchup_until=晚启动补推截止（之后当天跳过）；lookahead_days=日程窗口天数（含今天）。收件人 = data/members.json 里 \"banner\": true 的成员。",
+    "enabled": true,
+    "time": "08:20",
+    "catchup_until": "12:00",
+    "lookahead_days": 3
+  },
   "backup": {
     "enabled": true,
     "debounce_seconds": 60
