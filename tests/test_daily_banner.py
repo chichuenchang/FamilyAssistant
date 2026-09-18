@@ -29,6 +29,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(banner, "build", lambda member, day, cfg: f"brief {member}")
     banner._running.clear()
     banner._last_try.clear()
+    banner._sent.clear()
     return mp
 
 
@@ -94,6 +95,14 @@ class TestTick:
             raise OSError("down")
         banner.tick(boom, "telegram", now=AT_0830, cfg=CFG, spawn=_sync)
         assert "Alex" not in banner._load_state().get("telegram", {})
+
+    def test_stale_state_read_does_not_resend(self, env, monkeypatch):
+        push = Sent()
+        banner.tick(push, "telegram", now=AT_0830, cfg=CFG, spawn=_sync)
+        monkeypatch.setattr(banner, "_load_state", lambda: {})   # 读盘早于另一线程写入
+        assert banner.tick(push, "telegram", now=datetime(2026, 9, 17, 9, 0), cfg=CFG,
+                           spawn=_sync) == []
+        assert len(push.calls) == 2
 
     def test_running_member_not_started_twice(self, env):
         started = []

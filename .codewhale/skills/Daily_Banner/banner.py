@@ -35,6 +35,7 @@ _DEFAULTS = {"enabled": False, "time": "08:20", "catchup_until": "12:00", "looka
 _lock = threading.Lock()                       # 守 _running / _last_try / 状态文件读改写
 _running: set[tuple[str, str]] = set()         # (频道, 成员) 正在跑
 _last_try: dict[tuple[str, str], float] = {}   # (频道, 成员) → 上次启动 monotonic
+_sent: dict[tuple[str, str], str] = {}         # (频道, 成员) → 本进程已推日期；锁内复查，防读盘后并发重推
 
 
 def load_cfg() -> dict:
@@ -82,6 +83,7 @@ def _mark_sent(channel: str, member: str, day: date) -> None:
         chan[member] = day.isoformat()
         st[channel] = chan
         jsonfile.save(_state_path(), st)
+        _sent[(channel, member)] = day.isoformat()
         _last_try.pop((channel, member), None)     # 退避只罚失败
 
 
@@ -276,14 +278,15 @@ def tick(push_text, channel: str, *, now: datetime | None = None, cfg: dict | No
     now = now or datetime.now()
     if not in_window(now, cfg):
         return []
+    today = now.date().isoformat()
     sent = _load_state().get(channel) or {}
     started = []
     for member, ids in recipients(channel, members_path).items():
-        if sent.get(member) == now.date().isoformat():
+        if sent.get(member) == today:
             continue
         key = (channel, member)
         with _lock:
-            if key in _running or time.monotonic() - _last_try.get(key, float("-inf")) < RETRY_S:
+            if _sent.get(key) == today or key in _running or time.monotonic() - _last_try.get(key, float("-inf")) < RETRY_S:
                 continue
             _running.add(key)
             _last_try[key] = time.monotonic()
