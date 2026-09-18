@@ -1,47 +1,66 @@
-"""移出上下文的对话（闲置清空、/clear、预算裁剪）按用户存内存，供 chat_history 工具回读。
+"""对话长期存档：每轮追加一行到 data/.state/chat_history.jsonl，供 chat_history 工具回读。
 
-每轮只留用户原话 + 最终回复（工具调用/结果不留）。不落盘，进程重启即丢。
+每行 {ts, channel, user, said, reply}：said = 用户亲手打的字，reply = 最终回复（不含工具
+调用/结果）。只追加不清理，重启照常续写。.state 不入 git、不进云备份（backup_sync）。
 """
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
 
-CAP = 100     # 每用户最多留多少轮，超出丢最旧
+import paths as _paths
+
 CLIP = 500    # 回读时每条文字最多字符数
-EMPTY = "（没有更早的对话记录）"
+EMPTY = "（没有对话记录）"
 
-_ARCHIVE: dict[str, deque] = defaultdict(lambda: deque(maxlen=CAP))
+_log = logging.getLogger("familyassist.agent")
 
 
-def stash(user, msgs: list[dict]) -> None:
-    """整轮消息序列（user 开头）拆成 (问, 答) 存档；答 = 该轮最后一条非空 assistant 文字。"""
-    q = _ARCHIVE[str(user)]
-    ask, reply = None, ""
-    for m in msgs:
-        role, text = m.get("role"), (m.get("content") or "").strip()
-        if role == "user":
-            if ask is not None:
-                q.append((ask, reply))
-            ask, reply = text, ""
-        elif role == "assistant" and text:
-            reply = text
-    if ask is not None:
-        q.append((ask, reply))
+def _path() -> Path:
+    return _paths.state_file("chat_history.jsonl")
+
+
+def append(channel: str, user, said: str, reply: str) -> None:
+    """追加一轮；写失败只记日志，不影响回复。"""
+    row = {"ts": datetime.now().isoformat(timespec="seconds"), "channel": channel or "",
+           "user": str(user), "said": said, "reply": reply}
+    try:
+        with _path().open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        _log.warning("对话存档写入失败", exc_info=True)
+
+
+def _rows(channel: str, user: str):
+    try:
+        with _path().open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue   # 半行（写入中崩溃）跳过
+                if r.get("user") == user and r.get("channel", "") == channel:
+                    yield r
+    except FileNotFoundError:
+        return
 
 
 def _clip(text: str) -> str:
     return text if len(text) <= CLIP else text[:CLIP] + "…"
 
 
-def read(user, query: str = "", limit: int = 20) -> str:
-    """最近 limit 轮（旧在前），query 非空时只留问或答含该词的轮（不分大小写）。"""
-    turns = list(_ARCHIVE.get(str(user), ()))
+def read(channel: str, user, query: str = "", limit: int = 20) -> str:
+    """该用户最近 limit 轮（旧在前），query 非空时只留问或答含该词的轮（不分大小写）。"""
     needle = query.strip().lower()
-    if needle:
-        turns = [t for t in turns if needle in t[0].lower() or needle in t[1].lower()]
+    turns = [r for r in _rows(channel or "", str(user))
+             if not needle or needle in r.get("said", "").lower()
+             or needle in r.get("reply", "").lower()]
     turns = turns[-max(1, min(int(limit or 20), 50)):]
     if not turns:
         return EMPTY
-    return "\n".join(f"[{i}] 用户: {_clip(a)}\n    助手: {_clip(r) or '（无回复）'}"
-                     for i, (a, r) in enumerate(turns, 1))
+    return "\n".join(
+        f"[{r.get('ts', '')[:16].replace('T', ' ')}] 用户: {_clip(r.get('said', ''))}\n"
+        f"    助手: {_clip(r.get('reply', '')) or '（无回复）'}" for r in turns)

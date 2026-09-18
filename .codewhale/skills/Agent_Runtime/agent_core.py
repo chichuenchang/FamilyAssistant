@@ -358,14 +358,14 @@ class Agent:
         last = self._last_active.get(user)
         if (last is not None and self.idle_clear_seconds > 0
                 and now - last >= self.idle_clear_seconds and user in self.history):
-            chat_archive.stash(user, self.history.pop(user))
+            self.history.pop(user, None)
             _log.debug("用户 %s 闲置 %.1f 小时，自动清除对话上下文",
                        user, (now - last) / 3600)
         self._last_active[user] = now
 
         # 频道无关命令：清除本用户对话上下文（不经 LLM，零 token）
         if is_clear_command(text):
-            chat_archive.stash(user, self.history.pop(user, []))
+            self.history.pop(user, None)
             return "✅ 对话上下文已清除。"
 
         # 频道无关命令：/model /effort 运行时切换 LLM（不经 LLM，零 token）
@@ -480,6 +480,7 @@ class Agent:
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         turn.append({"role": "assistant", "content": hist_reply})
         self._save_history(user, turn)
+        chat_archive.append(self.channel, user, said, hist_reply)
         if shown:
             final += "\n\n" + "\n\n".join(shown.values())
         for p in produced_images:
@@ -552,9 +553,7 @@ class Agent:
         """
         h = self.history[user]
         h.extend(turn_msgs)
-        before = list(h)
         trimmed = _budget.trim_history(h, self.history_size, self.context_max_tokens)
-        chat_archive.stash(user, before[:len(before) - len(h)])   # 裁剪只删最旧前缀
         if trimmed:
             _log.debug("用户 %s 对话历史超 %d token 预算，丢弃最旧 %d 轮",
                        user, self.context_max_tokens, trimmed)

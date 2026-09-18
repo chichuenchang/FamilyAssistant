@@ -2,7 +2,7 @@
 
 - knowking：懂王舆情桥，后台跑；代码注入 __channel/__user（LLM 拿不到也不该拿）
 - send_file：把 data 内文件发给用户（闸门 tool_runtime.resolve_sendable）
-- chat_history：回读已移出上下文的本用户对话（chat_archive）；代码注入 __user，读不到别人的
+- chat_history：回读本用户长期对话存档（chat_archive）；代码注入 __channel/__user，读不到别人的
 """
 
 from __future__ import annotations
@@ -43,7 +43,8 @@ def tool_chat_history(args):
         limit = int(args.get("limit") or 20)
     except (TypeError, ValueError):
         limit = 20
-    return chat_archive.read(user, str(args.get("query") or ""), limit)
+    return chat_archive.read(args.get("__channel", ""), user,
+                             str(args.get("query") or ""), limit)
 
 
 TOOLS = {"knowking": tool_knowking, "send_file": tool_send_file,
@@ -68,8 +69,8 @@ SCHEMAS = [
        "不要等待、不要编造报告内容。", {
         "topic": s("要查的主题：去掉 knowking/kk/懂王 触发词，保留真正要查的内容 + 用户给的额外背景/角度/时间范围"),
     }, ["topic"]),
-    fn("chat_history", "回读与本用户更早的对话（因闲置/清除/超长已移出你的上下文的部分；"
-       "当前上下文里已有的不在其中）。每轮只有用户原话和你的最终回复。", {
+    fn("chat_history", "回读与本用户的历史对话（长期存档，含已因闲置/清除/超长移出你上下文的，"
+       "也含最近几轮）。每轮带时间、用户原话和你的最终回复。", {
         "query": s("可选关键词，只返回问或答含该词的轮；留空 = 最近几轮"),
         "limit": {"type": "integer", "description": "最多返回几轮，默认 20，上限 50"},
     }, []),
