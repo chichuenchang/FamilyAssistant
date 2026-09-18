@@ -246,9 +246,10 @@ def describe(layout: dict, coords: bool = True) -> str:
         for f, w in fl:
             state = f" state={w['state']}" if len(f["options"]) > 1 and "state" in w else ""
             out.append(_field_line(f) + state + (f" {_box(w)}" if coords else ""))
-        for l in ll[:max(budget, 0)]:
+        room = max(budget, 0)
+        for l in ll[:room]:
             out.append((f"{_box(l)} " if coords else "") + l["text"])
-        if len(ll) > max(budget, 0):
+        if len(ll) > room:
             out.append("（本页其余文字行已截断）")
         budget -= len(ll)
     return "\n".join(out)
