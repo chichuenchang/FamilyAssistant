@@ -114,34 +114,16 @@ class Transport:
         media 给定 = 附言自带的来件（Telegram 图/PDF 附言）：只配这些，攒着的不动。"""
         self.tick()
         key = str(user)
-        own = [(str(p), time.time()) for p in media or []]
-        with self._pending_lock:
-            if is_clear_command(text):
-                self._pending.pop(key, None)
-            if is_command(text):
-                held = []
-                if own:   # 附言是命令：来件照攒
-                    self._pending.setdefault(key, []).extend(own)
-            elif media is not None:
-                held = own
-            else:
-                held = self._pending.pop(key, [])
-        ttl = getattr(self.agent, "idle_clear_seconds", 0)
-        if ttl > 0:
-            fresh = [h for h in held if time.time() - h[1] < ttl]
-            if len(fresh) < len(held):
-                log.debug("来件超时作废 %d 件 from %s", len(held) - len(fresh), user)
-            held = fresh
+        held = self._take_held(key, text, media)
         media = [p for p, _ in held]
         log.debug("文字 from %s(%s) 引用=%s 来件=%d: %s", user, member, quoted or "-",
                   len(media), text)
         try:
             body = with_quote(text, quoted)
             if media:
-                reply = self.agent.handle_media(media, body, user=str(user), member=member,
-                                                said=text)
+                reply = self.agent.handle_media(media, body, user=key, member=member, said=text)
             else:
-                reply = self.agent.handle(body, user=str(user), member=member, said=text)
+                reply = self.agent.handle(body, user=key, member=member, said=text)
             log.debug("文字回复 → %s", (reply or "")[:200])
             self.deliver(target, reply)
         except Exception as e:
@@ -150,6 +132,26 @@ class Transport:
                 with self._pending_lock:
                     self._pending[key] = held + self._pending.get(key, [])
             self._safe_send(target, f"处理出错: {e}")
+
+    def _take_held(self, key: str, text: str,
+                   media: list[str] | None) -> list[tuple[str, float]]:
+        """本条文字要带的来件 [(路径, 收到时刻)]，已剔超时。规则见 on_text。"""
+        own = [(str(p), time.time()) for p in media or []]
+        with self._pending_lock:
+            if is_clear_command(text):
+                self._pending.pop(key, None)
+            if is_command(text):
+                if own:   # 附言是命令：来件照攒
+                    self._pending.setdefault(key, []).extend(own)
+                return []
+            held = own if media is not None else self._pending.pop(key, [])
+        ttl = getattr(self.agent, "idle_clear_seconds", 0)
+        if ttl <= 0:
+            return held
+        fresh = [h for h in held if time.time() - h[1] < ttl]
+        if len(fresh) < len(held):
+            log.debug("来件超时作废 %d 件 from %s", len(held) - len(fresh), key)
+        return fresh
 
     def on_media(self, target, user, member: str, path: Path | str | None) -> None:
         """图片/PDF 已落盘 → 静默攒着，等用户下条文字指令（on_text）。path 为 None = 下载失败，
