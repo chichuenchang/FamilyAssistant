@@ -12,7 +12,7 @@ Agent Core — 频道无关的全量上下文智能助手。
 
 频道接入契约（详见 .codewhale/skills/Agent_Runtime/SKILL.md）:
     agent.handle(text, user, member)        # 文字消息
-    agent.handle_image(path, user, member)  # 图片消息
+    agent.handle_media(paths, text, user, member)  # 图片/PDF + 随后文字
     user = 频道内唯一 id（隔离各用户对话历史）
     member = members.resolve 解析出的成员名；为空直接返回空串（未注册来源不碰 LLM）
 
@@ -244,6 +244,17 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 IMG_SENTINEL = "\x01IMG:"
 DOC_SENTINEL = "\x01DOC:"
 
+CLEAR_COMMANDS = ("/clear", "清除上下文", "清空上下文", "清空记忆")
+
+
+def is_clear_command(text: str) -> bool:
+    return text.strip().lower() in CLEAR_COMMANDS
+
+
+def is_command(text: str) -> bool:
+    """不经 LLM 的频道无关命令（/clear 类、/model、/effort）。传输层据此绕开攒着的来件。"""
+    return is_clear_command(text) or _llm.parse_command(text.strip()) is not None
+
 
 def split_reply(reply: str) -> tuple[str, list[str], list[str]]:
     """剥离 \\x01IMG:/\\x01DOC: 哨兵行，返回 (可见文本, [图片], [文档]) 三元组。"""
@@ -347,7 +358,7 @@ class Agent:
         self._last_active[user] = now
 
         # 频道无关命令：清除本用户对话上下文（不经 LLM，零 token）
-        if text.lower() in ("/clear", "清除上下文", "清空上下文", "清空记忆"):
+        if is_clear_command(text):
             self.history.pop(user, None)
             return "✅ 对话上下文已清除。"
 
@@ -446,24 +457,30 @@ class Agent:
             final += f"\n{DOC_SENTINEL}{p}"
         return final
 
-    def handle_image(self, image_path: str, user: str = "default", member: str = "") -> str:
-        """图片/PDF 入口：ocr_image 对两者一视同仁（PDF 走腾讯 IsPdf 逐页），
-        OCR 文字交 LLM 按各 skill 的 IMAGE_ROUTES 分流。"""
+    def handle_media(self, paths: list[str], text: str, user: str = "default",
+                     member: str = "", *, said: str | None = None) -> str:
+        """图片/PDF + 随后文字指令 一并处理。传输层攒下来件，等用户发文字才调（来件本身不回复）。
+        ocr_image 对图片/PDF 一视同仁（PDF 走腾讯 IsPdf 逐页）；OCR 不可用或没识别到文字时
+        只给路径，靠用户文字指令。said 同 handle（缺省 = text）。"""
         if not member:
             return ""
         from ocr import ocr_image, is_available
-        if not is_available():
-            return "📄 材料已收到（已保存）。请用文字描述（如\"午餐45块\"），或配置腾讯云 OCR 自动识别。"
-        ocr_text = ocr_image(image_path)
-        if ocr_text:
-            routes = "\n".join(f"{i}) {r}" for i, r in enumerate(REGISTRY.image_routes, 1))
-            prompt = (
-                f"用户发来一份材料（图片或 PDF），已保存为 {image_path}，OCR结果:\n{rt.fence(ocr_text, 'ocr')}\n"
-                f"判断内容，按以下情况处理（取最匹配的一条）：\n{routes}\n"
-                f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
-            )
-            return self.handle(prompt, user=user, member=member, said="")
-        return "📄 材料已收到（已保存），但 OCR 没识别到文字（可能扫描件/加密）。请用文字告诉我这是什么。"
+        ocr_on = is_available()
+        parts = []
+        for i, path in enumerate(paths, 1):
+            ocr_text = ocr_image(path) if ocr_on else ""
+            body = rt.fence(ocr_text, "ocr") if ocr_text else "（无 OCR 文字）"
+            parts.append(f"材料{i}: {path}\nOCR结果:\n{body}")
+        routes = "\n".join(f"{i}) {r}" for i, r in enumerate(REGISTRY.image_routes, 1))
+        prompt = (
+            f"用户发来 {len(paths)} 份材料（图片或 PDF），已保存：\n" + "\n\n".join(parts)
+            + f"\n\n用户随后的指示:\n{text}\n\n"
+            f"指示明显与这些材料无关（如另起话题）→ 材料作废：不处理、不提及，只回应指示。\n"
+            f"否则按用户指示处理这些材料。指示没说清归类时，按以下情况判断（取最匹配的一条）：\n{routes}\n"
+            f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
+        )
+        return self.handle(prompt, user=user, member=member,
+                           said=text if said is None else said)
 
     def _handle_llm_command(self, text: str, user: str) -> str | None:
         """/model /effort 运行时切换（不经 LLM，零 token）。是切换命令返回回复，否则 None。"""

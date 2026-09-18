@@ -2,7 +2,7 @@
 
 子类只做三件事：实现 send_text / send_photo / send_document，把 SDK 收到的消息
 翻译成 on_text / on_media 调用，以及决定后台节拍怎么跑（轮询循环内调 background_tick，
-或 start_background_threads 起守护线程）。闸门、来图落盘、哨兵拆分投递、异常兜底在这里，
+或 start_background_threads 起守护线程）。闸门、来图落盘、来件攒到下条文字、哨兵拆分投递、异常兜底在这里，
 各频道零复制。节拍钩子来自各 skill manifest（MESSAGE_TICKS / SLOW_TICKS / FAST_TICKS，
 契约见 skill_registry.py）；本模块不 import 任何 skill。
 
@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -21,7 +22,8 @@ from pathlib import Path
 import backup_hook
 import paths as _paths
 import tool_runtime as rt
-from agent_core import Agent, REGISTRY, member_inbox_dir, split_reply
+from agent_core import (Agent, REGISTRY, is_clear_command, is_command, member_inbox_dir,
+                        split_reply)
 from members import resolve
 from skill_registry import run_ticks
 
@@ -47,12 +49,19 @@ def sendable(rel: str) -> Path | None:
     return None
 
 
+def stamp_name(channel: str, ext: str, now: datetime) -> str:
+    """来件文件名 <ts>_<6位随机>_<channel><ext>：相册/连发同秒落盘不互相覆盖。"""
+    return f"{now:%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}_{channel}{ext}"
+
+
 class Transport:
     channel = ""   # members.json 频道键（"telegram"/"wechat"）；也是 Agent(channel=) 与后台投递路由键
     tag = ""       # 控制台前缀，如 "tg"/"wx"
 
     def __init__(self, agent: Agent | None = None):
         self._agent = agent
+        self._pending: dict[str, list[tuple[str, float]]] = {}   # 用户 id → [(来件路径, 收到时刻)]
+        self._pending_lock = threading.Lock()      # 频道回调可能并发
 
     @property
     def agent(self) -> Agent:
@@ -87,41 +96,73 @@ class Transport:
         run_ticks(REGISTRY.message_ticks)
 
     def inbox_path(self, member: str, ext: str) -> Path:
-        """来件暂存路径 data/<成员>/inbox/YYYY-MM/<ts>_<channel><ext>。"""
+        """来件暂存路径 data/<成员>/inbox/YYYY-MM/<stamp_name>。"""
         now = datetime.now()
-        return member_inbox_dir(member, now) / f"{now:%Y%m%d_%H%M%S}_{self.channel}{ext}"
+        return member_inbox_dir(member, now) / stamp_name(self.channel, ext, now)
 
     @staticmethod
     def mark_dirty() -> None:
         backup_hook.mark_dirty()
 
     # ── 收消息 ──────────────────────────────────────────────
-    def on_text(self, target, user, member: str, text: str, quoted=None) -> None:
+    def on_text(self, target, user, member: str, text: str, quoted=None,
+                media: list[str] | None = None) -> None:
+        """攒着的来件随这条文字一起交 Agent（文字即指令）；没有来件走普通对话。
+        攒超 Agent.idle_clear_seconds 的来件作废（同闲置清上下文：隔久了多半是新话题）。
+        命令（/clear、/model…）绕开来件照常执行：/clear 连来件一起清，其余命令来件继续等。
+        来件与文字是否相关由 LLM 判（无关即作废）；交出去就不再攒，处理出错则放回。
+        media 给定 = 附言自带的来件（Telegram 图/PDF 附言）：只配这些，攒着的不动。"""
         self.tick()
-        log.debug("文字 from %s(%s) 引用=%s: %s", user, member, quoted or "-", text)
+        key = str(user)
+        held = self._take_held(key, text, media)
+        media = [p for p, _ in held]
+        log.debug("文字 from %s(%s) 引用=%s 来件=%d: %s", user, member, quoted or "-",
+                  len(media), text)
         try:
-            reply = self.agent.handle(with_quote(text, quoted), user=str(user), member=member,
-                                      said=text)
+            body = with_quote(text, quoted)
+            if media:
+                reply = self.agent.handle_media(media, body, user=key, member=member, said=text)
+            else:
+                reply = self.agent.handle(body, user=key, member=member, said=text)
             log.debug("文字回复 → %s", (reply or "")[:200])
             self.deliver(target, reply)
         except Exception as e:
             log.exception("文字处理出错")
+            if held:   # 放回，用户重发指令即可，不必重传
+                with self._pending_lock:
+                    self._pending[key] = held + self._pending.get(key, [])
             self._safe_send(target, f"处理出错: {e}")
 
+    def _take_held(self, key: str, text: str,
+                   media: list[str] | None) -> list[tuple[str, float]]:
+        """本条文字要带的来件 [(路径, 收到时刻)]，已剔超时。规则见 on_text。"""
+        own = [(str(p), time.time()) for p in media or []]
+        with self._pending_lock:
+            if is_clear_command(text):
+                self._pending.pop(key, None)
+            if is_command(text):
+                if own:   # 附言是命令：来件照攒
+                    self._pending.setdefault(key, []).extend(own)
+                return []
+            held = own if media is not None else self._pending.pop(key, [])
+        ttl = getattr(self.agent, "idle_clear_seconds", 0)
+        if ttl <= 0:
+            return held
+        fresh = [h for h in held if time.time() - h[1] < ttl]
+        if len(fresh) < len(held):
+            log.debug("来件超时作废 %d 件 from %s", len(held) - len(fresh), key)
+        return fresh
+
     def on_media(self, target, user, member: str, path: Path | str | None) -> None:
-        """图片/PDF 已落盘 → OCR 分流。path 为 None = 下载失败。"""
+        """图片/PDF 已落盘 → 静默攒着，等用户下条文字指令（on_text）。path 为 None = 下载失败，
+        照样提示——否则用户以为已收到。"""
         self.tick()
         if not path:
             self._safe_send(target, "文件下载失败，请重发。")
             return
-        log.debug("来件 from %s(%s) → %s", user, member, path)
-        try:
-            reply = self.agent.handle_image(str(path), user=str(user), member=member)
-            log.debug("来件回复 → %s", (reply or "")[:200])
-            self.deliver(target, reply)
-        except Exception as e:
-            log.exception("来件处理出错")
-            self._safe_send(target, f"文件处理出错: {e}")
+        log.debug("来件 from %s(%s) → %s（待文字指令）", user, member, path)
+        with self._pending_lock:
+            self._pending.setdefault(str(user), []).append((str(path), time.time()))
 
     # ── 投递 ────────────────────────────────────────────────
     def deliver(self, target, reply: str) -> None:

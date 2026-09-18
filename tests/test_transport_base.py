@@ -36,8 +36,11 @@ class FakeAgent:
             raise RuntimeError("llm down")
         return self.reply
 
-    def handle_image(self, path, user="", member=""):
-        self.seen.append(("image", path, user, member))
+    def handle_media(self, paths, text, user="", member="", said=None):
+        self.said = said
+        self.seen.append(("media", paths, text, user, member))
+        if self.boom:
+            raise RuntimeError("ocr down")
         return self.reply
 
 
@@ -116,13 +119,76 @@ def test_on_media_none_path_asks_resend(monkeypatch):
     assert "重发" in t.calls[0][2]
 
 
-def test_on_media_routes_to_handle_image(monkeypatch, tmp_path):
+def test_on_media_silent_until_text_then_batched(monkeypatch, tmp_path):
     monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
     agent = FakeAgent(reply="收到")
     t = FakeTransport(agent=agent)
     t.on_media("tgt", 1, "Alex", tmp_path / "a.jpg")
-    assert agent.seen[0][:2] == ("image", str(tmp_path / "a.jpg"))
+    t.on_media("tgt", 1, "Alex", tmp_path / "b.pdf")
+    t.on_media("tgt", 2, "Bo", tmp_path / "c.jpg")     # 别的用户的来件不串
+    assert agent.seen == [] and t.calls == []
+    t.on_text("tgt", 1, "Alex", "记账", quoted="上一条")
+    assert agent.seen == [("media", [str(tmp_path / "a.jpg"), str(tmp_path / "b.pdf")],
+                           tb.with_quote("记账", "上一条"), "1", "Alex")]
+    assert agent.said == "记账"
     assert ("text", "tgt", "收到") in t.calls
+    t.on_text("tgt", 1, "Alex", "再问")                # 来件已用掉 → 普通对话
+    assert agent.seen[-1] == ("text", "再问", "1", "Alex")
+
+
+def test_failed_media_turn_keeps_media(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
+    agent = FakeAgent(boom=True)
+    t = FakeTransport(agent=agent)
+    t.on_media("tgt", 1, "Alex", tmp_path / "a.jpg")
+    t.on_text("tgt", 1, "Alex", "记账")
+    assert t.calls[0][2].startswith("处理出错")
+    agent.boom = False
+    t.on_text("tgt", 1, "Alex", "记账")                 # 重发指令，来件还在
+    assert agent.seen[-1][:2] == ("media", [str(tmp_path / "a.jpg")])
+
+
+def test_stale_media_expires_with_idle_clear(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
+    agent = FakeAgent()
+    agent.idle_clear_seconds = 3600
+    t = FakeTransport(agent=agent)
+    now = [1000.0]
+    monkeypatch.setattr(tb.time, "time", lambda: now[0])
+    t.on_media("tgt", 1, "Alex", tmp_path / "old.jpg")
+    now[0] += 3600
+    t.on_media("tgt", 1, "Alex", tmp_path / "new.jpg")
+    t.on_text("tgt", 1, "Alex", "记账")
+    assert agent.seen[-1][:2] == ("media", [str(tmp_path / "new.jpg")])
+    t.on_media("tgt", 1, "Alex", tmp_path / "x.jpg")
+    now[0] += 3600
+    t.on_text("tgt", 1, "Alex", "记一笔 午餐45块")     # 只剩过期来件 → 普通对话
+    assert agent.seen[-1] == ("text", "记一笔 午餐45块", "1", "Alex")
+
+
+def test_explicit_media_leaves_held_alone(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
+    agent = FakeAgent()
+    t = FakeTransport(agent=agent)
+    t.on_media("tgt", 1, "Alex", tmp_path / "old.jpg")
+    t.on_text("tgt", 1, "Alex", "记账", media=[tmp_path / "r.jpg"])
+    assert agent.seen[-1][:2] == ("media", [str(tmp_path / "r.jpg")])
+    t.on_text("tgt", 1, "Alex", "/model", media=[tmp_path / "c.jpg"])   # 命令附言：来件照攒
+    t.on_text("tgt", 1, "Alex", "这两张")
+    assert agent.seen[-1][:2] == ("media", [str(tmp_path / "old.jpg"), str(tmp_path / "c.jpg")])
+
+
+def test_commands_bypass_pending_media(monkeypatch, tmp_path):
+    monkeypatch.setattr(tb.REGISTRY, "message_ticks", [])
+    agent = FakeAgent()
+    t = FakeTransport(agent=agent)
+    t.on_media("tgt", 1, "Alex", tmp_path / "a.jpg")
+    t.on_text("tgt", 1, "Alex", "/model")               # 命令照常执行，来件继续等
+    assert agent.seen == [("text", "/model", "1", "Alex")]
+    t.on_text("tgt", 1, "Alex", "/clear")               # /clear 连来件一起清
+    assert agent.seen[-1] == ("text", "/clear", "1", "Alex")
+    t.on_text("tgt", 1, "Alex", "你好")
+    assert agent.seen[-1] == ("text", "你好", "1", "Alex")
 
 
 def test_gate_uses_channel_registry(monkeypatch):
@@ -144,6 +210,7 @@ def test_inbox_path_uses_member_inbox_and_channel(tmp_path, monkeypatch):
     p = t.inbox_path("Alex", ".pdf")
     assert p.name.endswith("_telegram.pdf")
     assert p.parent.is_relative_to(tmp_path)
+    assert t.inbox_path("Alex", ".pdf") != p          # 同秒连发不互相覆盖
 
 
 def test_background_tick_isolates_failures(monkeypatch):

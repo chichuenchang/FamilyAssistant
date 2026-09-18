@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); 
 import logging
 
 from agent_core import receipt_month_dir, member_inbox_dir, setup_logging
-from transport_base import Transport, with_quote as _with_quote
+from transport_base import Transport, stamp_name, with_quote as _with_quote
 import paths as _paths
 
 log = logging.getLogger("familyassist.telegram")
@@ -86,9 +86,8 @@ def download_photo(file_id: str, member: str = "") -> Path | None:
         return None
     url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
     now = datetime.now()
-    ts = now.strftime("%Y%m%d_%H%M%S")
     staging = member_inbox_dir(member, now) if member else receipt_month_dir(now)
-    dest = staging / f"{ts}_telegram.jpg"
+    dest = staging / stamp_name("telegram", ".jpg", now)
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
         Transport.mark_dirty()
@@ -109,10 +108,9 @@ def download_document(file_id: str, file_name: str, member: str = "") -> Path | 
         return None
     url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
     now = datetime.now()
-    ts = now.strftime("%Y%m%d_%H%M%S")
-    suffix = ".pdf"   # 仅 PDF 走此函数（调用方已判定）；强制 .pdf，确保 ocr_image 走 PDF 分支
     staging = member_inbox_dir(member, now) if member else receipt_month_dir(now)
-    dest = staging / f"{ts}_telegram{suffix}"
+    # 仅 PDF 走此函数（调用方已判定）；强制 .pdf，确保 ocr_image 走 PDF 分支
+    dest = staging / stamp_name("telegram", ".pdf", now)
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
         Transport.mark_dirty()
@@ -245,6 +243,89 @@ def _send_reply(chat_id, reply: str) -> None:
 
 # ── 主循环 ──────────────────────────────────────────────────
 
+def handle_updates(t: Transport, updates: list[dict], offset: int,
+                   albums: dict[str, dict]) -> int:
+    """处理一批 getUpdates 结果，返回推进后的 offset。"""
+    # 图/PDF 附言 = 这件（整本相册）的文字指令，只配自己的来件，不领别的攒着的。
+    # 相册每张是一条 update、附言只在第一张，且可能被拆到相邻两批 → 按 media_group_id
+    # 收进 albums（跨批存活），某批没再来新张才发出。落盘失败/不支持的文件不留附言。
+    touched = set()
+    for update in updates:
+        # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
+        offset = max(offset, update["update_id"])
+        msg = update.get("message", {})
+        if not msg:
+            continue
+
+        chat_id = msg["chat"]["id"]
+        member = t.gate(chat_id)
+        if member is None:
+            continue
+        user_name = msg.get("from", {}).get("first_name", "unknown")
+        text = msg.get("text", "")
+
+        if msg.get("entities") and msg["entities"][0].get("type") == "bot_command":
+            if text.strip().split()[0] == "/start":
+                send_message(chat_id,
+                    "👋 你好！我是 Family Assistant。\n"
+                    "可以直接跟我说话，比如：\n"
+                    "  • \"花了45块 午餐\" — 记账\n"
+                    "  • \"这个月花了多少\" — 查账\n"
+                    "  • \"美元汇率\" — 查汇率")
+            continue
+
+        # 图片 / PDF → 下载到发送成员 inbox
+        photos = msg.get("photo") or []
+        doc = msg.get("document")
+        if photos:
+            print(f"[tg] 图片消息 from {user_name}")
+            file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
+            path = download_photo(file_id, member) if file_id else None
+        elif doc:
+            name = doc.get("file_name", "") or ""
+            is_pdf = name.lower().endswith(".pdf") or \
+                doc.get("mime_type") == "application/pdf"
+            if not is_pdf:
+                send_message(chat_id, f"收到文件 {name}（暂不支持，PDF 可以）")
+                continue
+            file_id = doc.get("file_id", "")
+            path = download_document(file_id, name, member) if file_id else None
+        else:
+            if not text:
+                continue
+            print(f"[tg] {user_name}: {text[:60]}")
+            t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
+            continue
+
+        caption = (msg.get("caption") or "").strip()
+        gid = msg.get("media_group_id")
+        if not path:
+            t.on_media(chat_id, chat_id, member, None)   # 提示重发
+        elif gid:
+            a = albums.setdefault(gid, {"chat_id": chat_id, "member": member,
+                                        "caption": "", "paths": []})
+            a["paths"].append(str(path))
+            a["caption"] = a["caption"] or caption
+            touched.add(gid)
+        elif caption:
+            t.on_text(chat_id, chat_id, member, caption, media=[str(path)])
+        else:
+            t.on_media(chat_id, chat_id, member, path)   # 等文字指令
+
+    for gid in [g for g in albums if g not in touched]:
+        _flush_album(t, albums.pop(gid))
+    return offset
+
+
+def _flush_album(t: Transport, a: dict) -> None:
+    """有附言 → 附言配整本相册；无附言 → 每张照攒，等文字指令。"""
+    if a["caption"]:
+        t.on_text(a["chat_id"], a["chat_id"], a["member"], a["caption"], media=a["paths"])
+    else:
+        for p in a["paths"]:
+            t.on_media(a["chat_id"], a["chat_id"], a["member"], p)
+
+
 def run() -> None:
     """长轮询主循环。"""
     if not TOKEN:
@@ -262,13 +343,14 @@ def run() -> None:
 
     t = _TRANSPORT
     offset = _load_offset()
+    albums: dict[str, dict] = {}   # 未收齐的相册（handle_updates）
     print("[tg] 等待消息... (Ctrl+C 停止)")
 
     while True:
         try:
             resp = _api("getUpdates", {
                 "offset": offset + 1,
-                "timeout": 30,
+                "timeout": 2 if albums else 30,   # 相册未收齐：短轮询，没新张即发
                 "allowed_updates": ["message"],
             })
         except KeyboardInterrupt:
@@ -281,58 +363,7 @@ def run() -> None:
         if not resp or not resp.get("ok"):
             continue
 
-        for update in resp.get("result", []):
-            # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
-            offset = max(offset, update["update_id"])
-            msg = update.get("message", {})
-            if not msg:
-                continue
-
-            chat_id = msg["chat"]["id"]
-            member = t.gate(chat_id)
-            if member is None:
-                continue
-            user_name = msg.get("from", {}).get("first_name", "unknown")
-            text = msg.get("text", "")
-
-            if msg.get("entities") and msg["entities"][0].get("type") == "bot_command":
-                if text.strip().split()[0] == "/start":
-                    send_message(chat_id,
-                        "👋 你好！我是 Family Assistant。\n"
-                        "可以直接跟我说话，比如：\n"
-                        "  • \"花了45块 午餐\" — 记账\n"
-                        "  • \"这个月花了多少\" — 查账\n"
-                        "  • \"美元汇率\" — 查汇率")
-                continue
-
-            # 图片 → 下载到发送成员 inbox → OCR 分流
-            photos = msg.get("photo") or []
-            if photos:
-                print(f"[tg] 图片消息 from {user_name}")
-                file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
-                t.on_media(chat_id, chat_id, member,
-                           download_photo(file_id, member) if file_id else None)
-                continue
-
-            # 文档（PDF）→ 下载到 inbox → OCR 分流
-            doc = msg.get("document")
-            if doc:
-                name = doc.get("file_name", "") or ""
-                is_pdf = name.lower().endswith(".pdf") or \
-                    doc.get("mime_type") == "application/pdf"
-                if is_pdf:
-                    file_id = doc.get("file_id", "")
-                    t.on_media(chat_id, chat_id, member,
-                               download_document(file_id, name, member) if file_id else None)
-                else:
-                    send_message(chat_id, f"收到文件 {name}（暂不支持，PDF 可以）")
-                continue
-
-            if not text:
-                continue
-            print(f"[tg] {user_name}: {text[:60]}")
-            t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
-
+        offset = handle_updates(t, resp.get("result", []), offset, albums)
         _save_offset(offset)
         t.background_tick()   # 到期提醒 + 懂王投递 + 备份节拍（每轮 ≤30s）
 
