@@ -66,6 +66,10 @@
   按 provider 契约可换任意日历服务
 - 家人在手机日历上的改动会同步回来：远端是日程的事实源（改名/删除/完成都对账）
 
+### ☀️ 每日早报（Daily Banner）
+- 每天 08:20 主动推：未来 3 天日程 + 未完成待办 + 昨天以来未读邮件，LLM 排优先级压成一条（失败退模板）
+- opt-in：`data/members.json` 该成员加 `"banner": true`；开关/时刻见 `config.json` `daily_banner`，详见 `Daily_Banner/SKILL.md`
+
 ### 🌐 联网资讯（Web Reach / Any Search）
 - "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
 - 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结

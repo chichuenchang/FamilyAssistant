@@ -263,3 +263,8 @@ class TestCompose:
         cal_db.add_item("event", "会", "2026-09-17T10:00", db_path=sched)
         monkeypatch.setattr(banner, "compose", lambda d, chat=None: f"n={len(d.events)}")
         assert REAL_BUILD("Alex", DAY, CFG) == "n=1"
+
+
+def test_registered_as_fast_tick():
+    import skill_registry
+    assert banner.tick in skill_registry.load().fast_ticks
