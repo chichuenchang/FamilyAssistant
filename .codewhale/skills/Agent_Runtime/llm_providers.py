@@ -65,9 +65,12 @@ def _post(url: str, headers: dict, payload: dict, timeout: int) -> dict | None:
 
 def _merge_sse(resp) -> dict:
     """OpenAI 流式 chunk → choices[0].message 形态。tool_calls 按 index 拼参数；
-    usage 取最后一次出现（DeepSeek 在 [DONE] 前单发一块，GLM 每块都带）；reasoning_content 丢弃。"""
+    usage 取最后一次出现（DeepSeek 在 [DONE] 前单发一块，GLM 每块都带）。
+    reasoning_content 拼起来保留：DeepSeek 思考模式同轮工具调用须原样回传，否则 400
+    （agent_core 同轮 msgs 里留着，历史存干净结构时才去掉）。"""
     msg: dict = {"role": "assistant", "content": ""}
     calls: dict[int, dict] = {}
+    reasoning = ""
     finish = usage = None
     for raw in resp:
         line = raw.decode("utf-8", "replace").strip()
@@ -84,6 +87,8 @@ def _merge_sse(resp) -> dict:
             delta = choice.get("delta") or {}
             if isinstance(delta.get("content"), str):
                 msg["content"] += delta["content"]
+            if isinstance(delta.get("reasoning_content"), str):
+                reasoning += delta["reasoning_content"]
             for tc in delta.get("tool_calls") or []:
                 cur = calls.setdefault(tc.get("index") or 0, {
                     "id": "", "type": "function", "function": {"name": "", "arguments": ""}})
@@ -96,6 +101,8 @@ def _merge_sse(resp) -> dict:
         raise RuntimeError("流式无内容即结束")   # 连接建立后服务端空关：视同无响应
     if calls:
         msg["tool_calls"] = [calls[i] for i in sorted(calls)]
+    if reasoning:
+        msg["reasoning_content"] = reasoning
     return {"choices": [{"message": msg, "finish_reason": finish}], "usage": usage or {}}
 
 

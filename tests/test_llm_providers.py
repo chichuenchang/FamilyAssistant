@@ -84,11 +84,16 @@ def test_sse_merges_tool_call_deltas_by_index(capture):
     assert out["content"] == "" and out["_finish"] == "tool_calls" and out["_usage"] == {}
 
 
-def test_sse_ignores_reasoning_and_comment_lines(capture):
+def test_sse_keeps_reasoning_skips_comment_lines(capture):
+    """reasoning_content 拼起来留在消息里（同轮工具调用须回传 DeepSeek）；无则不带键。"""
     capture["reply"] = sse(": keep-alive", {"choices": [{"delta": {"reasoning_content": "思"}}]},
+                           {"choices": [{"delta": {"reasoning_content": "考"}}]},
                            delta("答", finish="stop", usage={"completion_tokens": 2}))
     out = prov.openai_compat(DS, [], None, "high")
     assert out["content"] == "答" and out["_usage"] == {"completion_tokens": 2}
+    assert out["reasoning_content"] == "思考"
+    capture["reply"] = sse(delta("答", finish="stop"))
+    assert "reasoning_content" not in prov.openai_compat(DS, [], None, "high")
 
 
 def test_glm_spec_knobs(capture, monkeypatch):
