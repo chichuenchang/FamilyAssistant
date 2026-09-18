@@ -104,6 +104,16 @@ class TestTick:
                            spawn=_sync) == []
         assert len(push.calls) == 2
 
+    def test_state_save_failure_does_not_resend(self, env, monkeypatch):
+        def boom(*a):
+            raise OSError("locked")
+        monkeypatch.setattr(banner.jsonfile, "save", boom)
+        push = Sent()
+        banner.tick(push, "telegram", now=AT_0830, cfg=CFG, spawn=_sync)
+        assert banner.tick(push, "telegram", now=datetime(2026, 9, 17, 11, 0), cfg=CFG,
+                           spawn=_sync) == []
+        assert len(push.calls) == 2
+
     def test_running_member_not_started_twice(self, env):
         started = []
         banner.tick(Sent(), "telegram", now=AT_0830, cfg=CFG,

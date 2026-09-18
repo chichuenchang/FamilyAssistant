@@ -78,13 +78,16 @@ def _load_state() -> dict:
 
 def _mark_sent(channel: str, member: str, day: date) -> None:
     with _lock:
-        st = _load_state()
-        chan = st.get(channel) if isinstance(st.get(channel), dict) else {}
-        chan[member] = day.isoformat()
-        st[channel] = chan
-        jsonfile.save(_state_path(), st)
-        _sent[(channel, member)] = day.isoformat()
+        _sent[(channel, member)] = day.isoformat()  # 先记内存：存盘失败也不重推
         _last_try.pop((channel, member), None)     # 退避只罚失败
+        try:
+            st = _load_state()
+            chan = st.get(channel) if isinstance(st.get(channel), dict) else {}
+            chan[member] = day.isoformat()
+            st[channel] = chan
+            jsonfile.save(_state_path(), st)
+        except Exception:
+            _log.exception("早报状态存盘失败: %s/%s", channel, member)
 
 
 # ── 取数 ────────────────────────────────────────────────────
