@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -46,6 +47,11 @@ def sendable(rel: str) -> Path | None:
     except Exception:
         pass
     return None
+
+
+def stamp_name(channel: str, ext: str, now: datetime) -> str:
+    """来件文件名 <ts>_<6位随机>_<channel><ext>：相册/连发同秒落盘不互相覆盖。"""
+    return f"{now:%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}_{channel}{ext}"
 
 
 class Transport:
@@ -90,9 +96,9 @@ class Transport:
         run_ticks(REGISTRY.message_ticks)
 
     def inbox_path(self, member: str, ext: str) -> Path:
-        """来件暂存路径 data/<成员>/inbox/YYYY-MM/<ts>_<channel><ext>。"""
+        """来件暂存路径 data/<成员>/inbox/YYYY-MM/<stamp_name>。"""
         now = datetime.now()
-        return member_inbox_dir(member, now) / f"{now:%Y%m%d_%H%M%S}_{self.channel}{ext}"
+        return member_inbox_dir(member, now) / stamp_name(self.channel, ext, now)
 
     @staticmethod
     def mark_dirty() -> None:

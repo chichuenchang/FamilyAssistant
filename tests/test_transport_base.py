@@ -166,6 +166,7 @@ def test_inbox_path_uses_member_inbox_and_channel(tmp_path, monkeypatch):
     p = t.inbox_path("Alex", ".pdf")
     assert p.name.endswith("_telegram.pdf")
     assert p.parent.is_relative_to(tmp_path)
+    assert t.inbox_path("Alex", ".pdf") != p          # 同秒连发不互相覆盖
 
 
 def test_background_tick_isolates_failures(monkeypatch):
