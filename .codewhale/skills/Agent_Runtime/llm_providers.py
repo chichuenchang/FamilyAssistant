@@ -130,6 +130,24 @@ _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_FINISH = {"end_turn": "stop", "tool_use": "tool_calls", "max_tokens": "length"}
 
 
+def _tool_use_block(tc: dict) -> dict:
+    fn = tc.get("function") or {}
+    try:
+        args = json.loads(fn.get("arguments") or "{}")
+    except json.JSONDecodeError:
+        args = {}
+    return {"type": "tool_use", "id": tc.get("id", ""), "name": fn.get("name", ""), "input": args}
+
+
+def _assistant_blocks(m: dict) -> list[dict]:
+    """同轮原始块优先重放；否则由 content + tool_calls 重建。"""
+    if m.get("_blocks"):
+        return m["_blocks"]
+    content = m.get("content") or ""
+    text = [{"type": "text", "text": content}] if content else []
+    return text + [_tool_use_block(tc) for tc in m.get("tool_calls") or []]
+
+
 def _to_anthropic(messages) -> tuple[list[dict], list[dict]]:
     """OpenAI 消息 → (system blocks, anthropic messages)。连续 tool 结果合成一条 user。
     system ≥2 条时倒数第二条打 cache_control（见模块 docstring）。"""
@@ -143,23 +161,13 @@ def _to_anthropic(messages) -> tuple[list[dict], list[dict]]:
         if role == "tool":
             block = {"type": "tool_result", "tool_use_id": m.get("tool_call_id", ""),
                      "content": content}
-            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list) \
-                    and out[-1]["content"] and out[-1]["content"][0].get("type") == "tool_result":
+            # user 消息里只有 tool_result 才是 list 形态：上一条是则并入
+            if out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list):
                 out[-1]["content"].append(block)
             else:
                 out.append({"role": "user", "content": [block]})
         elif role == "assistant":
-            blocks = m.get("_blocks")
-            if not blocks:
-                blocks = [{"type": "text", "text": content}] if content else []
-                for tc in m.get("tool_calls") or []:
-                    fn = tc.get("function") or {}
-                    try:
-                        args = json.loads(fn.get("arguments") or "{}")
-                    except json.JSONDecodeError:
-                        args = {}
-                    blocks.append({"type": "tool_use", "id": tc.get("id", ""),
-                                   "name": fn.get("name", ""), "input": args})
+            blocks = _assistant_blocks(m)
             if blocks:   # 空 assistant 消息 API 拒收，直接跳过
                 out.append({"role": "assistant", "content": blocks})
         else:
