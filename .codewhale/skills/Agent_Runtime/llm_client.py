@@ -185,7 +185,7 @@ def status_note(overrides: dict, user: str) -> str:
             f"被问用什么模型/推理档时如实告知；用户想改，让他自己发 /model 或 /effort。")
 
 
-def _usage(kind: str) -> str:
+def _cmd_usage(kind: str) -> str:
     if kind == "model":
         return f"/model [{'|'.join(MODELS)}|reset]（不带参数查当前值；别名见 /model）"
     return "/effort [low|medium|high|max|reset]"
@@ -215,7 +215,7 @@ def apply_command(overrides: dict, user: str, text: str, persist) -> str | None:
     kind, arg = parsed
     label = _LABEL[kind]
     if arg is None:
-        return f"用法: {_usage(kind)}"
+        return f"用法: {_cmd_usage(kind)}"
     if not arg:  # 查询当前生效值与来源
         ov = (overrides.get(user) or {}).get(kind)
         env = _env(kind)
