@@ -102,6 +102,8 @@ def _merge_sse(resp) -> dict:
                 cur["name"] = fn.get("name") or cur["name"]
                 cur["args"].append(fn.get("arguments") or "")
             finish = choice.get("finish_reason") or finish
+        if finish and usage:   # 收齐即停：代理/Ollama 发完末块后可能挂着不发 [DONE]，别等到静默超时
+            break
     if finish is None:   # 空关 / 代理半途正常收尾：半截内容不能当完整回复发出去，视同无响应
         raise RuntimeError(f"流未收到 finish_reason 即结束（已收 {sum(map(len, content))} 字）")
     msg: dict = {"role": "assistant", "content": "".join(content)}

@@ -187,6 +187,21 @@ def test_silence_timeout_mid_stream_returns_none(monkeypatch, caplog):
     assert "timed out" in caplog.text
 
 
+def test_stream_stops_reading_once_finish_and_usage_arrived(monkeypatch):
+    """finish_reason + usage 都到手就不再读：末块后挂着不发 [DONE] 的代理不能把完整回复拖成超时。"""
+    import socket
+
+    class HangAfterEnd(io.BytesIO):
+        def __iter__(self):
+            yield b"data: " + json.dumps(delta("done", finish="stop")).encode() + b"\n"
+            yield b"data: " + json.dumps({"choices": [], "usage": {"completion_tokens": 1}}).encode() + b"\n"
+            raise socket.timeout("timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: HangAfterEnd())
+    out = prov.openai_compat(DS, [], None, "high")
+    assert out["content"] == "done" and out["_finish"] == "stop" and out["_usage"] == {"completion_tokens": 1}
+
+
 # ── anthropic ───────────────────────────────────────────────
 
 def test_to_anthropic_translation():
