@@ -126,3 +126,25 @@ def test_ocr_read_registered_and_untrusted():
     names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
     assert "ocr_read" in names and "ocr_read" in ac._TOOL_MAP
     assert "ocr_read" in ac._UNTRUSTED_TOOLS
+
+
+def test_ocr_extract_goes_through_llm_client(monkeypatch, tmp_path):
+    import llm_client
+    f = tmp_path / "r.png"
+    f.write_bytes(b"img")
+    monkeypatch.setattr(ocr, "ocr_image", lambda path: "COFFEE 5.00")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    seen = {}
+
+    def chat(messages, tools, model, effort, **opts):
+        seen.update(model=model, tools=tools, opts=opts, prompt=messages[-1]["content"])
+        return {"content": 'ok ```{"currency": "USD", "transactions": []}```'}
+
+    monkeypatch.setattr(llm_client, "chat", chat)
+    assert ocr.ocr_extract(str(f)) == {"currency": "USD", "transactions": []}
+    assert seen["model"] == "deepseek-flash" and seen["tools"] is None
+    assert seen["opts"] == {"temperature": 0, "max_tokens": 10000, "timeout": 90}
+    assert "COFFEE 5.00" in seen["prompt"]
+    monkeypatch.setattr(llm_client, "chat", lambda *a, **k: None)
+    assert ocr.ocr_extract(str(f)) == {"raw_text": "COFFEE 5.00"}

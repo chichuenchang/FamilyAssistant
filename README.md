@@ -104,7 +104,7 @@
 pip install "weixin-ilink[qr]"
 pip install matplotlib   # 可选：工作表数据可视化（缺失则该功能优雅降级）
 
-# 2. 设 LLM API key（必须）
+# 2. 设 LLM API key（必须；默认模型 deepseek-flash。其他模型：config.json llm.models 加条目 + 对应 key，聊天里 /model 切）
 setx DEEPSEEK_API_KEY "sk-xxx"
 
 # 3. 登记家庭成员（必须 — 未登记的来源一律静默忽略；--alias 登记文档里的法定名，Agent 据此识别"这是谁的"）
@@ -196,7 +196,7 @@ python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "<主成�
 #    其他成员若各有备份：再 backup-restore --member "成员名"（此时注册表已恢复，正常模式）
 
 # 4. 重设其余凭据（都不在备份里）
-setx DEEPSEEK_API_KEY "sk-xxx"        # 必须（可选调优：DEEPSEEK_BASE_URL / DEEPSEEK_MODEL / DEEPSEEK_REASONING_EFFORT；聊天里 /effort 可运行时切换）
+setx DEEPSEEK_API_KEY "sk-xxx"        # 必须（可选：LLM_MODEL / LLM_EFFORT 启动默认；其他模型见 config.json llm；聊天里 /model /effort 可运行时切换）
 setx GCAL_CLIENT_ID "xxx"             # 日历同步（可复用 Drive 的同一 OAuth 客户端）
 setx GCAL_CLIENT_SECRET "xxx"
 setx GCAL_CALENDAR_ID "xxx"           # 可选，默认 primary 主日历

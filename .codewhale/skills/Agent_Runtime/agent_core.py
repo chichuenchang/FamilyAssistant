@@ -3,11 +3,11 @@ Agent Core — 频道无关的全量上下文智能助手。
 
 所有远程频道（微信、Telegram、未来其他）共用这一个 Agent，行为一致。
 与 CodeWhale 工作方式一致：读取整个项目文档，理解意图，自主决策。
-告别关键词路由，每条消息都带完整项目上下文调 DeepSeek API。
+告别关键词路由，每条消息都带完整项目上下文调 LLM（模型可切换，见 llm_client）。
 
 模式:
     启动时加载项目文档 → 构建 system prompt
-    每条消息 → system + 对话历史 + 用户消息 → DeepSeek（function calling）
+    每条消息 → system + 对话历史 + 用户消息 → LLM（function calling）
     LLM 自主选择工具 → 执行 → LLM 生成自然语言回复
 
 频道接入契约（详见 .codewhale/skills/Agent_Runtime/SKILL.md）:
@@ -17,7 +17,7 @@ Agent Core — 频道无关的全量上下文智能助手。
     member = members.resolve 解析出的成员名；为空直接返回空串（未注册来源不碰 LLM）
 
 依赖:
-    DEEPSEEK_API_KEY
+    当前模型的 API key 环境变量（默认 DEEPSEEK_API_KEY；模型表见 llm_client / config.json llm）
 
 用法:
     from agent_core import Agent  # 同目录传输层直接 import
@@ -226,7 +226,7 @@ def _build_system_prompt(idle_clear_hours: float | None = None) -> str:
 - 被问"你能不能清除上下文/记忆"时，如实说明上述机制，不要说做不到
 
 ## 斜杠命令（系统直接处理，你调不到；用户迷茫/问怎么用时照此说明，让用户自己发）
-- /model — 查当前用的模型（只有 deepseek-flash 一个，不能切换）
+- /model — 查当前模型与可切换列表；/model <名字或别名> — 切换；/model reset — 恢复环境变量/默认
 - /effort — 查当前推理档；/effort low|medium|high|max — 调档；/effort reset — 恢复环境变量/默认
 - 只影响发命令的用户本人，重启后保留；推理档越高想得越深、回复越慢
 - 用户没说困惑就别主动提这些命令（守"回复风格"：不刷屏罗列功能）
@@ -309,7 +309,7 @@ _save_llm_overrides = _llm.save_overrides
 
 
 class Agent:
-    """频道无关的全量上下文智能助手。每条消息带完整项目文档 + 对话历史调 DeepSeek。
+    """频道无关的全量上下文智能助手。每条消息带完整项目文档 + 对话历史调 LLM。
 
     上下文自动管理（旋钮在 config.json "agent" 块，构造参数可覆盖，0=关闭）：
     - context_max_tokens: 对话历史 token 预算。超出时从最旧的整轮开始丢弃
@@ -373,9 +373,9 @@ class Agent:
         if llm_reply is not None:
             return llm_reply
 
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-        if not api_key:
-            return "未配置 DEEPSEEK_API_KEY。"
+        missing = _llm.missing_key(self._llm_settings(user)[0])
+        if missing:
+            return f"未配置 {missing}。"
 
         member_note = (f"\n\n## 当前对话成员\n{member} —— 写入类操作自动归到该成员名下；"
                        f"查询类工具可用 member 参数按成员过滤。")
@@ -566,8 +566,7 @@ class Agent:
 if __name__ == "__main__":
     print("Family Assistant — Agent Core 测试模式")
     print("频道无关，全量上下文，跟 CodeWhale 一样的工作方式。")
-    ok = bool(os.environ.get("DEEPSEEK_API_KEY"))
-    print(f"LLM: {'已启用' if ok else '未配置 — 设置 DEEPSEEK_API_KEY'}")
+    print(_llm.ready_note())
     print("-" * 40)
     agent = Agent()
     while True:

@@ -12,12 +12,15 @@ def test_load_llm_overrides_missing_file(tmp_path, monkeypatch):
 def test_load_llm_overrides_validates_values(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_ROOT", str(tmp_path))
     (tmp_path / ".llm_overrides.json").write_text(json.dumps({
-        "u1": {"model": "deepseek-v4-pro", "effort": "high"},   # model 不可覆盖，丢弃
+        "u1": {"model": "deepseek-v4-pro", "effort": "high"},   # 未登记模型丢弃，effort 保留
         "u2": {"model": "gpt-99", "effort": "ludicrous"},   # 非法值整条丢弃
         "u3": "not-a-dict",
-        "u4": {"model": "deepseek-flash"},                # 只有 model → 整条丢弃
+        "u4": {"model": "deepseek-flash"},                # 登记模型单键也合法
+        "u5": {"model": "CLAUDE", "effort": 3},           # 别名不分大小写 → 规范名
     }), encoding="utf-8")
-    assert agent_core._load_llm_overrides() == {"u1": {"effort": "high"}}
+    assert agent_core._load_llm_overrides() == {
+        "u1": {"effort": "high"}, "u4": {"model": "deepseek-flash"},
+        "u5": {"model": "claude-opus-5"}}
 
 
 def test_load_llm_overrides_corrupt_json(tmp_path, monkeypatch):
@@ -37,7 +40,8 @@ def test_save_llm_overrides_roundtrip_atomic(tmp_path, monkeypatch):
 def _agent(tmp_path, monkeypatch):
     """干净环境下的 Agent：数据根隔离，LLM 相关环境变量清空。"""
     monkeypatch.setenv("DATA_ROOT", str(tmp_path))
-    for v in ("DEEPSEEK_MODEL", "DEEPSEEK_REASONING_EFFORT", "DEEPSEEK_API_KEY"):
+    for v in ("LLM_MODEL", "LLM_EFFORT", "DEEPSEEK_MODEL", "DEEPSEEK_REASONING_EFFORT",
+              "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(v, raising=False)
     return agent_core.Agent(idle_clear_hours=0)
 
@@ -49,9 +53,18 @@ def test_llm_settings_defaults(tmp_path, monkeypatch):
 
 def test_llm_settings_env_beats_default(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-pro")   # 未登记名字原样直发
+    monkeypatch.setenv("LLM_EFFORT", "max")
+    assert a._llm_settings("u1") == ("deepseek-v4-pro", "max")
+    monkeypatch.setenv("LLM_MODEL", "Claude")            # 别名 → 规范名
+    assert a._llm_settings("u1")[0] == "claude-opus-5"
+
+
+def test_llm_settings_legacy_env_names(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
-    monkeypatch.setenv("DEEPSEEK_REASONING_EFFORT", "high")
-    assert a._llm_settings("u1") == ("deepseek-v4-pro", "high")
+    monkeypatch.setenv("DEEPSEEK_REASONING_EFFORT", "low")
+    assert a._llm_settings("u1") == ("deepseek-v4-pro", "low")
 
 
 def test_llm_settings_override_beats_env(tmp_path, monkeypatch):
@@ -77,13 +90,53 @@ def test_handle_passes_user_to_call_llm(tmp_path, monkeypatch):
     assert seen["user"] == "wx_1"
 
 
-def test_model_command_query_only(tmp_path, monkeypatch):
+def test_model_command_query_lists_models(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
     r = a.handle("/model", user="u1", member="Jim")
-    assert "deepseek-flash" in r and "默认" in r
-    for cmd in ("/model pro", "/model flash", "/model reset", "/model deepseek-flash"):
-        assert "用法" in a.handle(cmd, user="u1", member="Jim")
-    assert a._llm_overrides == {} and a._llm_settings("u1")[0] == "deepseek-flash"
+    assert "当前模型：deepseek-flash（默认）" in r
+    assert "claude-opus-5（claude/opus），未配置 ANTHROPIC_API_KEY" in r
+    assert "用法" in a.handle("/model pro", user="u1", member="Jim")
+    assert a._llm_overrides == {}
+
+
+def test_model_command_switch_alias_reset(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    r = a.handle("/model Claude", user="u1", member="Jim")
+    assert "✅" in r and "claude-opus-5" in r
+    assert a._llm_settings("u1")[0] == "claude-opus-5"
+    assert a._llm_settings("u2")[0] == "deepseek-flash"   # 不影响其他用户
+    assert "claude-opus-5（你的个人覆盖）" in a.handle("/model", user="u1", member="Jim")
+    a.handle("/model reset", user="u1", member="Jim")
+    assert a._llm_settings("u1")[0] == "deepseek-flash"
+    assert agent_core._load_llm_overrides() == {}
+
+
+def test_model_command_refuses_unconfigured_key(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    r = a.handle("/model claude", user="u1", member="Jim")
+    assert r == "模型 claude-opus-5 未配置 ANTHROPIC_API_KEY，无法切换。"
+    assert a._llm_overrides == {}
+
+
+def test_handle_reports_missing_key_of_selected_model(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    a.handle("/model opus", user="u1", member="Jim")
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    assert a.handle("hi", user="u1", member="Jim") == "未配置 ANTHROPIC_API_KEY。"
+
+
+def test_call_llm_routes_by_user_model(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    a.handle("/model claude", user="u1", member="Jim")
+    seen = {}
+    monkeypatch.setattr(agent_core._llm, "chat",
+                        lambda msgs, tools, model, effort: seen.update(model=model, effort=effort))
+    a._call_llm([], user="u1")
+    assert seen == {"model": "claude-opus-5", "effort": "high"}
 
 
 def test_effort_command_set_show_reset(tmp_path, monkeypatch):
@@ -141,7 +194,7 @@ def test_system_prompt_documents_slash_commands(tmp_path, monkeypatch):
     a = _agent(tmp_path, monkeypatch)
     sp = a.system_prompt
     # 用户迷茫时 Agent 要能从 system prompt 里查到用法并转述
-    assert "/model" in sp and "不能切换" in sp
+    assert "/model <名字或别名>" in sp and "/model reset" in sp
     assert "/effort low|medium|high|max" in sp and "/effort reset" in sp
 
 

@@ -355,8 +355,8 @@ def run_test() -> None:
     """本地命令行测试，无需微信。"""
     print("Family Assistant — 微信通道测试模式")
     print("全量上下文 Agent，跟 CodeWhale 一样的工作方式。")
-    llm_ready = bool(os.environ.get("DEEPSEEK_API_KEY"))
-    print(f"LLM: {'已启用' if llm_ready else '未配置 — 设置 DEEPSEEK_API_KEY'}")
+    import llm_client
+    print(llm_client.ready_note())
     print("-" * 40)
     agent = Agent()
     while True:
