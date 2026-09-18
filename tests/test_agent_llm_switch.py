@@ -259,8 +259,7 @@ def test_chat_omits_tools_key_when_empty(monkeypatch):
 
     def fake_urlopen(req, timeout=0):
         sent.update(json.loads(req.data))
-        return io.BytesIO(json.dumps(
-            {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}).encode())
+        return io.BytesIO(b'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}\n')
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     assert llm_client.chat([{"role": "user", "content": "hi"}], [], "m", "low")["content"] == "ok"
@@ -282,6 +281,16 @@ def test_reply_badge_sums_tokens_and_strips_usage(tmp_path, monkeypatch):
     r = a.handle("hi", user="u1", member="Jim")
     assert r.splitlines()[0] == "⚙️ nope · 🪙 2,200 in / 25 out"
     assert all("_usage" not in m for m in seen[1])   # 私有键不回传 API
+
+
+def test_reply_badge_marks_fallback_model(tmp_path, monkeypatch):
+    a = _agent(tmp_path, monkeypatch)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
+    a._call_llm = lambda msgs, user="": {"content": "好", "_fallback": "glm-5.3-flash",
+                                         "_usage": {"prompt_tokens": 10, "completion_tokens": 1}}
+    r = a.handle("hi", user="u1", member="Jim")
+    assert r.splitlines()[0] == "🪙 10 in / 1 out · 🔁 glm-5.3-flash 顶替"
+    assert "_fallback" not in a.history["u1"][-1]
 
 
 def test_truncated_tool_calls_not_executed(tmp_path, monkeypatch):

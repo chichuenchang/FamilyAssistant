@@ -3,6 +3,8 @@
 agent_core 只做编排；模型表、覆盖状态文件、提供商分发全在这里，
 HTTP/格式翻译在 llm_providers。
 模型表 = 内置 deepseek-flash + config.json "llm.models"（键名即 /model 用的名字）。
+条目可带 "fallback": 另一模型键——主模型无响应/失败时同参重发一次（DeepSeek 曾整站宕机；
+DeepSeek 条目 timeout 30 = 流式静默 30s 判死，见 llm_providers）。
 状态存 data/.state/.llm_overrides.json：{user: {"model": ..., "effort": ...}}，
 只在启动与切换命令时读写——消息路径零文件 IO。
 """
@@ -12,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -233,9 +236,24 @@ def apply_command(overrides: dict, user: str, text: str, persist) -> str | None:
     return f"✅ 你的{label}已切换为 {arg}（仅影响你）{note}。"
 
 
+def fallback_of(model: str) -> str:
+    """spec.fallback 指向的可用模型键；无、自指、未登记或缺 key 返回 ""。"""
+    fb = spec(model).get("fallback") or ""
+    return fb if fb in MODELS and fb != model and not missing_key(fb) else ""
+
+
 def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
     """按模型表分发到提供商。返回 OpenAI 风格 message dict（可能含 tool_calls）；失败 None。
-    附私有键 "_usage"/"_finish"（及 anthropic 的 "_blocks"）：再次发给 API 前调用方须 pop
-    掉 _usage/_finish；_blocks 留着同轮重放。opts 透传：temperature / max_tokens / timeout。"""
+    附私有键 "_usage"/"_finish"（及 anthropic 的 "_blocks"，顶替时 "_fallback"=顶替模型键）：
+    再次发给 API 前调用方须 pop 掉 _usage/_finish/_fallback；_blocks 留着同轮重放。
+    opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次。"""
     s = spec(model)
-    return _providers.PROVIDERS[s["provider"]](s, messages, tools, effort, **opts)
+    out = _providers.PROVIDERS[s["provider"]](s, messages, tools, effort, **opts)
+    if out is None and (fb := fallback_of(model)):
+        _log.warning("模型 %s 无响应，改用 %s", model, fb)
+        print(f"[agent] {model} 无响应，改用 {fb}", file=sys.stderr)
+        f = MODELS[fb]
+        out = _providers.PROVIDERS[f["provider"]](f, messages, tools, effort, **opts)
+        if out is not None:
+            out["_fallback"] = fb
+    return out

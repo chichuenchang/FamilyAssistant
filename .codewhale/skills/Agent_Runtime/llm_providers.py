@@ -18,7 +18,10 @@
 
 新增提供商：写一个 chat(spec, messages, tools, effort, **opts) 函数，登记进 PROVIDERS。
 spec 是 llm_client 模型表里的一条（provider / api_model / api_key_env / base_url /
-base_url_env / effort）。
+base_url_env / effort / chat_path / effort_map / stream_usage / timeout）。
+
+openai_compat 一律流式（SSE）收：timeout = 相邻两段数据的最大静默秒数，不是整包上限
+（推理模型整包常超 2 分钟，静默 30s 才是"挂了"的信号；spec.timeout 覆盖调用方值）。
 """
 
 from __future__ import annotations
@@ -43,11 +46,13 @@ ANTHROPIC_TIMEOUT = 600
 
 
 def _post(url: str, headers: dict, payload: dict, timeout: int) -> dict | None:
+    """payload["stream"] 为真时按 SSE 收并合并成非流式形态；超时 = 静默上限（见模块 docstring）。"""
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body,
                                  headers={"Content-Type": "application/json", **headers})
     try:
-        return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return _merge_sse(resp) if payload.get("stream") else json.loads(resp.read())
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:500]
         print(f"[agent] LLM 调用失败: {e} {detail}", file=sys.stderr)
@@ -56,6 +61,42 @@ def _post(url: str, headers: dict, payload: dict, timeout: int) -> dict | None:
         print(f"[agent] LLM 调用失败: {e}", file=sys.stderr)
         _log.exception("LLM 调用失败")
     return None
+
+
+def _merge_sse(resp) -> dict:
+    """OpenAI 流式 chunk → choices[0].message 形态。tool_calls 按 index 拼参数；
+    usage 取最后一次出现（DeepSeek 在 [DONE] 前单发一块，GLM 每块都带）；reasoning_content 丢弃。"""
+    msg: dict = {"role": "assistant", "content": ""}
+    calls: dict[int, dict] = {}
+    finish = usage = None
+    for raw in resp:
+        line = raw.decode("utf-8", "replace").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        chunk = json.loads(data)
+        if chunk.get("error"):
+            raise RuntimeError(f"流式错误块: {str(chunk['error'])[:300]}")
+        usage = chunk.get("usage") or usage
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") or {}
+            if isinstance(delta.get("content"), str):
+                msg["content"] += delta["content"]
+            for tc in delta.get("tool_calls") or []:
+                cur = calls.setdefault(tc.get("index") or 0, {
+                    "id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                fn = tc.get("function") or {}
+                cur["id"] = tc.get("id") or cur["id"]
+                cur["function"]["name"] = fn.get("name") or cur["function"]["name"]
+                cur["function"]["arguments"] += fn.get("arguments") or ""
+            finish = choice.get("finish_reason") or finish
+    if finish is None and not msg["content"] and not calls:
+        raise RuntimeError("流式无内容即结束")   # 连接建立后服务端空关：视同无响应
+    if calls:
+        msg["tool_calls"] = [calls[i] for i in sorted(calls)]
+    return {"choices": [{"message": msg, "finish_reason": finish}], "usage": usage or {}}
 
 
 def _parse(fn, resp: dict | None) -> dict | None:
@@ -101,15 +142,18 @@ def openai_compat(spec: dict, messages, tools, effort: str, *,
     if system:
         msgs.insert(0, {"role": "system", "content": "\n\n".join(s for s in system if s)})
     payload = {
-        "model": spec["api_model"], "messages": msgs,
+        "model": spec["api_model"], "messages": msgs, "stream": True,
         "temperature": temperature, "max_tokens": max_tokens,
     }
-    if spec.get("effort", True):
-        payload["reasoning_effort"] = effort
+    if spec.get("stream_usage", True):   # GLM 每块自带 usage，且未登记此参数
+        payload["stream_options"] = {"include_usage": True}
+    if spec.get("effort", True):         # effort_map：该模型不认的档位改成认的（GLM-5.3 无 medium）
+        payload["reasoning_effort"] = (spec.get("effort_map") or {}).get(effort, effort)
     if tools:      # 纯文本调用（PDF_Editor 排版）不带 tools 键
         payload["tools"] = tools
-    resp = _post(f"{_base_url(spec)}/v1/chat/completions",
-                 {"Authorization": f"Bearer {_auth(spec)}"}, payload, timeout)
+    resp = _post(_base_url(spec) + spec.get("chat_path", "/v1/chat/completions"),
+                 {"Authorization": f"Bearer {_auth(spec)}"}, payload,
+                 spec.get("timeout", timeout))
     return _parse(_parse_openai, resp)
 
 

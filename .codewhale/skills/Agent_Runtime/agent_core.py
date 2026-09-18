@@ -397,6 +397,7 @@ class Agent:
         tool_log = ""  # 回复里展示的工具调用摘要（按名计数）
         tool_counts: dict[str, int] = {}
         tokens = {"in": 0, "out": 0}      # 本轮所有 LLM 调用 usage 累计，随工具摘要展示
+        fallback = ""                     # 本轮有调用被 fallback 模型顶替则记其名，进徽章
         produced_images: list[str] = []  # 图片工具成功产出的 data 相对路径
         produced_docs: list[str] = []     # 文档工具成功产出的 data 相对路径
         shown: dict[str, str] = {}        # SHOW_TOOLS 成功原文（每工具留最后一次），必达用户
@@ -410,6 +411,7 @@ class Agent:
                 return "\n\n".join(["抱歉，暂时出错了。", *shown.values()])
             usage = message.pop("_usage", None) or {}   # 私有键，不得回传 API
             cut = message.pop("_finish", None) == "length"
+            fallback = message.pop("_fallback", None) or fallback
             tokens["in"] += usage.get("prompt_tokens") or 0
             tokens["out"] += usage.get("completion_tokens") or 0
 
@@ -471,6 +473,8 @@ class Agent:
                 f"{n}×{c}" if c > 1 else n for n, c in tool_counts.items()))
         if tokens["in"] or tokens["out"]:
             badge.append(f"🪙 {tokens['in']:,} in / {tokens['out']:,} out")
+        if fallback:
+            badge.append(f"🔁 {fallback} 顶替")
         if badge:
             tool_log = " · ".join(badge) + "\n"
         if truncated:
