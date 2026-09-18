@@ -286,6 +286,10 @@ def anthropic(spec: dict, messages, tools, effort: str, *,
 def _parse_anthropic(resp: dict) -> dict:
     blocks = resp["content"]
     text = "".join(b["text"] for b in blocks if b.get("type") == "text")
+    # 思考块提出来进 reasoning_content：agent_core 的思考链日志认这个键（与 DeepSeek 对齐）。
+    # 块本身仍留在 _blocks 供同轮重放；被安全 redact 的块 thinking 为空，自然跳过。
+    thinking = "".join(b.get("thinking") or ""
+                       for b in blocks if b.get("type") == "thinking")
     tool_calls = [{"id": b["id"], "type": "function",
                    "function": {"name": b["name"],
                                 "arguments": json.dumps(b.get("input") or {}, ensure_ascii=False)}}
@@ -302,6 +306,8 @@ def _parse_anthropic(resp: dict) -> dict:
     msg = {"role": "assistant", "content": text, "_blocks": blocks, "_finish": finish,
            "_usage": {"prompt_tokens": usage.get("input_tokens") or 0,
                       "completion_tokens": usage.get("output_tokens") or 0}}
+    if thinking:
+        msg["reasoning_content"] = thinking
     if tool_calls:
         msg["tool_calls"] = tool_calls
     return msg
