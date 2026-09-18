@@ -3,8 +3,8 @@
 agent_core 只做编排；模型表、覆盖状态文件、提供商分发全在这里，
 HTTP/格式翻译在 llm_providers。
 模型表 = 内置 deepseek-flash + config.json "llm.models"（键名即 /model 用的名字）。
-条目可带 "fallback": 另一模型键——主模型无响应/失败时同参重发一次（DeepSeek 曾整站宕机；
-DeepSeek 条目 timeout 30 = 流式静默 30s 判死，见 llm_providers）。
+条目可带 "fallback": 另一模型键——主模型无响应（None）时同参重发一次，回复标 "_fallback"
+（DeepSeek 曾整站宕机）；请求被拒（4xx）不顶替。超时语义见 llm_providers 模块 docstring。
 状态存 data/.state/.llm_overrides.json：{user: {"model": ..., "effort": ...}}，
 只在启动与切换命令时读写——消息路径零文件 IO。
 """
