@@ -93,7 +93,6 @@ def _merge_sse(resp, silence: int | None = None) -> dict:
     reasoning: list[str] = []
     calls: dict[int, dict] = {}          # index → {id, name, args: list[str]}
     finish = usage = None
-    seen = False
     for raw in resp:
         line = raw.decode("utf-8", "replace").strip()
         if not line.startswith("data:"):
@@ -102,9 +101,9 @@ def _merge_sse(resp, silence: int | None = None) -> dict:
         if data == "[DONE]":
             break
         chunk = json.loads(data)
-        if silence and not seen:
+        if silence:   # 首块到手：只换一次
             _set_silence(resp, silence)
-        seen = True
+            silence = None
         if chunk.get("error"):
             raise RuntimeError(f"流式错误块: {str(chunk['error'])[:300]}")
         usage = chunk.get("usage") or usage
@@ -117,9 +116,9 @@ def _merge_sse(resp, silence: int | None = None) -> dict:
             for tc in delta.get("tool_calls") or []:
                 idx = tc.get("index")
                 if idx is None:   # 变体（Ollama / 部分代理）不带 index：新 id 开新槽，否则续上一槽
-                    last = max(calls) if calls else -1
-                    same = calls and (not tc.get("id") or tc["id"] == calls[last]["id"])
-                    idx = last if same else last + 1
+                    last = max(calls, default=-1)
+                    continues = calls and (not tc.get("id") or tc["id"] == calls[last]["id"])
+                    idx = last if continues else last + 1
                 cur = calls.setdefault(idx, {"id": "", "name": "", "args": []})
                 fn = tc.get("function") or {}
                 cur["id"] = tc.get("id") or cur["id"]
