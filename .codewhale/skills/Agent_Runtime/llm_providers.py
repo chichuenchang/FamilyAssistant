@@ -275,6 +275,8 @@ def anthropic(spec: dict, messages, tools, effort: str, *,
         payload["system"] = system
     if spec.get("effort", True):
         payload["output_config"] = {"effort": effort}
+        # 不显式开 adaptive 就一块 thinking 都不回（实测），思考链日志拿空
+        payload["thinking"] = {"type": "adaptive", "display": "summarized"}
     if tools:
         payload["tools"] = [_to_anthropic_tool(t) for t in tools]
     resp = _post(f"{_base_url(spec)}/v1/messages",
