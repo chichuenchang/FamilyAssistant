@@ -200,6 +200,17 @@ def test_reasoning_content_logged(monkeypatch, caplog):
     assert "reasoning_content" not in mid
 
 
+def test_reasoning_log_names_fallback_model(monkeypatch, caplog):
+    """顶替模型答的轮次，思考链日志记顶替模型而非主模型。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    agent = agent_core.Agent(idle_clear_hours=0)
+    monkeypatch.setattr(agent, "_call_llm", lambda msgs, user="": {
+        "content": "好", "reasoning_content": "想", "_fallback": "glm-5.3-flash"})
+    with caplog.at_level(logging.INFO, logger="familyassist.agent"):
+        agent.handle("test", user="u", member="爸爸")
+    assert "模型=glm-5.3-flash" in caplog.text
+
+
 def test_tool_results_persist_across_turns(monkeypatch):
     """填表回归：工具结果（含会话 id）必须留在历史里，下一轮模型能看到。
     否则模型只见自己的文字回复（不含 id），会拿 PDF 文件名瞎编会话 id。"""

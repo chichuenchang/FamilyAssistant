@@ -411,7 +411,8 @@ class Agent:
                 return "\n\n".join(["抱歉，暂时出错了。", *shown.values()])
             usage = message.pop("_usage", None) or {}   # 私有键，不得回传 API
             cut = message.pop("_finish", None) == "length"
-            fallback = message.pop("_fallback", None) or fallback
+            used = message.pop("_fallback", None)   # 本次调用的顶替模型，无则空
+            fallback = used or fallback
             tokens["in"] += usage.get("prompt_tokens") or 0
             tokens["out"] += usage.get("completion_tokens") or 0
             # 思考链进 INFO 日志；键不 pop——DeepSeek 同轮工具调用须原样回传。
@@ -419,7 +420,7 @@ class Agent:
             cot = (message.get("reasoning_content") or "").strip()
             if cot:
                 _log.info("思考链 用户=%s 模型=%s:\n%s", user,
-                          self._llm_settings(user)[0], cot[:2000])
+                          used or self._llm_settings(user)[0], cot[:2000])
 
             tool_calls = message.get("tool_calls") or []
             if cut and tool_calls:
