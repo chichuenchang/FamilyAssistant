@@ -415,10 +415,13 @@ class Agent:
             tokens["in"] += usage.get("prompt_tokens") or 0
             tokens["out"] += usage.get("completion_tokens") or 0
             # 思考链进日志：INFO 级，debug 模式下终端与 bot_debug.log 同显
-            # （键留在 message 上不 pop——DeepSeek 同轮工具调用须原样回传）
+            # （键留在 message 上不 pop——DeepSeek 同轮工具调用须原样回传）。
+            # 带头 2000 字封顶：高档推理链 2–50k 字，全量几天就轮转掉 traceback；
+            # 带用户/模型，多通道交错可查归属。
             cot = (message.get("reasoning_content") or "").strip()
             if cot:
-                _log.info("思考链:\n%s", cot)
+                _log.info("思考链 用户=%s 模型=%s:\n%s", user,
+                          self._llm_settings(user)[0], cot[:2000])
 
             tool_calls = message.get("tool_calls") or []
             if cut and tool_calls:
