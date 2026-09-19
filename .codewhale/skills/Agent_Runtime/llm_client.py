@@ -126,7 +126,11 @@ def load_overrides() -> dict:
     for user, entry in (raw.items() if isinstance(raw, dict) else []):
         if not isinstance(entry, dict):
             continue
-        clean = {k: v for k, canon in _CANON.items() if (v := canon(entry.get(k)))}
+        clean = {k: val for k, canon in _CANON.items() if (val := canon(entry.get(k)))}
+        dropped = {k: entry[k] for k in _CANON if k in entry and k not in clean}
+        if dropped:
+            _log.warning("LLM 覆盖 %r 含未登记值 %s，已丢弃（模型表变了？）",
+                         user, dropped)
         if clean:
             out[user] = clean
     return out
@@ -243,8 +247,8 @@ def fallback_of(model: str) -> str:
 
 def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
     """按模型表分发到提供商。返回 OpenAI 风格 message dict（可能含 tool_calls）；失败 None。
-    附私有键 "_usage"/"_finish"（及 anthropic 的 "_blocks"，顶替时 "_fallback"=顶替模型键）：
-    再次发给 API 前调用方须 pop 掉 _usage/_finish/_fallback；_blocks 留着同轮重放。
+    附私有键 "_usage"/"_finish"（顶替时 "_fallback"=顶替模型键）：
+    再次发给 API 前调用方须 pop 掉 _usage/_finish/_fallback。
     opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次；
     请求本身被拒（4xx，见 llm_providers.RequestRejected）直接 None，不顶替。"""
     def call(name):

@@ -414,6 +414,12 @@ class Agent:
             fallback = message.pop("_fallback", None) or fallback
             tokens["in"] += usage.get("prompt_tokens") or 0
             tokens["out"] += usage.get("completion_tokens") or 0
+            # 思考链进 INFO 日志；键不 pop——DeepSeek 同轮工具调用须原样回传。
+            # 封顶 2000 字：高档推理链 2–50k 字，全量几天就轮转掉 traceback。
+            cot = (message.get("reasoning_content") or "").strip()
+            if cot:
+                _log.info("思考链 用户=%s 模型=%s:\n%s", user,
+                          self._llm_settings(user)[0], cot[:2000])
 
             tool_calls = message.get("tool_calls") or []
             if cut and tool_calls:
