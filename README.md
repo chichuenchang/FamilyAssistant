@@ -23,6 +23,15 @@
 - OCR 全文索引，关键词检索（"我们有哪些保险"）
 - **到期跟踪 + 每日主动提醒**：到期前 Bot 每天推送（如 "租约 20 天后到期 — 提前60天通知房东"），`doc-ack` 确认后不再重复
 - 重复检测（证件编号 / 文件哈希）
+- **家庭成员资料**：法定名/生日/电话/住址/证件卡号等长期事实存家庭共享库（documents.db），全家每次对话自动带上——填表建议、"爸爸生日几号"随口即答；对话里提到即自动更新
+
+### 📋 PDF 编辑（PDF Editor）
+- 微信/Telegram 发一份 PDF，**一句话说要改什么**（"姓名填张三，生日 1990-01-02，勾已婚，第 2 页贴我的签名，删掉第 4 页"）→ 改好的 PDF 直接发回
+- 能做：填表单字段、任意位置写字/打勾、白底盖掉再改写、贴签名/图片、画线、删页/旋转/重排/合并
+- 不满意就说哪儿不对（"名字往上挪一点""出生年改 1991"）→ 从原件重做，不叠加痕迹
+- 缺的值一条消息一起问，绝不编造；签名必须是你发来的图片
+- 可填写 PDF 保持可填写；其余叠一层矢量覆盖，原页不动、不糊、文字仍可选
+- 依赖 pypdf（必需）/ reportlab（写字贴图）/ pypdfium2（定位），扫描件另需腾讯云 OCR；未安装时给安装提示
 
 ### 🗒️ 个人备忘（Note Keeper）
 - "帮我记住车位是B2-118"、发一张路由器标签/课表/名片照片 → OCR 提取后存为备忘
@@ -45,26 +54,43 @@
 
 ### 📅 家庭日程与待办（Calendar Keeper）
 - 自然语言加日程/待办："周六下午2点孩子游泳课"、"提醒我15号前买生日蛋糕"
-- **静默同步远程日历**：已注册成员消息到达时自动拉取未来 10 天日程（节流，默认 15 分钟一次），
-  不主动播报；问"接下来有什么安排""待办清单"时即答
+- **静默同步远程日历**：已注册成员消息到达时自动拉取过去 365 天（`sync_past_days`）～未来 90 天
+  （`sync_horizon_days`）日程（节流，默认 15 分钟一次），不主动播报；问"接下来有什么安排""待办清单"
+  时即答（回答窗口默认 10 天）
+- **历史日程也能查**：问"7月游了几次课""去年那趟航班哪天"→ Agent 传 `from`/`to` 框窗口，
+  比常驻缓存更久远的历史即时从远端实拉（`--from` 省略 = 整本日历）
+- **每次日程操作实时校验**：加/查/完成/取消/同步都会同时查本地与远端并核对一致性，
+  不一致自动修复并报告——在手机上直接划掉的待办、Gmail 自动建的日程立刻拉平
 - Agent 新建/完成/取消的日程待办自动推送远端；离线/未配置时本地照常用，配好自动补推
 - 当前内置 Google Calendar + Google Tasks 实现（最小权限 `calendar.events` + `tasks`）；
   按 provider 契约可换任意日历服务
 - 家人在手机日历上的改动会同步回来：远端是日程的事实源（改名/删除/完成都对账）
 
+### ☀️ 每日早报（Daily Banner）
+- 每天 08:20 主动推：未来 3 天日程 + 未完成待办 + 昨天以来未读邮件，LLM 排优先级压成一条（失败退模板）
+- opt-in：`data/members.json` 该成员加 `"banner": true`；开关/时刻见 `config.json` `daily_banner`，详见 `Daily_Banner/SKILL.md`
+
 ### 🌐 联网资讯（Web Reach / Any Search）
 - "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
 - 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结
-- **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取，需环境变量 `ANYSEARCH_API_KEY`；问最新资讯时优先，未配置则回退下面的 Web Reach
-- **Web Reach 只读公开信息，无需 API key**（搜索走 DuckDuckGo + Jina 阅读器；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
+- **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取；`ANYSEARCH_API_KEY` 可选（未配置走匿名访问，限额较低仍可用）；问最新资讯时优先 Any Search，下面的 Web Reach 作兜底
+- **Web Reach 只读公开信息**（搜索走 RapidAPI Real-Time Web Search，需 `RAPIDAPI_KEY`，失败回退 DuckDuckGo；网页读取走 Jina 阅读器，`JINA_API_KEY` 可选；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
+
+### 🔎 懂王舆情搜集（KnowKing 桥，可选）
+- 微信/Telegram 里说 **"用 knowking / kk / 懂王 查大家怎么看 X"** → 跨社交平台
+  （YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu）双语搜集"大家在怎么说"，出中立第三方舆情报告
+- **后台运行 + 完成推送**：立即回"已开始"（不卡住会话），数分钟后报告自动发回发起人；同一用户同时只跑一个
+- 仅显式说出触发词才启动（普通查资讯仍走上面的联网搜索）；查询主题等瞬态任务文件不进云备份
+- 依赖外部 KnowKing 项目 + PATH 上的 [`uv`](https://docs.astral.sh/uv/)（独立 uv 项目，自带 API 密钥配置；`config.json`
+  `knowking.project_dir` 指向其位置，未安装则该功能不可用，其余功能不受影响）
 
 ### ☁️ 云盘备份（Remote Backup，可选）
 - 用户数据（账本/票据/文档/配置）单向镜像到云盘，写入后防抖增量同步，本地永远是事实源
 - 当前内置 Google Drive 实现（最小 `drive.file` 权限，只能看到自己上传的文件）；按 provider 契约可换任意云端存储
-- 换电脑 `backup-restore` 一键恢复全部数据
+- 换电脑 `backup-restore` 按成员恢复数据（每个有备份的成员跑一条命令）
 
 ### 🔒 安全设计
-- Agent 只能调 `config.json` 白名单内的 CLI 命令；成员/文档删除等敏感命令仅限本机
+- Agent 能调的 CLI 命令有限：记账族走 `config.json` 白名单（增删只影响记账族）；备忘/工作表/图表/日程/文档/备份/联网是 Agent 核心能力，由 `agent_core` 恒定放行，不随白名单增删。成员增删、文档删除（doc-remove）、备份恢复（backup-restore/reorg）等敏感命令既不在白名单也不放行，仅限本机
 - OCR 路径限制在数据目录 `data/` 内，防文件外泄；所有凭据走环境变量或本地加密存储，永不入库
 - **隐私分层**：git 跟踪的文件（代码 + `config.json`）不含任何个人数据；隐私数据（成员注册表/账本/票据/文档/备忘/日程）
   全部在 git 忽略路径 `data/`（家庭共享 `data/Family/` + 成员私有 `data/<成员>/`），只存本机 + 你自己的云盘镜像
@@ -74,18 +100,18 @@
 ### 电脑端
 
 ```bash
-# 1. 安装依赖
-pip install "weixin-ilink[qr]"
-pip install matplotlib   # 可选：工作表数据可视化（缺失则该功能优雅降级）
+# 1. 安装依赖（Python 3.10+；核心仅 stdlib，requirements.txt 全可选，逐条注释用途与缺失降级）
+pip install -r requirements.txt
 
-# 2. 设 LLM API key（必须）
+# 2. 设 LLM API key（必须；默认模型 deepseek-flash。其他模型：config.json llm.models 加条目 + 对应 key，聊天里 /model 切）
 setx DEEPSEEK_API_KEY "sk-xxx"
+setx ZHIPU_API_KEY "xxx"              # 可选：glm-5.3-flash（/model glm），也是 DeepSeek 无响应时的自动顶替（config.json llm）
 
 # 3. 登记家庭成员（必须 — 未登记的来源一律静默忽略；--alias 登记文档里的法定名，Agent 据此识别"这是谁的"）
 python .codewhale/skills/Expense_Tracker/cli.py member-add 爸爸 --telegram 123456789 --wechat wxid_xxx --alias 法定名
 python .codewhale/skills/Expense_Tracker/cli.py member-list
 
-# 4. 启动 Agent（终端出二维码；默认写调试日志 data/bot_debug.log，--no-debug 关闭）
+# 4. 启动 Agent（终端出二维码；默认写调试日志 data/.state/bot_debug.log，--no-debug 关闭）
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 # （可选）设 OCR：
@@ -103,6 +129,12 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 #   setx GCAL_CLIENT_SECRET "xxx"
 #   python .codewhale/skills/Calendar_Keeper/calendar_provider.py --auth  # 一次性授权，按提示设 GCAL_REFRESH_TOKEN
 #   config.json 设 calendar.enabled: true
+
+# （可选）邮箱读写（当前为 Gmail 实现；步骤详见 Mail_Keeper/SKILL.md）：
+#   setx GMAIL_CLIENT_ID "xxx"       # 可复用上面的同一个 OAuth 客户端（需启用 Gmail API）
+#   setx GMAIL_CLIENT_SECRET "xxx"
+#   python .codewhale/skills/Mail_Keeper/gmail_provider.py --auth  # 一次性授权，按提示设 GMAIL_REFRESH_TOKEN
+#   data/members.json 给该成员加 mail 块
 
 # ── 或用 Telegram（多人，推荐） ──
 #   setx TELEGRAM_BOT_TOKEN "xxx"
@@ -140,14 +172,14 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | 代码 | git 仓库 | `git clone` |
 | 家庭数据（账本/票据/文档/备忘/日程/成员注册表） | 你的 Google Drive 备份 | `backup-restore` |
 | `config.json` | 随 git 克隆（也在备份里） | 自带 |
-| 凭据（GDRIVE_* / GCAL_* / 微信 / Telegram / OCR / DeepSeek） | **只在环境变量，不在备份** | 手动重设 / 重新授权 |
+| 凭据（GDRIVE_* / GCAL_* / GMAIL_* / 微信 / Telegram / OCR / DeepSeek） | **只在环境变量，不在备份** | 手动重设 / 重新授权 |
 
 **步骤**
 
 ```bash
 # 1. 装 Python 3.10+ 与依赖，克隆代码
-pip install "weixin-ilink[qr]"
 git clone <你的仓库地址> && cd FamilyAssistant
+pip install -r requirements.txt
 
 # 2. 设 Google Drive 凭据（恢复用）。CLIENT_ID/SECRET 来自 Google Cloud Console 的 OAuth 客户端
 setx GDRIVE_CLIENT_ID "xxx"
@@ -164,10 +196,11 @@ python .codewhale/skills/Remote_Backup/cli.py backup-restore --member "<主成�
 #    其他成员若各有备份：再 backup-restore --member "成员名"（此时注册表已恢复，正常模式）
 
 # 4. 重设其余凭据（都不在备份里）
-setx DEEPSEEK_API_KEY "sk-xxx"        # 必须
+setx DEEPSEEK_API_KEY "sk-xxx"        # 必须（可选：LLM_MODEL / LLM_EFFORT 启动默认；其他模型见 config.json llm；聊天里 /model /effort 可运行时切换）
+setx ZHIPU_API_KEY "xxx"              # 可选，同电脑端步骤 2
 setx GCAL_CLIENT_ID "xxx"             # 日历同步（可复用 Drive 的同一 OAuth 客户端）
 setx GCAL_CLIENT_SECRET "xxx"
-setx GCAL_CALENDAR_ID "xxx"
+setx GCAL_CALENDAR_ID "xxx"           # 可选，默认 primary 主日历
 #    GCAL refresh token 同样可 calendar_provider.py --auth 重授
 #    可选：setx TENCENT_SECRET_ID / TENCENT_SECRET_KEY（OCR）、setx TELEGRAM_BOT_TOKEN（Telegram）
 
@@ -211,6 +244,12 @@ FamilyAssistant/
 │       │   ├── sheet_db.py       ← 工作表数据层（kv 事实清单 / table 流水）
 │       │   ├── chart.py          ← 离线图表渲染（matplotlib Agg，可再生不入备份）
 │       │   └── cli.py            ← 备忘 / 工作表 / 图表 CLI 入口
+│       ├── PDF_Editor/       ← 一句指令改 PDF（会话落盘，可续改）
+│       │   ├── SKILL.md
+│       │   ├── pdf_layout.py     ← 版面：字段框 / 文字行框 / 扫描页 OCR
+│       │   ├── pdf_plan.py       ← 编辑会话 + instruction→ops（排版 LLM）
+│       │   ├── pdf_apply.py      ← 填字段 + 覆盖层 + 页级操作
+│       │   └── cli.py            ← PDF 编辑 CLI 入口
 │       ├── Remote_Backup/    ← 用户数据云盘镜像（可选）
 │       │   ├── SKILL.md
 │       │   ├── backup_sync.py    ← 同步引擎
@@ -219,16 +258,24 @@ FamilyAssistant/
 │       ├── Calendar_Keeper/  ← 家庭日程/待办 + 远程日历同步
 │       │   ├── SKILL.md
 │       │   ├── cal_db.py         ← 数据层（日程缓存）
-│       │   ├── calendar_sync.py  ← 同步引擎（静默节流刷新/先推后拉/对账）
+│       │   ├── calendar_sync.py  ← 同步引擎（静默节流刷新/先推后拉/对账/每操作校验）
 │       │   ├── calendar_provider.py ← Google Calendar+Tasks 实现（可按契约换）
 │       │   ├── providers.py       ← provider 注册表（(域,名)→实现）
 │       │   ├── image_gc.py        ← 陈旧来图清理（N 年前的 source_image）
 │       │   └── cli.py            ← 日程 CLI 入口
+│       ├── Mail_Keeper/      ← 按成员私有邮箱（读 + 两轮确认回信）
+│       │   ├── SKILL.md
+│       │   ├── gmail_provider.py ← Gmail REST 实现（可按契约换）
+│       │   ├── mail_draft.py     ← 待确认草稿 + 发信闸门
+│       │   ├── mail_watch.py     ← 新邮件播报（可选，按成员开）
+│       │   └── mail_rules.py     ← 「这种别推」忽略规则（用户教）
 │       ├── Web_Reach/        ← 只读联网：搜索 / 网页摘要 / YouTube 转写
 │       │   ├── SKILL.md
+│       │   ├── .env.example       ← RAPIDAPI_KEY 模板
 │       │   ├── reach.py           ← 搜索/抓取/YouTube 纯逻辑（可注入 fetcher）
 │       │   └── cli.py             ← CLI 入口 + 真实 HTTP 适配器
 │       ├── Any_Search/       ← 高质量实时联网搜索（垂直领域 + 全文抽取）
+│       │   ├── SKILL.md
 │       │   ├── .env.example       ← ANYSEARCH_API_KEY 模板
 │       │   ├── anysearch.py       ← 搜索/抽取/子域 纯逻辑（可注入 caller）
 │       │   └── cli.py             ← CLI 入口 + AnySearch API 适配器
@@ -238,18 +285,21 @@ FamilyAssistant/
 │           ├── members.py        ← 成员注册表（存 git 忽略的 data/members.json）
 │           ├── paths.py          ← 磁盘布局单一事实源（member_store / family_*）
 │           ├── migrate_storage.py ← 一次性存储迁移（单库 → 按成员分库）
+│           ├── knowking_jobs.py  ← 懂王（KnowKing）后台任务桥（提交/轮询/推送报告）
 │           ├── wechat_ilink.py   ← 微信传输层
 │           └── telegram_bot.py   ← Telegram 传输层
 ├── config.json           ← 分类 & 命令白名单（git 跟踪，不含隐私）
+├── FamilyAssistant.md    ← 开发者总览（架构 / config 键表 / 运行方式）
 ├── data/                 ← 全部用户数据（git 不跟踪）
-│   ├── Family/           ← 家庭共享：ledger.db、receipts/、documents/
-│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/
+│   ├── Family/           ← 家庭共享：ledger.db（财务）、documents.db（文档+成员资料）、receipts/、documents/
+│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/、pdf_edits/（PDF 编辑会话）、cache/（可再生，不备份）
+│   ├── .state/           ← 运行时状态/凭据/日志（不备份）；路径一律经 paths.state_file
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档
-└── requirements-dev.txt  ← 开发依赖（pytest）
+└── requirements.txt      ← 全部可选依赖（逐条注释，缺失则相关功能优雅降级）
 ```
 
 ## 技术栈
 
-Python 3.10+ · SQLite · DeepSeek V4 Pro · [weixin-ilink](https://pypi.org/project/weixin-ilink/)
+Python 3.10+ · SQLite · DeepSeek V4.1 Flash · [weixin-ilink](https://pypi.org/project/weixin-ilink/)

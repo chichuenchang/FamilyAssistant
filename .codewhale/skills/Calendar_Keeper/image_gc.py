@@ -11,54 +11,44 @@ Calendar Keeper — 陈旧来图清理（活动/待办的 source_image）
     image_prune_interval_days  默认 30（节流：约每月扫一次）
 
 传输层在已注册成员消息到达后调 image_gc_tick()（节流 + 静默，永不抛）。
-节流状态：data/.image_gc_state.json（不入备份）。
+节流状态：data/.state/.image_gc_state.json（不入备份）。
 测试钩子：CALENDAR_CONFIG（替代 config.json）、IMAGE_GC_STATE_DIR、DATA_ROOT。
 """
 
 from __future__ import annotations
 
-import json
 import os
-import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path.insert(0, str(HERE))
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
 import cal_db
 import members as _members
 import paths as _paths
+import jsonfile
 
+_STATE_NAME = ".image_gc_state.json"
 _FALLBACK = {"image_retention_years": 2, "image_prune_interval_days": 30}
 
 
 def _cfg() -> dict:
     cfg_path = Path(os.environ.get("CALENDAR_CONFIG") or (ROOT / "config.json"))
-    try:
-        cal = json.loads(cfg_path.read_text(encoding="utf-8")).get("calendar") or {}
-    except Exception:
-        cal = {}
+    cal = jsonfile.load_dict(cfg_path).get("calendar") or {}
     return {**_FALLBACK, **{k: cal[k] for k in _FALLBACK if k in cal}}
 
 
 def _state_file() -> Path:
-    return Path(os.environ.get("IMAGE_GC_STATE_DIR") or (ROOT / "data")) \
-        / ".image_gc_state.json"
+    env = os.environ.get("IMAGE_GC_STATE_DIR")
+    return Path(env) / _STATE_NAME if env else _paths.state_file(_STATE_NAME)
 
 
 def _load_state() -> dict:
-    try:
-        return json.loads(_state_file().read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(_state_file())
 
 
 def _save_state(st: dict) -> None:
-    p = _state_file()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+    jsonfile.save(_state_file(), st)
 
 
 def _years_ago(d: date, years: int) -> date:

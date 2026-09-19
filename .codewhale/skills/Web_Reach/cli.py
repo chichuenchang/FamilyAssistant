@@ -2,7 +2,7 @@
 """Web_Reach CLI — 只读联网读取/搜索/YouTube 总结。
 
 子命令:
-  web-search --query "..."   联网搜索最新资讯（Jina s.jina.ai，无需 key）
+  web-search --query "..."   联网搜索最新资讯（RapidAPI Real-Time Web Search，需 RAPIDAPI_KEY）
   web-read   --url "..."     抓取并清洗单个网页正文（Jina r.jina.ai）
   yt-summary --url "..."     YouTube 取字幕转文字（无字幕回退标题+简介）
 
@@ -23,8 +23,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把本 skill 目录加入 sys.path（同目录 reach）
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import reach
 
@@ -46,7 +45,8 @@ def main() -> int:
     args = p.parse_args()
 
     if args.cmd == "web-search":
-        out = reach.web_search(args.query, fetch=reach.jina_fetch)
+        out = reach.web_search(args.query, search=reach.rapidapi_search,
+                               fallback=reach.jina_fetch)
     elif args.cmd == "web-read":
         out = reach.web_read(args.url, fetch=reach.jina_fetch)
     elif args.cmd == "yt-summary":

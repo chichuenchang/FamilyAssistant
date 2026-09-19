@@ -169,7 +169,7 @@ scores"）。Agent 先从相关工作表取出对应数字（必要时先 show_w
   ```
   校验失败（type 非法 / 标题空 / x_labels 空 / series 空 / values 长度≠x_labels /
   pie 多 series）→ 退出 1。
-- **存储**：`data/<成员>/charts/<时间戳>_<标题slug>.png`，成员私有。
+- **存储**：`data/<成员>/cache/charts/<时间戳>_<标题slug>.png`，成员私有。
   **不入备份**（可再生；backup `_excluded` 命中 `charts/` 目录段）。渲染前按
   `notes.chart_retention_days`（config，默认 7 天）清理旧图（prune-on-render）。
 - **投递**：`agent.handle()` 仍返回字符串；成功渲染时代码在回复尾部追加哨兵行

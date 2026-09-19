@@ -22,9 +22,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把本 skill 目录加入 sys.path（同目录 note_db）+ Agent_Runtime（paths）
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import note_db
 import sheet_db
@@ -35,21 +33,26 @@ import paths as _paths
 _DB_OVERRIDE = os.environ.get("NOTE_DB_PATH") or None
 
 
+def _validate_member(member: str) -> str:
+    """备忘/工作表按成员私有：非覆盖模式下 member 必填非空，否则空名 slug 成
+    'member' 幽灵库。覆盖库（测试）放行。（不校验登记与否——注册表非 DATA_ROOT
+    隔离，且运行时归属由 agent_core 注入已解析成员名。）"""
+    if _DB_OVERRIDE:
+        return member
+    if not member:
+        raise ValueError("备忘按成员私有，需要 --member")
+    return member
+
+
 def _db_for(member: str) -> str:
     """备忘库按成员私有：data/<成员目录>/notes/notes.db。NOTE_DB_PATH 测试时覆盖。"""
     if _DB_OVERRIDE:
         return _DB_OVERRIDE
+    _validate_member(member)
     return str(_paths.member_store(member, "notes"))
 
 
-def _mark_backup_dirty() -> None:
-    """写入后通知备份引擎（失败静默，绝不影响写入本身）。"""
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
-        from backup_sync import mark_dirty
-        mark_dirty()
-    except Exception:
-        pass
+from backup_hook import mark_dirty as _mark_backup_dirty  # 写入后通知备份（失败静默）
 
 
 def _fmt_note(note: dict) -> str:
@@ -109,7 +112,7 @@ def cmd_note_delete(args):
         _mark_backup_dirty()
         print(f"已删除备忘 #{args.id}")
     else:
-        print(f"[错误] 无此备忘", file=sys.stderr)
+        print("[错误] 无此备忘", file=sys.stderr)
         sys.exit(1)
 
 
@@ -128,7 +131,7 @@ def cmd_note_pin(args):
         else:
             print(f"已取消置顶 #{args.id}")
     else:
-        print(f"[错误] 无此备忘", file=sys.stderr)
+        print("[错误] 无此备忘", file=sys.stderr)
         sys.exit(1)
 
 
@@ -278,6 +281,7 @@ def _chart_retention_days() -> int:
 
 
 def cmd_chart_render(args):
+    _validate_member(args.member)
     spec = json.loads(args.spec)   # JSONDecodeError -> ValueError -> main() returns 1
     try:
         rel = chart.render_chart(spec, member=args.member,

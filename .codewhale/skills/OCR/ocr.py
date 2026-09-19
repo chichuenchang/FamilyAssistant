@@ -167,6 +167,38 @@ def ocr_image(image_path: str) -> Optional[str]:
     return "\n".join(words) if words else ""
 
 
+def ocr_image_words(image_path: str) -> Optional[list]:
+    """通用识别（带坐标）。返回 [{"text","x","y","w","h"}]（图片像素坐标）；
+    None = OCR 不可用/失败。仅支持图片——PDF 先由调用方逐页渲染成图。
+    PDF_Editor 扫描页的版面定位用。
+    """
+    p = Path(image_path)
+    if not p.exists():
+        return None
+    b64 = base64.b64encode(p.read_bytes()).decode()
+    data = _call_ocr({"ImageBase64": b64, "LanguageType": "zh"})
+    if not data:
+        return None
+    words = []
+    for d in data.get("TextDetections", []):
+        text = d.get("DetectedText")
+        if not text:
+            continue
+        ip = d.get("ItemPolygon") or {}
+        if {"X", "Y", "Width", "Height"} <= set(ip):
+            x, y, w, h = ip["X"], ip["Y"], ip["Width"], ip["Height"]
+        else:
+            poly = d.get("Polygon") or []
+            xs = [pt.get("X", 0) for pt in poly]
+            ys = [pt.get("Y", 0) for pt in poly]
+            if not xs or not ys:
+                continue
+            x, y = min(xs), min(ys)
+            w, h = max(xs) - x, max(ys) - y
+        words.append({"text": text, "x": int(x), "y": int(y), "w": int(w), "h": int(h)})
+    return words
+
+
 # ── 票据结构化提取 ──────────────────────────────────────────
 
 def ocr_extract(image_path: str) -> Optional[dict]:
@@ -181,14 +213,15 @@ def ocr_extract(image_path: str) -> Optional[dict]:
              "category": "汽油", "desc": "CENTEX STRATHCONA"},
             ...
          ]}
-    无 DEEPSEEK_API_KEY 时返回 {"raw_text": ...}；OCR 失败返回 None。
+    当前模型（llm_client.settings）缺 API key 时返回 {"raw_text": ...}；OCR 失败返回 None。
     """
     raw = ocr_image(image_path)
     if not raw:
         return None
 
-    api_key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if not api_key:
+    import llm_client   # Agent_Runtime 经 bootstrap 在 sys.path
+    model, effort = llm_client.settings(llm_client.load_overrides(), "")
+    if llm_client.missing_key(model):
         return {"raw_text": raw}
 
     prompt = (
@@ -205,29 +238,16 @@ def ocr_extract(image_path: str) -> Optional[dict]:
         f"OCR结果:\n{raw}"
     )
 
-    import urllib.request
-    base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    body = json.dumps({
-        "model": "deepseek-v4-flash",
-        "messages": [
-            {"role": "system", "content": "你是逐笔交易提取器，从票据/账单里抽取每一笔消费收支。只输出JSON。"},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0,
-        # deepseek-v4-flash 是推理模型，reasoning 占用 completion 预算。
-        # 单张票据约 ~480 token；多页账单逐笔提取（实测 22 笔需 ~5300）。
-        # DeepSeek 价格低，预算给足，避免逐笔交易被截断或 content 为空。
-        "max_tokens": 10000,
-    }).encode("utf-8")
-
+    messages = [
+        {"role": "system", "content": "你是逐笔交易提取器，从票据/账单里抽取每一笔消费收支。只输出JSON。"},
+        {"role": "user", "content": prompt},
+    ]
+    # 推理模型的 reasoning 占用 completion 预算：单张票据约 ~480 token，
+    # 多页账单逐笔提取实测 22 笔需 ~5300，预算给足；逐笔推理可能耗时数十秒，超时给足。
+    msg = llm_client.chat(messages, None, model, effort,
+                          temperature=0, max_tokens=10000, timeout=90)
     try:
-        req = urllib.request.Request(
-            f"{base_url}/v1/chat/completions", data=body,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        )
-        # 多页账单逐笔推理可能耗时数十秒，超时给足。
-        resp = json.loads(urllib.request.urlopen(req, timeout=90).read())
-        content = resp["choices"][0]["message"]["content"].strip()
+        content = ((msg or {}).get("content") or "").strip()
         m = re.search(r"\{.*\}", content, re.DOTALL)
         if m:
             return json.loads(m.group(0))
@@ -251,10 +271,12 @@ def is_available() -> bool:
 
 def main() -> int:
     import argparse
+    # 直接运行时 --extract 要 import llm_client：挂全部 skill 目录（进程内调用已由调用方挂好）
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702,F401
     parser = argparse.ArgumentParser(description="OCR — 图片文字识别 / 票据结构化提取")
     parser.add_argument("image", help="图片路径")
     parser.add_argument("--extract", action="store_true",
-                        help="结构化提取票据信息（需 DEEPSEEK_API_KEY），输出 JSON")
+                        help="结构化提取票据信息（需当前模型 API key，见 Agent_Runtime/SKILL.md 模型表），输出 JSON")
     args = parser.parse_args()
 
     if not is_available():

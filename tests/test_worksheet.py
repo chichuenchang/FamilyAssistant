@@ -205,7 +205,7 @@ def test_worksheets_context_render(tmp_path):
     sheet_db.create_sheet("爸爸", "房贷", "kv", pinned=True, db_path=db)
     sheet_db.set_field("爸爸", "房贷", "利率", "5%", db_path=db)
     import agent_core
-    out = agent_core._worksheets_context("爸爸", db_path=db)
+    out = agent_core.REGISTRY.modules["Note_Keeper"].worksheets_context("爸爸", db_path=db)
     assert "房贷" in out and "利率" in out and "5%" in out
 
 
@@ -216,5 +216,5 @@ def test_worksheets_context_row_cap(tmp_path):
         sheet_db.add_row("爸爸", "大表", {"i": i}, db_path=db)
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".codewhale" / "skills" / "Agent_Runtime"))
     import agent_core
-    out = agent_core._worksheets_context("爸爸", db_path=db)
+    out = agent_core.REGISTRY.modules["Note_Keeper"].worksheets_context("爸爸", db_path=db)
     assert "还有" in out  # truncation note present (cap default 80)

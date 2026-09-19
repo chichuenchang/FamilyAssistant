@@ -9,19 +9,23 @@
 |-------|------|------|---------|
 | **Expense Tracker** | 记账、查账、汇总、存款、报税、汇率 | [SKILL.md](.codewhale/skills/Expense_Tracker/SKILL.md) | 记账、查账、汇总、存款、报税、汇率、票据 |
 | **OCR** | 图片文字识别、票据结构化提取 | [SKILL.md](.codewhale/skills/OCR/SKILL.md) | 图片文字识别、票据结构化提取 |
-| **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒 | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
+| **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒、家庭成员资料（profiles，家庭共享） | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
+| **PDF Editor** | 一句指令改 PDF：填表单（原生字段）、任意位置写字/打勾、白底覆盖改写、贴签名、画线、删页/旋转/重排/合并；会话落盘可续改（pypdf / reportlab / pypdfium2 可选依赖，缺席优雅降级） | [SKILL.md](.codewhale/skills/PDF_Editor/SKILL.md) | 填表、改 PDF、签名、删页、合并 PDF、移民表格 |
 | **Note Keeper** | 个人备忘（杂项信息长期记忆，按成员私有，支持图片 OCR 入忘、置顶常驻上下文） | [SKILL.md](.codewhale/skills/Note_Keeper/SKILL.md) | 记一下、帮我记住、备忘、我记过什么 |
-| **Calendar Keeper** | 按成员私有的日程与待办（活动/待办分库），与各成员自己的远程日历静默同步（作者已实现 Google Calendar + Tasks provider，按成员/域选择，用户可按契约换其他日历服务） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
+| **Calendar Keeper** | 按成员私有的日程与待办（活动/待办分库），与各成员自己的远程日历静默同步，每次日程操作实时核对本地↔远端一致性并自动修复（作者已实现 Google Calendar + Tasks provider，按成员/域选择，用户可按契约换其他日历服务） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
+| **Mail Keeper** | 按成员私有的邮箱：查收/读全文/回信/发新信，可带附件（发信须用户下一条消息确认才发出，闸门在代码里；回信收件人由原信决定），可选新邮件播报（只报发件人+主题；说"这种别推"即学会忽略该类）；建 Gmail 过滤器把某类信分到别的标签（同样两轮确认）；当前 Gmail provider，可按契约换 | [SKILL.md](.codewhale/skills/Mail_Keeper/SKILL.md) | 邮件、邮箱、Gmail、回邮件、查收邮件 |
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Web Reach** | 只读联网：搜最新资讯、抓取/总结网页、转写 YouTube 字幕（无需 key；YouTube 需 yt-dlp，缺失优雅降级） | [SKILL.md](.codewhale/skills/Web_Reach/SKILL.md) | 最新新闻、查一下、外面在发生什么、总结链接、YouTube、视频 |
-| **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道 |
+| **Any Search** | 高质量实时联网搜索：垂直领域（finance/health/academic/code 等）结构化结果 + 网页全文抽取（可选 `ANYSEARCH_API_KEY`，未配置走匿名）；问最新资讯时优先，Web Reach 兜底 | [SKILL.md](.codewhale/skills/Any_Search/SKILL.md) | 最新资讯、实时搜索、行情、垂直领域查询 |
+| **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram）+ 懂王（KnowKing）跨平台舆情桥（外部 uv 项目，后台跑 + 完成推送） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道、knowking、kk、懂王 |
 
 ## 运行时提示词
 
-运行时 Agent（`Agent_Runtime/agent_core.py`）在启动时把所有技能领域的行为准则
-一次性组装进 system prompt（`_build_system_prompt()`），分类/币种/文档类型等
-合法值从 `config.json` 提取为紧凑列表。SKILL.md 与本文档是开发文档，
-不进 prompt，对运行时对话无影响。工具定义走 API 的 tools 参数（function calling）。
+每个 skill 目录的 `agent_tools.py`（manifest）声明自己的工具、schema、成员锁、
+prompt 段落与上下文注入；`Agent_Runtime/skill_registry.py` 启动时发现并合并，
+`agent_core` 只拼身份 + 通用准则。契约见 `skill_registry.py` 模块头。
+新增 skill = 放一个 `agent_tools.py`，不改 `agent_core`。
+SKILL.md 与本文档是开发文档，不进 prompt。工具定义走 API 的 tools 参数（function calling）。
 
 ## 快速开始
 
@@ -40,7 +44,7 @@ python .codewhale/skills/Expense_Tracker/cli.py list --start 2026-05-01 --end 20
 python .codewhale/skills/Document_Keeper/cli.py doc-add --type lease --title "2026公寓租约" --expiry 2027-02-28
 python .codewhale/skills/Document_Keeper/cli.py doc-due
 
-# 启动微信 Bot（默认写调试日志 data/bot_debug.log，--no-debug 关闭）
+# 启动微信 Bot（默认写调试日志 data/.state/bot_debug.log，--no-debug 关闭）
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 ```
 
@@ -61,14 +65,17 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 | config 键 | 谁读取 |
 |-----------|--------|
-| `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验；`agent_core` 独立读取同一来源（工具 enum） |
+| `base_currency` / `supported_currencies` / `categories` | `Expense_Tracker/models.py`（读一次→常量），`db`/`cli` 取用并校验；`Expense_Tracker/agent_tools.py`（工具 enum + prompt 合法值） |
 | `data_root` / `family_dir_name` | `Agent_Runtime/paths.py` — 磁盘布局的单一事实来源（family_ledger / family_receipts_dir / family_documents_dir / member_store / member_domain_image_dir / to_rel）。各 skill 的 DB/票据/文档/备忘路径全经此解析 |
-| `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`agent_core`（工具 enum） |
+| `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`Document_Keeper/agent_tools.py`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
 | `backup`（enabled/debounce_seconds） | `Remote_Backup/backup_sync.py`（CFG，读一次）。每成员 provider/cred_prefix/remote_root/scopes 在 `data/members.json` 的 backup 块 |
-| `calendar`（enabled/lookahead_days/refresh_minutes/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG）；`image_gc.py`（来图清理参数）；`agent_core`（_CAL_LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
+| `calendar`（enabled/lookahead_days/refresh_minutes/sync_horizon_days/sync_past_days/query_refresh_seconds/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG，含 sync_past_days~sync_horizon_days 拉取窗口、query_refresh_seconds 后台节流）；`image_gc.py`（来图清理参数）；`Calendar_Keeper/agent_tools.py`（LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
+| `notes`（chart_retention_days/worksheet_pin_row_cap） | `Note_Keeper/cli.py`（chart_retention_days，prune-on-render）；`Note_Keeper/agent_tools.py`（WORKSHEET_PIN_ROW_CAP，置顶 table 工作表注入行上限） |
+| `agent`（context_max_tokens/idle_clear_hours） | `agent_core`（上下文自动管理：历史 token 预算超出→从最旧一问一答成对丢弃；用户闲置超 N 小时→下一条消息前清空其历史；0=关闭。用户也可发 /clear 手动清空） |
 | ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
-| `wechat.allowed_commands` | `agent_core.ALLOWED_COMMANDS` |
+| `wechat.allowed_commands` | `Expense_Tracker/agent_tools.py`（AGENT_COMMANDS；其余 skill 的命令由各自 manifest 恒定放行） |
+| `knowking`（project_dir/timeout_s） | `Agent_Runtime/knowking_jobs.py`（懂王舆情桥：KnowKing 项目根定位 + `kk ask` 子进程超时；环境变量 `KNOWKING_DIR` 可覆盖 project_dir） |
 
 改这些值只改 `config.json`（改后重启进程生效）。config 缺失/损坏时各处有应急回退默认值。
 
@@ -77,8 +84,10 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `.codewhale/skills/Expense_Tracker/` — 记账 skill（cli.py 入口 + db.py 数据层 + models.py 读 config）
 - `config.json` — 全局配置（分类/币种/路径/命令白名单的单一事实来源）
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
-- `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒）
+- `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒；documents.db 独立家庭文档库，含 documents + profiles 表）
+- `.codewhale/skills/PDF_Editor/` — PDF 编辑 skill（cli.py 入口 + pdf_layout.py 版面 + pdf_plan.py 会话与排版 + pdf_apply.py 应用；按成员私有）
 - `.codewhale/skills/Note_Keeper/` — 个人备忘 skill（cli.py 入口 + note_db.py 数据层；按成员私有）
 - `.codewhale/skills/Remote_Backup/` — 用户数据云盘镜像 skill（backup_provider.py 当前为 Google Drive 实现；按其文件头契约重写即可换成其他云盘）
 - `.codewhale/skills/Calendar_Keeper/` — 按成员私有的日程/待办 + 远程日历同步 skill（活动/待办分库；按成员/域选 provider，providers.py 注册表，calendar_provider.py 为 Google Calendar + Tasks 实现；image_gc.py 清理陈旧来图）
-- `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层），详见其 SKILL.md
+- `.codewhale/skills/Mail_Keeper/` — 按成员私有邮箱 skill（gmail_provider.py Gmail 实现 + mail_draft.py 两轮发信闸门 + mail_watch.py 新邮件播报 + mail_rules.py 忽略规则；无 cli.py，工具进程内跑）
+- `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层 + knowking_jobs.py 懂王舆情桥），详见其 SKILL.md

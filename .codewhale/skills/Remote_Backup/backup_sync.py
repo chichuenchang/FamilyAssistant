@@ -12,28 +12,26 @@ Remote Backup — 同步引擎（真实实现）
 
 状态文件（均不入备份、不入 git）：
     data/.backup_manifest.json  引擎认为云端已有的内容 {rel: {sha256,size,uploaded_at}}
-    data/.backup_state.json     {dirty_since, last_write, last_sync, last_error}
+    data/.state/.backup_state.json     {dirty_since, last_write, last_sync, last_error}
 测试钩子：环境变量 BACKUP_STATE_DIR 重定位这两个文件（仅测试用）。
 """
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import sqlite3
-import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-sys.path.insert(0, str(HERE))
 import backup_provider
 
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Agent_Runtime"))
 import members as _members
+import paths as _paths
+import jsonfile
 
 _FALLBACK_CFG = {"enabled": False, "debounce_seconds": 60}
 
@@ -43,14 +41,10 @@ def _cfg_path() -> Path:
 
 
 def _load_cfg() -> dict:
-    try:
-        raw = json.loads(_cfg_path().read_text(encoding="utf-8"))
-        cfg = raw.get("backup")
-        if isinstance(cfg, dict):
-            return {**_FALLBACK_CFG,
-                    **{k: cfg[k] for k in ("enabled", "debounce_seconds") if k in cfg}}
-    except Exception:
-        pass
+    cfg = jsonfile.load_dict(_cfg_path()).get("backup")
+    if isinstance(cfg, dict):
+        return {**_FALLBACK_CFG,
+                **{k: cfg[k] for k in ("enabled", "debounce_seconds") if k in cfg}}
     return dict(_FALLBACK_CFG)
 
 
@@ -58,27 +52,35 @@ CFG = _load_cfg()
 
 
 def _data_dirname() -> str:
-    """data_root 目录名（config.data_root，缺省 data）。备份 rel 的 <data>/ 段。"""
+    """data_root 目录名（备份 rel 的 <data>/ 段）。
+
+    与 paths.data_root() 同源：DATA_ROOT 环境变量优先（在 ROOT 下时取相对段；
+    指到 ROOT 外——测试 tmp——则退回 config），否则 BACKUP_CONFIG/config.json
+    的 data_root，缺省 data。备份镜像按 ROOT 相对布局，故只取目录段。
+    """
     try:
-        raw = json.loads(_cfg_path().read_text(encoding="utf-8"))
-        return raw.get("data_root") or "data"
-    except Exception:
-        return "data"
+        return _paths.data_root().resolve().relative_to(ROOT).as_posix()
+    except (ValueError, OSError):
+        return jsonfile.load_dict(_cfg_path()).get("data_root") or "data"
 
 
 _DATA_DIRNAME = _data_dirname()
 
-_STATE_DIR = Path(os.environ.get("BACKUP_STATE_DIR") or (ROOT / "data"))
-STATE_FILE = _STATE_DIR / ".backup_state.json"
+_STATE_ENV = os.environ.get("BACKUP_STATE_DIR")
+STATE_FILE = (Path(_STATE_ENV) / ".backup_state.json" if _STATE_ENV
+              else _paths.state_file(".backup_state.json"))
 
 # 永不进备份的路径（即使用户把 data 整个加进 include）
 _HARD_EXCLUDE_NAMES = {".telegram_offset", ".doc_reminder_state",
                        ".backup_manifest.json", ".backup_state.json",
                        ".calendar_state.json", ".sync_state.json",
-                       ".image_gc_state.json"}
+                       ".image_gc_state.json", ".llm_overrides.json",
+                       "wechat_recent_msgs.json", "wechat_sent_msgs.json"}
 
-# 永不进备份的目录段（图表可再生，不镜像）
-_HARD_EXCLUDE_DIRS = {"charts"}
+# 永不进备份的目录段：.state（运行时状态/凭据/瞬态任务，含频道 id，绝不镜像上云）、
+# cache（可再生产物）。后三个是迁入 .state/ 与 cache/ 之前的旧位置，未迁完的目录仍需挡住。
+_HARD_EXCLUDE_DIRS = {_paths.STATE_DIRNAME, _paths.CACHE_DIRNAME,
+                      "charts", "web_images", ".knowking_jobs"}
 
 
 def _now_iso() -> str:
@@ -86,22 +88,18 @@ def _now_iso() -> str:
 
 
 def _load_json(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(path)
 
 
 def _save_json(path: Path, obj: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
+    jsonfile.save(path, obj, indent=1)
 
 
 def _excluded(rel: str) -> bool:
     parts = rel.split("/")
     dirs = parts[:-1]
-    # 图表目录可再生 → 排除；但 documents/ 下即便用户把 doc_type 命名为 "charts"
-    # 也是不可再生原件，必须留备份（charts 段匹配不带锚点，故显式放行 documents/）。
+    # 段匹配不带锚点：documents/ 下即便 doc_type 被命名为 "charts"/"cache"
+    # 也是不可再生原件，必须留备份，故显式放行 documents/。
     if "documents" not in dirs and any(seg in _HARD_EXCLUDE_DIRS for seg in dirs):
         return True
     name = parts[-1]

@@ -13,7 +13,7 @@ Telegram Bot API 是全球最开放的 IM Bot 协议：
 用法:
     python .codewhale/skills/Agent_Runtime/telegram_bot.py [--no-debug]
 
-    调试日志默认开（写 data/bot_debug.log）；关闭用 --no-debug
+    调试日志默认开（写 data/.state/bot_debug.log）；关闭用 --no-debug
 """
 
 from __future__ import annotations
@@ -33,31 +33,21 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 agent_core
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import logging
 
-from agent_core import Agent, receipt_month_dir, member_inbox_dir, setup_logging
-from members import resolve
+from agent_core import receipt_month_dir, member_inbox_dir, setup_logging
+from transport_base import Transport, stamp_name, with_quote as _with_quote
+import paths as _paths
 
 log = logging.getLogger("familyassist.telegram")
-
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Document_Keeper"))
-from reminder import check_and_push as _doc_reminder_check
-
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Remote_Backup"))
-from backup_sync import mark_dirty as _backup_mark_dirty, backup_tick as _backup_tick
-
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "Calendar_Keeper"))
-from calendar_sync import calendar_tick as _calendar_tick
-from image_gc import image_gc_tick as _image_gc_tick
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 BASE = f"https://api.telegram.org/bot{TOKEN}"
 
-# 上次处理的 update_id（避免重复）
-OFFSET_FILE = ROOT / "data" / ".telegram_offset"
+# 上次处理的 update_id（避免重复）；跟随 data_root，备份硬排除该文件名
+OFFSET_FILE = _paths.state_file(".telegram_offset")
 
 
 def _load_offset() -> int:
@@ -96,12 +86,11 @@ def download_photo(file_id: str, member: str = "") -> Path | None:
         return None
     url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
     now = datetime.now()
-    ts = now.strftime("%Y%m%d_%H%M%S")
     staging = member_inbox_dir(member, now) if member else receipt_month_dir(now)
-    dest = staging / f"{ts}_telegram.jpg"
+    dest = staging / stamp_name("telegram", ".jpg", now)
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
-        _backup_mark_dirty()
+        Transport.mark_dirty()
         return dest
     except Exception as e:
         print(f"[tg] 图片下载失败: {e}", file=sys.stderr)
@@ -119,13 +108,12 @@ def download_document(file_id: str, file_name: str, member: str = "") -> Path | 
         return None
     url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
     now = datetime.now()
-    ts = now.strftime("%Y%m%d_%H%M%S")
-    suffix = ".pdf"   # 仅 PDF 走此函数（调用方已判定）；强制 .pdf，确保 ocr_image 走 PDF 分支
     staging = member_inbox_dir(member, now) if member else receipt_month_dir(now)
-    dest = staging / f"{ts}_telegram{suffix}"
+    # 仅 PDF 走此函数（调用方已判定）；强制 .pdf，确保 ocr_image 走 PDF 分支
+    dest = staging / stamp_name("telegram", ".pdf", now)
     try:
         dest.write_bytes(urllib.request.urlopen(url, timeout=30).read())
-        _backup_mark_dirty()
+        Transport.mark_dirty()
         return dest
     except Exception as e:
         print(f"[tg] 文档下载失败: {e}", file=sys.stderr)
@@ -215,28 +203,127 @@ def send_document(chat_id: int | str, path: str, caption: str = "") -> bool:
         return False
 
 
+def _tg_quoted_text(msg: dict):
+    """引用/回复消息的原文。Telegram 与微信不同，reply_to_message 自带被引消息
+    全文（text/caption），无需本地缓存反查；媒体退化为占位。超长截断防挤爆上下文。"""
+    ref = msg.get("reply_to_message") or {}
+    quoted = ref.get("text") or ref.get("caption") or ""
+    if quoted:
+        return quoted[:200] + ("…" if len(quoted) > 200 else "")
+    if ref.get("photo"):
+        return "[图片]"
+    if ref.get("document"):
+        name = (ref.get("document") or {}).get("file_name", "")
+        return f"[文件] {name}".strip()
+    return None
+
+
+class TelegramTransport(Transport):
+    """Telegram：target = chat_id。send_* 经模块级函数转发（测试 monkeypatch 这些名字）。"""
+    channel = "telegram"
+    tag = "tg"
+
+    def send_text(self, target, text: str) -> bool:
+        return send_message(target, text)
+
+    def send_photo(self, target, path: str) -> None:
+        send_photo(target, path)
+
+    def send_document(self, target, path: str) -> None:
+        send_document(target, path)
+
+
+_TRANSPORT = TelegramTransport()
+
+
 def _send_reply(chat_id, reply: str) -> None:
-    """拆出图片/文档哨兵：先发图，再发文档，最后发文字。失败仅记录，不影响文字。"""
-    from agent_core import split_reply
-    import paths as _paths
-    text, imgs, docs = split_reply(reply or "")
-    root = _paths.data_root().resolve()
-    for rel in imgs:
-        try:
-            ap = _paths.resolve_rel(rel).resolve()
-            if ap.exists() and ap.is_relative_to(root):
-                send_photo(chat_id, str(ap))
-        except Exception as e:
-            print(f"[tg] 发图失败 {rel}: {e}", file=sys.stderr)
-    for rel in docs:
-        try:
-            ap = _paths.resolve_rel(rel).resolve()
-            if ap.exists() and ap.is_relative_to(root):
-                send_document(chat_id, str(ap))
-        except Exception as e:
-            print(f"[tg] 发文件失败 {rel}: {e}", file=sys.stderr)
-    if text:
-        send_message(chat_id, text)
+    """拆出图片/文档哨兵：先发图，再发文档，最后发文字（transport_base.deliver）。"""
+    _TRANSPORT.deliver(chat_id, reply)
+
+
+# ── 主循环 ──────────────────────────────────────────────────
+
+def handle_updates(t: Transport, updates: list[dict], offset: int,
+                   albums: dict[str, dict]) -> int:
+    """处理一批 getUpdates 结果，返回推进后的 offset。"""
+    # 图/PDF 附言 = 这件（整本相册）的文字指令，只配自己的来件，不领别的攒着的。
+    # 相册每张是一条 update、附言只在第一张，且可能被拆到相邻两批 → 按 media_group_id
+    # 收进 albums（跨批存活），某批没再来新张才发出。落盘失败/不支持的文件不留附言。
+    touched = set()
+    for update in updates:
+        # 先推进 offset：任何类型的 update（含不支持的贴纸/语音）都只处理一次
+        offset = max(offset, update["update_id"])
+        msg = update.get("message", {})
+        if not msg:
+            continue
+
+        chat_id = msg["chat"]["id"]
+        member = t.gate(chat_id)
+        if member is None:
+            continue
+        user_name = msg.get("from", {}).get("first_name", "unknown")
+        text = msg.get("text", "")
+
+        if msg.get("entities") and msg["entities"][0].get("type") == "bot_command":
+            if text.strip().split()[0] == "/start":
+                send_message(chat_id,
+                    "👋 你好！我是 Family Assistant。\n"
+                    "可以直接跟我说话，比如：\n"
+                    "  • \"花了45块 午餐\" — 记账\n"
+                    "  • \"这个月花了多少\" — 查账\n"
+                    "  • \"美元汇率\" — 查汇率")
+            continue
+
+        # 图片 / PDF → 下载到发送成员 inbox
+        photos = msg.get("photo") or []
+        doc = msg.get("document")
+        if photos:
+            print(f"[tg] 图片消息 from {user_name}")
+            file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
+            path = download_photo(file_id, member) if file_id else None
+        elif doc:
+            name = doc.get("file_name", "") or ""
+            is_pdf = name.lower().endswith(".pdf") or \
+                doc.get("mime_type") == "application/pdf"
+            if not is_pdf:
+                send_message(chat_id, f"收到文件 {name}（暂不支持，PDF 可以）")
+                continue
+            file_id = doc.get("file_id", "")
+            path = download_document(file_id, name, member) if file_id else None
+        else:
+            if not text:
+                continue
+            print(f"[tg] {user_name}: {text[:60]}")
+            t.on_text(chat_id, chat_id, member, text, quoted=_tg_quoted_text(msg))
+            continue
+
+        caption = (msg.get("caption") or "").strip()
+        gid = msg.get("media_group_id")
+        if not path:
+            t.on_media(chat_id, chat_id, member, None)   # 提示重发
+        elif gid:
+            a = albums.setdefault(gid, {"chat_id": chat_id, "member": member,
+                                        "caption": "", "paths": []})
+            a["paths"].append(str(path))
+            a["caption"] = a["caption"] or caption
+            touched.add(gid)
+        elif caption:
+            t.on_text(chat_id, chat_id, member, caption, media=[str(path)])
+        else:
+            t.on_media(chat_id, chat_id, member, path)   # 等文字指令
+
+    for gid in [g for g in albums if g not in touched]:
+        _flush_album(t, albums.pop(gid))
+    return offset
+
+
+def _flush_album(t: Transport, a: dict) -> None:
+    """有附言 → 附言配整本相册；无附言 → 每张照攒，等文字指令。"""
+    if a["caption"]:
+        t.on_text(a["chat_id"], a["chat_id"], a["member"], a["caption"], media=a["paths"])
+    else:
+        for p in a["paths"]:
+            t.on_media(a["chat_id"], a["chat_id"], a["member"], p)
 
 
 def run() -> None:
@@ -254,15 +341,16 @@ def run() -> None:
         return
     print(f"[tg] 已连接 — @{me['result']['username']}")
 
-    agent = Agent()
+    t = _TRANSPORT
     offset = _load_offset()
-    print(f"[tg] 等待消息... (Ctrl+C 停止)")
+    albums: dict[str, dict] = {}   # 未收齐的相册（handle_updates）
+    print("[tg] 等待消息... (Ctrl+C 停止)")
 
     while True:
         try:
             resp = _api("getUpdates", {
                 "offset": offset + 1,
-                "timeout": 30,
+                "timeout": 2 if albums else 30,   # 相册未收齐：短轮询，没新张即发
                 "allowed_updates": ["message"],
             })
         except KeyboardInterrupt:
@@ -275,107 +363,16 @@ def run() -> None:
         if not resp or not resp.get("ok"):
             continue
 
-        for update in resp.get("result", []):
-            update_id = update["update_id"]
-            msg = update.get("message", {})
-            if not msg:
-                offset = max(offset, update_id)
-                continue
-
-            chat_id = msg["chat"]["id"]
-            # 成员闸门：未注册 id 静默丢弃（不回复、不进 LLM），本地留一行日志
-            member = resolve("telegram", str(chat_id))
-            if member is None:
-                print(f"[tg] 忽略未注册来源 chat_id={chat_id}")
-                offset = max(offset, update_id)
-                continue
-            # 已注册成员的消息 → 静默节流刷新远程日历 + 清理陈旧来图（内部把关，永不抛）
-            _calendar_tick()
-            _image_gc_tick()
-            user_name = msg.get("from", {}).get("first_name", "unknown")
-            text = msg.get("text", "")
-
-            # 处理 /start 命令
-            if msg.get("entities") and msg["entities"][0].get("type") == "bot_command":
-                cmd = text.strip().split()[0]
-                if cmd == "/start":
-                    send_message(chat_id,
-                        "👋 你好！我是 Family Assistant。\n"
-                        "可以直接跟我说话，比如：\n"
-                        "  • \"花了45块 午餐\" — 记账\n"
-                        "  • \"这个月花了多少\" — 查账\n"
-                        "  • \"美元汇率\" — 查汇率")
-                offset = max(offset, update_id)
-                continue
-
-            # 图片消息 → 下载到票据收件箱 → OCR 记账流程（与微信一致）
-            photos = msg.get("photo") or []
-            if photos:
-                print(f"[tg] 图片消息 from {user_name}")
-                file_id = photos[-1].get("file_id", "")  # 最后一个 = 最大尺寸
-                dest = download_photo(file_id, member) if file_id else None
-                log.debug("图片 from %s(%s) → %s", user_name, member, dest)
-                if dest:
-                    reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
-                else:
-                    reply = "图片下载失败，请重发。"
-                log.debug("图片回复 → %s", reply[:200])
-                _send_reply(chat_id, reply)
-                offset = max(offset, update_id)
-                continue
-
-            # 文档消息（PDF）→ 下载到 inbox → OCR 归档流程
-            doc = msg.get("document")
-            if doc:
-                name = doc.get("file_name", "") or ""
-                is_pdf = name.lower().endswith(".pdf") or \
-                    doc.get("mime_type") == "application/pdf"
-                if is_pdf:
-                    file_id = doc.get("file_id", "")
-                    dest = download_document(file_id, name, member) if file_id else None
-                    log.debug("文件 from %s(%s) → %s", user_name, member, dest)
-                    if dest:
-                        reply = agent.handle_image(str(dest), user=str(chat_id), member=member)
-                    else:
-                        reply = "文件下载失败，请重发。"
-                else:
-                    reply = f"收到文件 {name}（暂不支持，PDF 可以）"
-                _send_reply(chat_id, reply)
-                offset = max(offset, update_id)
-                continue
-
-            if not text:
-                continue
-
-            print(f"[tg] {user_name}: {text[:60]}")
-            log.debug("文字 from %s(%s): %s", user_name, member, text)
-
-            # 处理消息
-            reply = agent.handle(text, user=str(chat_id), member=member)
-            log.debug("文字回复 → %s", (reply or "")[:200])
-            if reply:
-                _send_reply(chat_id, reply)
-
-            offset = max(offset, update_id)
-
+        offset = handle_updates(t, resp.get("result", []), offset, albums)
         _save_offset(offset)
-
-        # 文档到期提醒：每天最多推一次（reminder 内部按日去重）
-        try:
-            _doc_reminder_check(send_message, "telegram")
-        except Exception as e:
-            print(f"[tg] 文档提醒检查异常: {e}", file=sys.stderr)
-            log.exception("文档提醒检查异常")
-
-        # 用户数据备份：脏 + 静默期满则镜像一轮（backup_sync 内部把关，永不抛）
-        _backup_tick()
+        t.background_tick()   # 到期提醒 + 懂王投递 + 备份节拍（每轮 ≤30s）
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Family Assistant — Telegram Bot")
     parser.add_argument("--debug", action="store_true", default=True,
-                        help="开启调试日志（写 data/bot_debug.log，默认开）")
+                        help="开启调试日志（写 data/.state/bot_debug.log，默认开）")
     parser.add_argument("--no-debug", dest="debug", action="store_false",
                         help="关闭调试日志")
     args = parser.parse_args()

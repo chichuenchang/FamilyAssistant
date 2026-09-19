@@ -23,11 +23,8 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把本 skill 目录加入 sys.path（同目录 doc_db / doc_models）
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
-# 成员注册表（Agent_Runtime skill；跨 skill 经 sys.path，与 Expense_Tracker 同模式）
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 import members as members_registry
 import paths as _paths
 
@@ -36,31 +33,15 @@ from doc_models import DOC_TYPES, DOC_STATUSES, DOCUMENTS_DIR, REMINDER_LEAD_DAY
 
 ROOT = Path(__file__).resolve().parents[3]
 
-# 测试钩子：覆盖数据库路径，避免测试碰真实账本
+# 测试钩子：覆盖数据库路径，避免测试碰真实文档库
 _DB_OVERRIDE = os.environ.get("DOC_KEEPER_DB") or None
 
 # 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）
-_BACKUP_WRITE_COMMANDS = {"doc-add", "doc-update", "doc-ack", "doc-remove"}
+_BACKUP_WRITE_COMMANDS = {"doc-add", "doc-update", "doc-ack", "doc-remove",
+                          "profile-set", "profile-unset"}
 
 
-def _mark_backup_dirty() -> None:
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
-        from backup_sync import mark_dirty
-        mark_dirty()
-    except Exception:
-        pass
-
-
-def _validate_member(name: str) -> str:
-    """非空成员名必须已登记；返回原值或抛 ValueError。空值放行（家庭级）。"""
-    if not name:
-        return ""
-    known = members_registry.member_names()
-    if name not in known:
-        raise ValueError(
-            f"未知成员 '{name}'。已登记: {', '.join(known) or '（无）'}。用 member-add 添加。")
-    return name
+from backup_hook import mark_dirty as _mark_backup_dirty  # 写入后通知备份（失败静默）
 
 
 def _store_file(src: str, doc_type: str, title: str, member: str = "") -> str:
@@ -100,7 +81,7 @@ def _fmt_due(d: dict) -> str:
 
 
 def cmd_doc_add(args):
-    member = _validate_member(args.member or "")
+    member = members_registry.require_registered(args.member or "")
     file_rel = ""
     if args.file:
         file_rel = _store_file(args.file, args.type, args.title, member)
@@ -196,7 +177,7 @@ def cmd_doc_update(args):
         if v is not None:
             fields[col] = v
     if args.member is not None:
-        fields["member"] = _validate_member(args.member)
+        fields["member"] = members_registry.require_registered(args.member)
     ok = doc_db.update_document(args.id, db_path=_DB_OVERRIDE, **fields)
     print(f"{'已更新' if ok else '未找到'} 文档 #{args.id}")
 
@@ -210,6 +191,48 @@ def cmd_doc_remove(args):
     ok = doc_db.remove_document(args.id, delete_file=args.delete_file, db_path=_DB_OVERRIDE)
     extra = "（含原始文件）" if ok and args.delete_file else ""
     print(f"{'已删除' if ok else '未找到'} 文档 #{args.id}{extra}")
+
+
+def _validate_profile_member(name: str) -> str:
+    """profile 目标成员：登记成员显示名或字面 Family。DOC_KEEPER_DB 覆盖（测试）放行。"""
+    name = (name or "").strip()
+    if _DB_OVERRIDE or name == "Family":
+        return name
+    if name not in members_registry.member_names():
+        print(f"[错误] 成员未登记: {name}（家庭层面请用 Family）")
+        sys.exit(1)
+    return name
+
+
+def cmd_profile_set(args):
+    name = _validate_profile_member(args.member_name)
+    try:
+        doc_db.set_profile(name, args.field, args.value, db_path=_DB_OVERRIDE)
+    except ValueError as e:
+        print(f"[错误] {e}")
+        sys.exit(1)
+    print(f"✅ {name}.{args.field} = {args.value}")
+
+
+def cmd_profile_unset(args):
+    name = _validate_profile_member(args.member_name)
+    if not doc_db.unset_profile(name, args.field, db_path=_DB_OVERRIDE):
+        print(f"[错误] 不存在: {name}.{args.field}")
+        sys.exit(1)
+    print(f"已删除 {name}.{args.field}")
+
+
+def cmd_profile_list(args):
+    rows = doc_db.list_profiles(args.member_name or None, db_path=_DB_OVERRIDE)
+    if not rows:
+        print("没有成员资料。")
+        return
+    cur = None
+    for r in rows:
+        if r["member"] != cur:
+            cur = r["member"]
+            print(f"【{cur}】")
+        print(f"  {r['field']}: {r['value']}")
 
 
 def main():
@@ -271,6 +294,18 @@ def main():
     p.add_argument("--id", type=int, required=True)
     p.add_argument("--delete-file", action="store_true", help="同时删除原始文件")
 
+    p = sub.add_parser("profile-set", help="写/改一条家庭成员资料（家庭共享）")
+    p.add_argument("--member-name", required=True, help="登记成员显示名或 Family")
+    p.add_argument("--field", required=True)
+    p.add_argument("--value", required=True)
+
+    p = sub.add_parser("profile-unset", help="删一条家庭成员资料")
+    p.add_argument("--member-name", required=True)
+    p.add_argument("--field", required=True)
+
+    p = sub.add_parser("profile-list", help="列家庭成员资料")
+    p.add_argument("--member-name", default="")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -282,6 +317,9 @@ def main():
         "doc-update": cmd_doc_update,
         "doc-ack": cmd_doc_ack,
         "doc-remove": cmd_doc_remove,
+        "profile-set": cmd_profile_set,
+        "profile-unset": cmd_profile_unset,
+        "profile-list": cmd_profile_list,
     }
     try:
         dispatch[args.command](args)

@@ -22,11 +22,8 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 把本 skill 目录加入 sys.path（同目录 db / models）
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
-# 成员注册表（Agent_Runtime skill；跨 skill 经 sys.path，与 agent_core 引 OCR 同模式）
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime"))
 import members as members_registry
 import paths as _paths
 
@@ -35,13 +32,7 @@ _BACKUP_WRITE_COMMANDS = {"init", "add", "delete", "deposit-add", "transfer-add"
                           "tax-add", "fx-set", "member-add", "member-remove"}
 
 
-def _mark_backup_dirty() -> None:
-    try:
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Remote_Backup"))
-        from backup_sync import mark_dirty
-        mark_dirty()
-    except Exception:
-        pass
+from backup_hook import mark_dirty as _mark_backup_dirty  # 写入后通知备份（失败静默）
 
 from db import (
     init_db,
@@ -69,21 +60,10 @@ from models import RECEIPTS_DIR
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def _validate_member(name: str) -> str:
-    """非空成员名必须已登记；返回原值或抛 ValueError。空值放行（家庭级）。"""
-    if not name:
-        return ""
-    known = members_registry.member_names()
-    if name not in known:
-        raise ValueError(
-            f"未知成员 '{name}'。已登记: {', '.join(known) or '（无）'}。用 member-add 添加。")
-    return name
-
-
 def _store_receipt(src: str, when: str, label: str) -> str:
-    """复制票据到 receipts/YYYY-MM/，返回相对项目根的路径（正斜杠）。
+    """复制票据到 receipts/YYYY-MM/，返回 data_root 相对路径（正斜杠，如 Family/receipts/...）。
 
-    - 已在票据目录内的文件不复制，原样返回相对路径（如频道存入的入站照片）。
+    - 已在票据目录内的文件不复制，原样返回相对路径。
     - 否则归档为 receipts/YYYY-MM/YYYY-MM-DD_<label>.ext（月份/日期取 when，无效则今天）。
     - 同名冲突追加 _1/_2…。文件不存在抛 ValueError（main 捕获，干净报错退出）。
     """
@@ -117,7 +97,7 @@ def cmd_init(_args):
 
 
 def cmd_add(args):
-    member = _validate_member(args.member or "")
+    member = members_registry.require_registered(args.member or "")
     receipt = _store_receipt(args.receipt, args.date,
                              f"{args.type}_{args.desc or ''}") if args.receipt else ""
     tid, dupes = add_transaction(
@@ -226,7 +206,7 @@ def cmd_monthly(args):
 
 
 def cmd_deposit_add(args):
-    member = _validate_member(args.member or "")
+    member = members_registry.require_registered(args.member or "")
     receipt = _store_receipt(args.receipt, args.start_date,
                              f"deposit_{args.bank or ''}") if args.receipt else ""
     did = add_deposit(
@@ -278,7 +258,7 @@ def cmd_transfer_add(args):
         to_rate=args.to_rate or 0.0,
         to_maturity=args.to_maturity or "",
         notes=args.notes or "",
-        member=_validate_member(args.member or ""),
+        member=members_registry.require_registered(args.member or ""),
     )
     msg = (f"已记录划转 #{res['transfer_id']}: "
            f"{args.from_amount} {args.from_currency} → {args.to_amount} {args.to_currency} "
@@ -319,7 +299,7 @@ def cmd_transfer_list(args):
 def cmd_tax_add(args):
     import json
     data = json.loads(args.data) if args.data else {}
-    member = _validate_member(args.member or "")
+    member = members_registry.require_registered(args.member or "")
     receipt = _store_receipt(args.receipt, args.filing_date or "",
                              f"tax_{args.year}_{args.country}") if args.receipt else ""
     tid = add_tax_filing(

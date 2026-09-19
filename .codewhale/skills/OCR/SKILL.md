@@ -13,7 +13,7 @@
 python .codewhale/skills/OCR/ocr.py path/to/image.jpg
 python .codewhale/skills/OCR/ocr.py path/to/doc.pdf
 
-# 票据结构化提取（需 DEEPSEEK_API_KEY），输出 JSON
+# 票据结构化提取（需当前模型 API key），输出 JSON
 python .codewhale/skills/OCR/ocr.py path/to/receipt.jpg --extract
 ```
 
@@ -21,13 +21,12 @@ python .codewhale/skills/OCR/ocr.py path/to/receipt.jpg --extract
 
 ## Python 调用（进程内复用，如 Agent）
 
-把本 skill 目录加入 `sys.path`，再 `from ocr import ...`：
+经 `Agent_Runtime/bootstrap` 挂路径，再 `from ocr import ...`：
 
 ```python
 import sys
 from pathlib import Path
-ROOT = Path(__file__).resolve().parents[3]   # 调用方在某 skill 目录下时
-sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / "OCR"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # 挂全部 skill 目录
 
 from ocr import ocr_image, ocr_extract, is_available
 
@@ -48,7 +47,7 @@ info = ocr_extract("path/to/receipt.jpg")  # 票据/账单（图片或 PDF）
 |------|------|------|
 | `is_available()` | `bool` | 是否配置了腾讯云密钥 |
 | `ocr_image(path)` | `str` / `None` | 通用文字识别（图片或 PDF）；PDF 用腾讯 `IsPdf` 逐页 OCR，上限 `MAX_PDF_PAGES=20` 页；`None` = 不可用或文件不存在 |
-| `ocr_extract(path)` | `dict` / `None` | OCR + LLM 逐笔交易提取，返回 `{"currency", "transactions":[...]}`（账单只取明细行，不取总额）；无 `DEEPSEEK_API_KEY` 时返回 `{"raw_text": ...}`。也接受 PDF |
+| `ocr_extract(path)` | `dict` / `None` | OCR + LLM 逐笔交易提取，返回 `{"currency", "transactions":[...]}`（账单只取明细行，不取总额）；当前模型缺 API key 时返回 `{"raw_text": ...}`。也接受 PDF |
 
 ## 配置
 
@@ -57,7 +56,7 @@ info = ocr_extract("path/to/receipt.jpg")  # 票据/账单（图片或 PDF）
 3. 设置环境变量：
    - `TENCENT_SECRET_ID`
    - `TENCENT_SECRET_KEY`
-   - （可选）`DEEPSEEK_API_KEY` — 用于结构化提取
+   - （可选）结构化提取用的 LLM key：跟 `LLM_MODEL` 走，见 [Agent_Runtime/SKILL.md](../Agent_Runtime/SKILL.md) 模型表
 
 ## 依赖
 

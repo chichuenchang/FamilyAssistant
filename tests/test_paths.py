@@ -69,3 +69,37 @@ def test_notes_image_dir_created(env):
     from datetime import date
     d = paths.member_notes_image_dir("Alex Lee", date(2026, 6, 1))
     assert d.exists() and d.as_posix().endswith("data/Alex/notes/2026-06")
+
+
+def test_family_documents_db(env):
+    assert paths.family_documents_db().as_posix().endswith("data/Family/documents.db")
+
+
+def test_state_file_adopts_legacy_root_file(env):
+    legacy = paths.data_root() / ".telegram_offset"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("42", encoding="utf-8")
+    p = paths.state_file(".telegram_offset")
+    assert paths.to_rel(p) == ".state/.telegram_offset"
+    assert p.read_text(encoding="utf-8") == "42" and not legacy.exists()
+
+
+def test_state_file_keeps_existing_over_legacy(env):
+    paths.state_file("x.json").write_text("new", encoding="utf-8")
+    (paths.data_root() / "x.json").write_text("old", encoding="utf-8")
+    assert paths.state_file("x.json").read_text(encoding="utf-8") == "new"
+
+
+def test_member_cache_dir_adopts_legacy_dir(env):
+    name = members.member_names()[0]
+    legacy = paths.member_dir(name) / "charts"
+    legacy.mkdir(parents=True)
+    (legacy / "a.png").write_bytes(b"x")
+    d = paths.member_cache_dir(name, "charts")
+    assert d == paths.member_dir(name) / "cache" / "charts"
+    assert (d / "a.png").exists() and not legacy.exists()
+
+
+def test_member_pdf_edits_dir_created(env):
+    d = paths.member_pdf_edits_dir("Alex Lee")
+    assert d.is_dir() and d.as_posix().endswith("data/Alex/pdf_edits")

@@ -1,0 +1,23 @@
+# 全部为可选依赖 —— 运行时核心 stdlib only，按需安装。
+# pip install -r requirements.txt
+
+# ── 开发/测试 ──────────────────────────────────────────────
+pytest
+
+# ── 可选运行时（仅增强特定 skill，缺失时优雅降级）──────────
+# weixin-ilink — Agent_Runtime 的微信频道（wechat_ilink.py --mode run 扫码登录 + 长轮询）；未安装时仅微信频道不可用。
+weixin-ilink[qr]
+# yt-dlp — Web_Reach 的 YouTube 字幕转写；未安装时 yt-summary 优雅降级（回退标题+简介或报错），不崩溃。
+yt-dlp
+# matplotlib — Note_Keeper 的工作表数据可视化（chart-render / visualize_data）；未安装时优雅降级（chart-render 退出并提示 pip install matplotlib）。
+matplotlib
+# numpy — chart.py 直接 import（matplotlib 本身也依赖它，这里显式声明）。
+numpy
+# pypdf — PDF_Editor 必需：读写 PDF、填表单字段、页级操作；未安装时 pdf-inspect/pdf-edit 提示安装。
+pypdf
+# pypdfium2 — PDF_Editor 的版面文字坐标 + 扫描页渲染；未安装时只剩表单字段与页级操作。
+pypdfium2
+# Pillow — reportlab 贴图 + pypdfium2 渲染所需。
+Pillow
+# reportlab — PDF_Editor 的覆盖层（写字/打勾/白底/贴图/画线）；未安装时仅表单字段填写与页级操作可用。
+reportlab

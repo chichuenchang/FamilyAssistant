@@ -1,4 +1,5 @@
 # tests/test_agent_member.py — agent_core 成员闸门与防冒名注入。
+import pytest
 import agent_core
 
 
@@ -38,9 +39,9 @@ def test_handle_returns_empty_without_member():
     assert agent.handle("记账 午餐45", user="x", member="") == ""
 
 
-def test_handle_image_returns_empty_without_member(tmp_path):
+def test_handle_media_returns_empty_without_member(tmp_path):
     agent = agent_core.Agent()
-    assert agent.handle_image(str(tmp_path / "x.jpg"), user="x", member="") == ""
+    assert agent.handle_media([str(tmp_path / "x.jpg")], "记账", user="x", member="") == ""
 
 
 def test_system_prompt_includes_members_and_aliases(monkeypatch):
@@ -62,38 +63,37 @@ def test_system_prompt_omits_member_block_when_registry_empty(monkeypatch):
     assert "## 家庭成员" not in prompt
 
 
-def test_handle_image_ocr_drives_handle_for_pdf(monkeypatch):
-    # 图片/PDF 同一入口：.pdf 路径也走 handle_image
+def test_handle_media_ocr_and_instruction_drive_handle(monkeypatch):
+    # 图片/PDF 同一入口；多份材料 + 用户文字指令合成一轮
     import ocr
     monkeypatch.setattr(ocr, "is_available", lambda: True)
     monkeypatch.setattr(ocr, "ocr_image", lambda path: "CONSENT FORM TEXT")
     agent = agent_core.Agent()
     cap = {}
     monkeypatch.setattr(agent, "handle",
-                        lambda prompt, user="default", member="": cap.update(p=prompt) or "ok")
-    out = agent.handle_image("data/Alex/inbox/2026-06/x.pdf", user="u", member="Alex Lee")
+                        lambda prompt, user="default", member="", said=None: cap.update(p=prompt, s=said) or "ok")
+    out = agent.handle_media(["data/Alex/inbox/2026-06/x.pdf", "data/Alex/inbox/2026-06/y.jpg"],
+                             "签好发给学校", user="u", member="Alex Lee")
     assert out == "ok"
-    assert "x.pdf" in cap["p"] and "CONSENT FORM TEXT" in cap["p"]
+    assert "x.pdf" in cap["p"] and "y.jpg" in cap["p"] and "CONSENT FORM TEXT" in cap["p"]
+    assert "2 份材料" in cap["p"] and "签好发给学校" in cap["p"]
+    assert "明显与这些材料无关" in cap["p"]              # 无关指令 → LLM 让材料作废
+    assert cap["s"] == "签好发给学校"
+    # 分流条目来自各 skill 的 IMAGE_ROUTES，按 ORDER 编号
+    p = cap["p"]
+    for tool in ("add_transaction", "add_document", "save_note", "add_event", "edit_pdf"):
+        assert tool in p, tool
+    assert "1) 单张消费票据" in p and "6) 用户此前" in p
 
 
-def test_handle_image_fallback_when_ocr_unavailable(monkeypatch):
+def test_handle_media_without_ocr_still_follows_instruction(monkeypatch):
+    # OCR 不可用 / 没识别到文字：只给路径，照样交 LLM 按用户指令办
     import ocr
     monkeypatch.setattr(ocr, "is_available", lambda: False)
+    monkeypatch.setattr(ocr, "ocr_image", lambda path: pytest.fail("OCR 不可用不该调"))
     agent = agent_core.Agent()
-    called = {"handle": False}
+    cap = {}
     monkeypatch.setattr(agent, "handle",
-                        lambda *a, **k: called.__setitem__("handle", True) or "x")
-    out = agent.handle_image("x.pdf", member="Alex Lee")
-    assert "材料" in out and called["handle"] is False
-
-
-def test_handle_image_no_text_message_when_ocr_empty(monkeypatch):
-    import ocr
-    monkeypatch.setattr(ocr, "is_available", lambda: True)
-    monkeypatch.setattr(ocr, "ocr_image", lambda path: "")   # OCR 跑了但没识别到文字
-    agent = agent_core.Agent()
-    called = {"handle": False}
-    monkeypatch.setattr(agent, "handle",
-                        lambda *a, **k: called.__setitem__("handle", True) or "x")
-    out = agent.handle_image("x.pdf", member="Alex Lee")
-    assert "没识别到文字" in out and called["handle"] is False
+                        lambda prompt, user="default", member="", said=None: cap.update(p=prompt) or "ok")
+    assert agent.handle_media(["x.pdf"], "午餐45块", member="Alex Lee") == "ok"
+    assert "x.pdf" in cap["p"] and "无 OCR 文字" in cap["p"] and "午餐45块" in cap["p"]

@@ -16,7 +16,7 @@
 
 账本是家庭共享：`data/Family/ledger.db`（经 `Agent_Runtime/paths.family_ledger()`）。票据存 `data/Family/receipts/YYYY-MM/`，行内 `receipt_path` 记 data 相对路径（`Family/receipts/...`）。
 
-`cli.py` 把同目录加入 `sys.path` 后 `from db import ...`，无需从项目根 import；落盘位置经 `Agent_Runtime/paths`。
+`cli.py` 经 `Agent_Runtime/bootstrap` 挂路径后 `from db import ...`，无需从项目根 import；落盘位置经 `Agent_Runtime/paths`。
 
 ## 数据模型
 
@@ -128,12 +128,13 @@
 
 ### 票据存储约定
 
-- **入站频道照片**：传输层存为 `receipts/YYYY-MM/YYYYMMDD_HHMMSS_<频道>.jpg`（如 `_wechat` / `_telegram`）。
-- **`--receipt` 附带的票据**：`add` / `deposit-add` / `tax-add` 自动归档到 `receipts/YYYY-MM/`，
+- **入站频道照片**：传输层先存发送成员 inbox `data/<成员>/inbox/YYYY-MM/<ts>_<频道>.jpg`
+  （如 `_wechat` / `_telegram`；成员为空的兜底才落 `receipts/`）。
+- **`--receipt` 附带的票据**：`add` / `deposit-add` / `tax-add` 自动归档到 `Family/receipts/YYYY-MM/`，
   命名 `YYYY-MM-DD_<label>.ext`（label：交易 `类型_描述`、定期 `deposit_银行`、报税 `tax_年_国`），
   月份/日期取交易/起存/申报日期，无效则取今天；同名冲突追加 `_1`/`_2`。
-  已在 `receipts/` 目录内的文件（如上面的入站照片）原样保留、不再复制。
-- 路径相对项目根目录，存入数据库 `receipt_path`（正斜杠）。
+  已在 `receipts/` 目录内的文件原样保留、不再复制。
+- 路径存 data_root 相对（正斜杠，如 `Family/receipts/...`），入库 `receipt_path`。
 - 重要票据 `notes` 标记 `[重要票据]`。
 
 ## CLI 命令参考
@@ -186,7 +187,7 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 
 ## 分类 & 币种校验（单一事实来源）
 
-`config.json` 的 `categories` / `supported_currencies` / `base_currency` 是合法值的**唯一来源**。`models.py` 在导入时读取一次 config.json，暴露为 `CATEGORIES` / `SUPPORTED_CURRENCIES` / `BASE_CURRENCY` 常量；`db.py` 只从 `models` 取值（薄封装 `get_categories` / `get_supported_currencies` / `get_base_currency`），不再各自读配置。config.json 缺失/损坏时用 `models.py` 内的应急回退值（每类型仅 `其他` + USD）。
+`config.json` 的 `categories` / `supported_currencies` / `base_currency` 是合法值的**唯一来源**。`models.py` 在导入时读取一次 config.json，暴露为 `CATEGORIES` / `SUPPORTED_CURRENCIES` / `BASE_CURRENCY` 常量；`db.py` 只从 `models` 取值（薄封装 `get_categories` / `get_supported_currencies` / `get_base_currency`），不再各自读配置。config.json 缺失/损坏时用 `models.py` 内的应急回退值（分类每类型仅 `其他`；币种 USD/CNY/CAD；基准 USD）。
 
 - 数据流：`config.json` → `models`（读一次）→ `db` 取值 → `cli` 校验。改值只改 config.json，**改后重启进程生效**（导入期读取，非每次调用）。
 - `add` / `deposit-add` 写入前校验币种；`add` 还校验分类（按交易类型）。非法值报错并退出码 `1`，不写库。

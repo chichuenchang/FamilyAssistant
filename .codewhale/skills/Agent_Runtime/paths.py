@@ -7,9 +7,13 @@ Family Assistant — 磁盘布局解析（数据落盘位置的单一事实来�
     data/<成员目录>/tasks/tasks.db         成员待办（tasks），私有
     data/<成员目录>/notes/notes.db         成员备忘 + notes/YYYY-MM/ 图片，私有
     data/<成员目录>/inbox/YYYY-MM/          来图暂存（按发送成员归属）
-    data/Family/ledger.db                   家庭账本（收支/定期/划转/报税/汇率/文档）
+    data/<成员目录>/pdf_edits/<id>/         PDF 编辑会话（plan/layout/产出），私有
+    data/<成员目录>/cache/<名>/             可再生产物（charts / web_images），不入备份
+    data/Family/ledger.db                   家庭账本（收支/定期/划转/报税/汇率，纯财务）
+    data/Family/documents.db                家庭文档库（documents + profiles，家庭共享）
     data/Family/receipts/YYYY-MM/           票据图片
     data/Family/documents/<doc_type>/       长期文档（家庭与成员）
+    data/.state/                            运行时状态/凭据/日志（机器自管，不入备份）
 
 config.json：data_root（默认 data）、family_dir_name（默认 Family）。
 测试钩子：环境变量 DATA_ROOT 覆盖数据根（优先于 config）。
@@ -22,24 +26,18 @@ config.json：data_root（默认 data）、family_dir_name（默认 Family）。
 
 from __future__ import annotations
 
-import json
 import os
-import sys
 from datetime import date
 from pathlib import Path
 
 # 本文件位于 .codewhale/skills/Agent_Runtime/ ，向上 3 级到项目根
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # 同目录 members
 
-import members as _members
+import jsonfile
 
 
 def _config() -> dict:
-    try:
-        return json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return jsonfile.load_dict(ROOT / "config.json")
 
 
 def data_root() -> Path:
@@ -54,6 +52,30 @@ def _family_name() -> str:
     return _config().get("family_dir_name") or "Family"
 
 
+# ── 运行时状态 ──────────────────────────────────────────────
+
+STATE_DIRNAME = ".state"
+CACHE_DIRNAME = "cache"
+
+
+def state_file(name: str) -> Path:
+    """运行时状态/凭据/日志 data/.state/<name>（文件或目录名），父目录不存在则创建。
+
+    旧布局把这些散放在 data/ 根；首次访问时原地搬入（同卷 rename）。
+    搬不动（如日志被占用）就留在原处，新文件照常落 .state/。
+    """
+    d = data_root() / STATE_DIRNAME
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / name
+    legacy = data_root() / name
+    if legacy.exists() and not p.exists():
+        try:
+            legacy.replace(p)
+        except OSError:
+            pass
+    return p
+
+
 # ── 家庭共享 ────────────────────────────────────────────────
 
 def family_dir() -> Path:
@@ -61,8 +83,13 @@ def family_dir() -> Path:
 
 
 def family_ledger() -> Path:
-    """家庭账本 DB（收支/定期/划转/报税/汇率/文档）。"""
+    """家庭账本 DB（收支/定期/划转/报税/汇率；文档已拆到 documents.db）。"""
     return family_dir() / "ledger.db"
+
+
+def family_documents_db() -> Path:
+    """家庭文档库（documents + profiles 表，家庭共享）。"""
+    return family_dir() / "documents.db"
 
 
 def family_receipts_dir(dt: date | None = None) -> Path:
@@ -85,6 +112,7 @@ _DOMAINS = {"schedule": "schedule.db", "tasks": "tasks.db", "notes": "notes.db"}
 
 
 def member_dir(member: str) -> Path:
+    import members as _members  # 延迟 import：members 反向依赖本模块的 data_root
     return data_root() / _members.member_dir_name(member)
 
 
@@ -107,6 +135,37 @@ def member_sync_state(member: str, domain: str) -> Path:
 def member_inbox_dir(member: str, dt: date | None = None) -> Path:
     """来图暂存 data/<成员>/inbox/YYYY-MM/，不存在则创建。"""
     d = member_dir(member) / "inbox" / (dt or date.today()).strftime("%Y-%m")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def member_pdf_edits_dir(member: str) -> Path:
+    """PDF 编辑会话 data/<成员>/pdf_edits/，不存在则创建。"""
+    d = member_dir(member) / "pdf_edits"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def member_mail_rules(member: str) -> Path:
+    """成员的新邮件播报忽略规则 data/<成员>/mail/rules.json（用户教出来的偏好，入备份）。"""
+    d = member_dir(member) / "mail"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / "rules.json"
+
+
+def member_cache_dir(member: str, name: str) -> Path:
+    """可再生产物 data/<成员>/cache/<name>/（charts、web_images…），不存在则创建。
+
+    旧布局为 data/<成员>/<name>/，首次访问时搬入。
+    """
+    d = member_dir(member) / CACHE_DIRNAME / name
+    legacy = member_dir(member) / name
+    if legacy.is_dir() and not d.exists():
+        d.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            legacy.replace(d)
+        except OSError:
+            pass
     d.mkdir(parents=True, exist_ok=True)
     return d
 

@@ -14,8 +14,8 @@ import db as dbm
 def test_default_db_is_family_ledger():
     """Default ledger lives under data/Family, receipts under data/Family/receipts."""
     import models
-    assert models.DB_PATH.as_posix().endswith("data/Family/ledger.db")
-    assert models.RECEIPTS_DIR.as_posix().endswith("data/Family/receipts")
+    assert models.DB_PATH.as_posix().endswith("/Family/ledger.db")
+    assert models.RECEIPTS_DIR.as_posix().endswith("/Family/receipts")
 
 
 def test_store_receipt_returns_family_rel(tmp_path, monkeypatch):
@@ -557,6 +557,14 @@ def test_add_tax_filing_roundtrip(db):
     ca = dbm.get_tax_filings(country="CA", db_path=db)
     assert len(ca) == 1
     assert ca[0]["country"] == "CA"
+
+
+def test_add_tax_filing_rejects_unknown_country(db):
+    """报税国家限 TAX_COUNTRIES（US/CA）；其余报错不写库。"""
+    import pytest
+    with pytest.raises(ValueError):
+        dbm.add_tax_filing(year=2025, country="XX", data={}, db_path=db)
+    assert dbm.get_tax_filings(db_path=db) == []
 
 
 # ═══════════════════════════════════════════════════════════════════════

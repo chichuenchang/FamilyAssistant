@@ -10,14 +10,30 @@
 .codewhale/skills/Document_Keeper/
 ├── SKILL.md       ← 本文件
 ├── doc_models.py  ← 数据模型 / SCHEMA / 文档类型（读 config.json）
-├── doc_db.py      ← SQLite CRUD & 到期查询（documents 表，建在 data/Family/ledger.db）
+├── doc_db.py      ← SQLite CRUD & 到期查询（documents + profiles 表，建在 data/Family/documents.db）
 ├── cli.py         ← 命令行入口（user / agent / 任意调用方）
 └── reminder.py    ← 每日到期提醒（传输层轮询时调用，按频道按日去重）
 ```
 
 数据模块名带 `doc_` 前缀（不叫 models/db）：Expense_Tracker 已在共享进程占用这两个模块名。
 
-文件存档在 `data/Family/documents/<类型>/`，数据库共用家庭账本 `data/Family/ledger.db`（路径经 `Agent_Runtime/paths`）。行内 `file_path` 记 data 相对路径（`Family/documents/...`）。文档为家庭共享（含成员个人证件，统一归家庭目录）。
+文件存档在 `data/Family/documents/<类型>/`，数据库为独立家庭文档库 `data/Family/documents.db`（路径经 `Agent_Runtime/paths.family_documents_db()`；测试用 `DOC_KEEPER_DB` 环境变量覆盖）。行内 `file_path` 记 data 相对路径（`Family/documents/...`）。文档为家庭共享（含成员个人证件，统一归家庭目录）。
+
+历史迁移：documents 表 2026-07 前住在家庭账本 `ledger.db`；首次以默认路径连接 documents.db 时自动搬家，账本里的旧表改名 `documents_legacy` 留作保险（确认无误后可手动删除）。
+
+## 家庭成员资料（profiles 表）
+
+长期个人事实（法定名/生日/电话/邮箱/住址/证件卡号等），家庭共享（全家可见可改），注入每个成员的每次对话（Agent 填表建议、称呼、查询都用它）。`member` 为登记成员显示名，家庭层面事实（住址等）用字面 `Family`。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | INTEGER | 主键 |
+| member | TEXT | 成员显示名或 Family |
+| field | TEXT | 字段名（member+field 唯一，upsert） |
+| value | TEXT | 值 |
+| updated_at | TEXT | 最后更新日期 |
+
+CLI：`profile-set --member-name <名> --field <字段> --value <值>` / `profile-unset --member-name <名> --field <字段>` / `profile-list [--member-name <名>]`。member-name 须为登记成员或 Family（`DOC_KEEPER_DB` 测试覆盖时放行）。
 
 ## 数据模型
 
@@ -35,7 +51,7 @@
 | action_note | TEXT | 到期要做什么（如 提前60天通知房东） |
 | remind_days | INTEGER | 该文档提醒提前量；空用 config `reminder_lead_days` |
 | acknowledged | INTEGER | 提醒已确认（到期日变更自动清零） |
-| file_path | TEXT | 原始文件相对路径 `documents/<类型>/...` |
+| file_path | TEXT | 原始文件 data_root 相对路径 `Family/documents/<类型>/...` |
 | ocr_text | TEXT | OCR 全文（关键词检索用） |
 | data | TEXT(JSON) | 灵活字段（含 file_sha256 重复检测哈希） |
 | status | TEXT | active / expired / archived / superseded |
@@ -55,7 +71,7 @@
 ## 到期提醒（双通道）
 
 - **随问随查**：`doc-due [--days N]` — active 且 `到期日 − 提前量 ≤ 今天`（含已过期），未确认在前。提前量：`--days` > 文档 `remind_days` > config `reminder_lead_days`。
-- **每日推送**：`reminder.check_and_push(send_fn, 频道)` 由传输层轮询调用，每频道每日最多一次，推给该频道全部已登记成员。状态存 `data/.doc_reminder_state`；推送失败不记状态、下轮重试。`doc-ack` 后该文档不再重复提醒，直到到期日更新。
+- **每日推送**：`reminder.check_and_push(send_fn, 频道)` 由传输层轮询调用，每频道每日最多一次，推给该频道全部已登记成员。状态存 `data/.state/.doc_reminder_state`；推送失败不记状态、下轮重试。`doc-ack` 后该文档不再重复提醒，直到到期日更新。
 
 ## CLI 命令参考
 
@@ -122,9 +138,10 @@ Agent 可把文件发回用户，两个工具（均强制注入成员，LLM 不�
 - ✅ 到期跟踪、按需查询 + 每日推送提醒
 - ✅ 成员归属（与记账同防冒名机制）
 - ✅ 重复检测（编号 / 文件哈希）
+- ✅ PDF 入库：发来的 PDF 走 OCR 逐页识别（腾讯 IsPdf）→ 全文索引 + DeepSeek 自动提取元数据，与图片同一入口
 
 不覆盖：
 - ❌ 文档版本对比（新版本另存一条，旧的标 superseded）
 - ❌ 静态加密
-- ❌ PDF 文字层解析（PDF 只存档，元数据手动填）
+- ❌ PDF 嵌入文字层直读（统一走 OCR 识别，不解析 text layer）
 - ❌ 与文档无关的通用提醒

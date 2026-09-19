@@ -2,7 +2,8 @@
 Family Assistant — 一次性存储迁移：单库 data/ledger.db → 分库布局。
 
 把旧的单一 ledger.db 拆成：
-    data/Family/ledger.db               收支/定期/划转/报税/汇率/文档（家庭共享，当前多为空）
+    data/Family/ledger.db               收支/定期/划转/报税/汇率（家庭共享，当前多为空；
+                                        文档表随后由 doc_db 再迁去 data/Family/documents.db）
     data/<owner>/notes/notes.db         备忘按 member 分库（图片搬进该成员 notes/YYYY-MM/）
     data/<owner>/schedule/schedule.db   活动（kind=event）
     data/<owner>/tasks/tasks.db         待办（kind=task）
@@ -38,11 +39,10 @@ if sys.platform == "win32":
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-for _d in ("Agent_Runtime", "Expense_Tracker", "Document_Keeper",
-           "Note_Keeper", "Calendar_Keeper"):
-    sys.path.insert(0, str(ROOT / ".codewhale" / "skills" / _d))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import paths
+import jsonfile
 import members
 import models as expense_models      # Expense SCHEMA（transactions/deposits/transfers/tax/fx）
 import doc_models                     # Document SCHEMA（documents）
@@ -206,16 +206,11 @@ def migrate(old_ledger, old_state=None, *, calendar_owner: str | None = None,
 
     # ── 播种 owner 两域同步状态（保留 last_refresh，避免立即churn） ──
     if not dry_run and old_state and Path(old_state).exists() and calendar_owner:
-        try:
-            gst = json.loads(Path(old_state).read_text(encoding="utf-8"))
-        except Exception:
-            gst = {}
+        gst = jsonfile.load_dict(old_state)
         for domain in ("schedule", "tasks"):
-            sp = paths.member_sync_state(calendar_owner, domain)
-            sp.parent.mkdir(parents=True, exist_ok=True)
-            sp.write_text(json.dumps({"last_refresh": gst.get("last_refresh"),
-                                      "last_error": gst.get("last_error")},
-                                     ensure_ascii=False), encoding="utf-8")
+            jsonfile.save(paths.member_sync_state(calendar_owner, domain),
+                          {"last_refresh": gst.get("last_refresh"),
+                           "last_error": gst.get("last_error")})
 
     old.close()
 

@@ -2,16 +2,16 @@
 
 > 只读联网 skill。让 Agent 搜最新资讯、抓取并总结网页、转写 YouTube 视频字幕。抓取到的原文交给 Agent 的 LLM 总结后回复用户。
 
-实现 `reach.py` + `cli.py` 就在本 skill 目录 `.codewhale/skills/Web_Reach/`。搜索/网页抓取仅用标准库（urllib，无 key）；YouTube 需 `yt-dlp`（缺失时优雅降级）。
+实现 `reach.py` + `cli.py` 就在本 skill 目录 `.codewhale/skills/Web_Reach/`。搜索/网页抓取仅用标准库 urllib；YouTube 需 `yt-dlp`（缺失时优雅降级）。
 
-无认证、无 API key（搜索走 DuckDuckGo 经 Jina 阅读器；可选 `JINA_API_KEY` 提升限频）。只读公开信息，不写库、不按成员隔离。
+搜索走 RapidAPI Real-Time Web Search（付费订阅，需 `RAPIDAPI_KEY`），失败回退 DuckDuckGo 结果页经 Jina；网页读取走 Jina 阅读器（keyless）。只读公开信息，不写库、不按成员隔离。
 
 ## 命令行调用（agent 经白名单子命令调用）
 
 从项目根目录直接跑：
 
 ```bash
-# 联网搜索最新资讯（DuckDuckGo 结果页经 r.jina.ai 清洗为 markdown）
+# 联网搜索最新资讯（RapidAPI，输出编号 标题/URL/摘要）
 python .codewhale/skills/Web_Reach/cli.py web-search --query "最新 AI 新闻"
 
 # 抓取并阅读单个网页正文
@@ -39,20 +39,25 @@ python .codewhale/skills/Web_Reach/cli.py yt-summary --url "https://www.youtube.
 
 | 函数 | 返回 | 说明 |
 |------|------|------|
-| `web_search(query, *, fetch)` | `str` | 经 Jina 阅读器抓 DuckDuckGo 结果页；空查询/失败/无结果返回 `[错误] …` |
+| `web_search(query, *, search, fallback=None)` | `str` | `search(q)` 返 RapidAPI JSON，格式化为编号结果；抛错/非 OK/无结果时有 `fallback(url)` 则抓 DuckDuckGo 页（经 `r.jina.ai`），否则或两者皆败返回 `[错误] …` |
 | `web_read(url, *, fetch)` | `str` | 经 `r.jina.ai` 抓取清洗单页；空链接/失败返回 `[错误] …` |
 | `summarize_youtube(url, *, get_subs, get_meta)` | `str` | 优先字幕转写，回退标题+简介，再无则 `[错误] …` |
 | `parse_vtt(vtt)` | `str` | `.vtt` → 去时间轴/标签/连续重复的纯文字 |
 | `trim(text, cap=6000)` | `str` | 截断并加 `…[截断]` 标记 |
 
-网络适配器 `jina_fetch` / `ytdlp_subs` / `ytdlp_meta` 做真实 I/O，由 `cli.py` 注入纯逻辑；单测注入假 fetcher，不联网。
+网络适配器 `rapidapi_search` / `jina_fetch` / `ytdlp_subs` / `ytdlp_meta` 做真实 I/O，由 `cli.py` 注入纯逻辑；单测注入假 fetcher，不联网。
 
 ## 依赖
 
 - 搜索 / 网页抓取：零外部包（标准库 urllib）。
 - YouTube：`pip install yt-dlp`。**未安装时 `yt-summary` 优雅降级**（返回 `[错误] 该视频无字幕、无简介，无法总结`，不崩溃）。
 
-## 配置（可选）
+## 配置
+
+- `RAPIDAPI_KEY`（`web-search` 必需）：环境变量 > skill 目录 `.env`（模板 `.env.example`，gitignore）。缺失即走 DuckDuckGo 回退。
+- RapidAPI `/search`：`limit` 参数被忽略，用 `num`（固定 10）。响应 `data.organic_results[]`；旧形 `data=[…]` 也兼容。
+- 回退 DuckDuckGo 质量差（2026-09-16 实测 8 查询）：输出恒顶满 6000 字截断，仅 2–8 条有效结果，链接为 `duckduckgo.com/l/?uddg=` 跳转，常夹 Bing 广告；RapidAPI 10 条 ~2000 字。回退只保可用。
+- `web-search` 子进程上限 45s（`agent_tools.py` `CLI_TIMEOUTS`）：RapidAPI 20s + 回退 20s。
 
 - `JINA_API_KEY`：设置后作为 `Authorization: Bearer` 头发给 `r.jina.ai`，提升免费限频。不设则用 keyless 免费档。
 
@@ -60,4 +65,4 @@ python .codewhale/skills/Web_Reach/cli.py yt-summary --url "https://www.youtube.
 
 - 同步单条回复：抓取期间（约 5–20s）Bot 静默，完成后一次性回复（与其它工具一致）。
 - 抓取到的网页文本会进入 LLM 上下文（轻度注入面）；但工具是固定只读、LLM 不能执行命令，最坏只是被污染的"总结"，非 RCE。
-- 依赖外部免费服务（Jina / DuckDuckGo / YouTube），可能限频或偶发不可用 → 返回 `[错误]`。
+- 依赖外部服务（RapidAPI 按量计费 / Jina / YouTube），可能限频或偶发不可用 → 返回 `[错误]`。

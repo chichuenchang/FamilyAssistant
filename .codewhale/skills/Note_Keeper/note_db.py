@@ -6,27 +6,10 @@ Family Assistant — Note Keeper 数据库操作层
 所有查询强制按 member 过滤，实现按成员隔离。
 """
 
-import json
 import os
 import sqlite3
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
-
-_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config.json"
-
-
-def _load_config() -> dict:
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-_cfg = _load_config()
-_ROOT = _CONFIG_PATH.parent
-# 旧单库默认：仅未传 db_path 时的兜底；运行时一律按成员分库经 paths 注入 db_path。
-DB_PATH = _ROOT / "data" / "ledger.db"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS notes (
@@ -46,8 +29,12 @@ def _connect(db_path: Optional[str] = None) -> sqlite3.Connection:
     """获取数据库连接，自动启用 WAL 并确保 notes 表存在。
 
     幂等建表（CREATE ... IF NOT EXISTS）：首次调用时自动创建表与索引。
+    db_path 必传（备忘按成员分库，调用方经 paths.member_store(member,"notes") 解析）——
+    历史上兜底旧单库 data/ledger.db，会静默建错库，故改为显式报错。
     """
-    path = db_path or str(DB_PATH)
+    if not db_path:
+        raise ValueError("需要 db_path（备忘按成员分库，经 paths.member_store 解析）")
+    path = str(db_path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
