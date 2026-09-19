@@ -16,7 +16,7 @@ def test_load_llm_overrides_validates_values(tmp_path, monkeypatch):
         "u2": {"model": "gpt-99", "effort": "ludicrous"},   # 非法值整条丢弃
         "u3": "not-a-dict",
         "u4": {"model": "deepseek-flash"},                # 登记模型单键也合法
-        "u5": {"model": "GLM", "effort": 3},           # 别名不分大小写 → 规范名
+        "u5": {"model": "GLM", "effort": 3},              # 别名不分大小写 → 规范名
     }), encoding="utf-8")
     assert agent_core._load_llm_overrides() == {
         "u1": {"effort": "high"}, "u4": {"model": "deepseek-flash"},
