@@ -41,7 +41,7 @@ def _agent(tmp_path, monkeypatch):
     """干净环境下的 Agent：数据根隔离，LLM 相关环境变量清空。"""
     monkeypatch.setenv("DATA_ROOT", str(tmp_path))
     for v in ("LLM_MODEL", "LLM_EFFORT", "DEEPSEEK_MODEL", "DEEPSEEK_REASONING_EFFORT",
-              "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "ZHIPU_API_KEY"):
+              "DEEPSEEK_API_KEY", "ZHIPU_API_KEY"):
         monkeypatch.delenv(v, raising=False)
     return agent_core.Agent(idle_clear_hours=0)
 

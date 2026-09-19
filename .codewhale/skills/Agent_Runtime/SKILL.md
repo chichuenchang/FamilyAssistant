@@ -11,7 +11,7 @@
 ├── SKILL.md            ← 本文件
 ├── agent_core.py       ← 频道无关 Agent（共用大脑）
 ├── llm_client.py       ← 模型表 + 提供商分发 + /model /effort 每用户覆盖
-├── llm_providers.py    ← 各家 API 适配（openai_compat / anthropic）；新增提供商加一个函数
+├── llm_providers.py    ← 各家 API 适配（openai_compat）；新增提供商加一个函数
 ├── context_budget.py   ← 历史 token 粗估 + 整轮裁剪（纯函数）
 ├── chat_archive.py     ← 对话长期存档（data/.state/chat_history.jsonl），chat_history 工具回读
 ├── transport_base.py   ← 频道共用生命周期（闸门/投递/后台节拍）；新增频道继承它
@@ -192,10 +192,10 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 
 模型表 = `llm_client._BUILTIN_MODELS`（deepseek-flash）+ `config.json` `llm.models`（字段说明见其 `_comment`）。
 加模型 = 加一条 config 条目；加提供商 = `llm_providers.py` 加一个 `chat(spec, messages, tools, effort, **opts)`
-并登记进 `PROVIDERS`。契约：进出都是 OpenAI 风格消息（历史也按它存），提供商自己翻译；anthropic
-回复带 `_blocks` 同轮原样重放（thinking 块不丢）。核心仍零外部包（urllib）。
-`agent_core` 发两条 system（静态项目文档 / 时间戳等易变块）：anthropic 对静态条打 `cache_control`，
-openai_compat 合并成一条——规则见 `llm_providers.py` 模块 docstring。
+并登记进 `PROVIDERS`。契约：进出都是 OpenAI 风格消息（历史也按它存），提供商自己翻译。
+核心仍零外部包（urllib）。
+`agent_core` 发两条 system（静态项目文档 / 时间戳等易变块）：openai_compat 合并成一条——
+规则见 `llm_providers.py` 模块 docstring。
 
 用户随时可发 `/model`（查当前 + 可切换列表）、`/model <名字|别名>`（密钥未配置的拒切）、
 `/model reset`、`/effort low|medium|high|max|reset`（不带参数查当前值，含来源：个人覆盖/环境变量/默认）。每用户覆盖存 `data/.state/.llm_overrides.json`（不入备份），

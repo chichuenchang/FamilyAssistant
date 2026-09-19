@@ -1,4 +1,4 @@
-# tests/test_llm_providers.py — 模型表 + 提供商翻译层（openai_compat / anthropic）。
+# tests/test_llm_providers.py — 模型表 + 提供商翻译层（openai_compat）。
 import io
 import json
 import urllib.error
@@ -11,8 +11,6 @@ import llm_client
 import llm_providers as prov
 
 DS = llm_client._BUILTIN_MODELS["deepseek-flash"]
-CLAUDE = {"provider": "anthropic", "api_model": "claude-opus-5", "api_key_env": "ANTHROPIC_API_KEY",
-          "base_url": "https://api.anthropic.com", "base_url_env": "ANTHROPIC_BASE_URL"}
 
 
 def sse(*chunks) -> bytes:
@@ -58,7 +56,7 @@ def test_openai_compat_payload_and_private_key_stripping(capture, monkeypatch):
     monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
     capture["reply"] = sse(delta("o"), delta("k", finish="stop"),
                            {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1}})
-    msgs = [{"role": "assistant", "content": "x", "_blocks": [1], "_usage": {}},
+    msgs = [{"role": "assistant", "content": "x", "_finish": "stop", "_usage": {}},
             {"role": "user", "content": "hi"}]
     out = prov.openai_compat(DS, msgs, [{"type": "function"}], "max", temperature=0, max_tokens=9,
                              timeout=7)
@@ -142,14 +140,6 @@ def test_openai_compat_merges_leading_system_messages(capture):
                                            {"role": "user", "content": "hi"}]
 
 
-def test_anthropic_cache_breakpoint_on_second_to_last_system():
-    three = [{"role": "system", "content": s} for s in ("A", "B", "C")] + [{"role": "user", "content": "q"}]
-    system, _ = prov._to_anthropic(three)
-    assert [("cache_control" in b) for b in system] == [False, True, False]
-    one, _ = prov._to_anthropic([{"role": "system", "content": "A"}, {"role": "user", "content": "q"}])
-    assert one == [{"type": "text", "text": "A"}]
-
-
 def test_openai_compat_base_url_env_and_effort_off(capture, monkeypatch):
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "http://localhost:11434/")
     capture["reply"] = sse(delta("", finish="stop"))
@@ -218,96 +208,6 @@ def test_stream_stops_reading_once_finish_and_usage_arrived(monkeypatch):
     assert out["content"] == "done" and out["_finish"] == "stop" and out["_usage"] == {"completion_tokens": 1}
 
 
-# ── anthropic ───────────────────────────────────────────────
-
-def test_to_anthropic_translation():
-    msgs = [
-        {"role": "system", "content": "S1"},
-        {"role": "system", "content": "S2"},
-        {"role": "user", "content": "q"},
-        {"role": "assistant", "content": "thinking aloud",
-         "tool_calls": [{"id": "t1", "type": "function", "function": {"name": "f", "arguments": '{"a": 1}'}},
-                        {"id": "t2", "type": "function", "function": {"name": "g", "arguments": "{bad"}}]},
-        {"role": "tool", "tool_call_id": "t1", "content": "r1"},
-        {"role": "tool", "tool_call_id": "t2", "content": "r2"},
-        {"role": "assistant", "content": "", "_blocks": [{"type": "thinking", "thinking": "", "signature": "sig"},
-                                                         {"type": "text", "text": "done"}]},
-        {"role": "assistant", "content": ""},   # 空消息跳过
-        {"role": "user", "content": "next"},
-    ]
-    system, out = prov._to_anthropic(msgs)
-    assert system == [{"type": "text", "text": "S1", "cache_control": {"type": "ephemeral"}},
-                      {"type": "text", "text": "S2"}]
-    assert out == [
-        {"role": "user", "content": "q"},
-        {"role": "assistant", "content": [
-            {"type": "text", "text": "thinking aloud"},
-            {"type": "tool_use", "id": "t1", "name": "f", "input": {"a": 1}},
-            {"type": "tool_use", "id": "t2", "name": "g", "input": {}}]},
-        {"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": "t1", "content": "r1"},
-            {"type": "tool_result", "tool_use_id": "t2", "content": "r2"}]},
-        {"role": "assistant", "content": [{"type": "thinking", "thinking": "", "signature": "sig"},
-                                          {"type": "text", "text": "done"}]},
-        {"role": "user", "content": "next"},
-    ]
-
-
-def test_anthropic_request_and_response(capture, monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "ak")
-    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
-    capture["reply"] = {
-        "content": [{"type": "thinking", "thinking": "", "signature": "s"},
-                    {"type": "text", "text": "调一下"},
-                    {"type": "tool_use", "id": "tu1", "name": "add", "input": {"amount": 5, "desc": "咖啡"}}],
-        "stop_reason": "tool_use",
-        "usage": {"input_tokens": 100, "output_tokens": 20},
-    }
-    tools = [{"type": "function", "function": {"name": "add", "description": "记账",
-                                               "parameters": {"type": "object", "properties": {}}}}]
-    out = prov.anthropic(CLAUDE, [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
-                         tools, "max", temperature=0.3, max_tokens=123)
-    assert capture["url"] == "https://api.anthropic.com/v1/messages"
-    assert capture["headers"]["x-api-key"] == "ak"
-    assert capture["headers"]["anthropic-version"] == "2023-06-01"
-    b = capture["body"]
-    assert b["system"] == [{"type": "text", "text": "sys"}]   # 单条：无断点
-    assert b["messages"] == [{"role": "user", "content": "hi"}]
-    assert b["output_config"] == {"effort": "max"} and b["max_tokens"] == 123
-    assert "temperature" not in b
-    assert b["tools"] == [{"name": "add", "description": "记账",
-                           "input_schema": {"type": "object", "properties": {}}}]
-    assert out["content"] == "调一下" and out["_finish"] == "tool_calls"
-    assert out["_usage"] == {"prompt_tokens": 100, "completion_tokens": 20}
-    assert out["_blocks"] == capture["reply"]["content"]
-    assert out["tool_calls"] == [{"id": "tu1", "type": "function",
-                                  "function": {"name": "add",
-                                               "arguments": '{"amount": 5, "desc": "咖啡"}'}}]
-
-
-@pytest.mark.parametrize("stop,finish", [("end_turn", "stop"), ("max_tokens", "length"),
-                                         ("refusal", "refusal")])
-def test_anthropic_finish_mapping(capture, stop, finish):
-    capture["reply"] = {"content": [{"type": "text", "text": "t"}], "stop_reason": stop, "usage": {}}
-    out = prov.anthropic(CLAUDE, [{"role": "user", "content": "hi"}], None, "high")
-    assert out["_finish"] == finish and "tool_calls" not in out
-    assert out["_usage"] == {"prompt_tokens": 0, "completion_tokens": 0}
-    assert "tools" not in capture["body"] and "system" not in capture["body"]
-    assert capture["timeout"] == 600   # 非流式 + thinking：默认超时须远大于 openai_compat 的 120
-
-
-@pytest.mark.parametrize("reply", [
-    {"type": "error", "error": {"message": "x"}},
-    {"content": "not a list"},
-    {"content": [{"type": "tool_use", "input": {}}]},   # tool_use 缺 id/name
-    {"content": [{"type": "text"}]},                    # text 块缺 text
-])
-def test_anthropic_malformed_reply_returns_none(capture, caplog, reply):
-    capture["reply"] = reply
-    assert prov.anthropic(CLAUDE, [{"role": "user", "content": "hi"}], None, "high") is None
-    assert "形态异常" in caplog.text
-
-
 # ── 模型表 ──────────────────────────────────────────────────
 
 @pytest.fixture
@@ -317,7 +217,7 @@ def models():
                  "base_url": "https://api.moonshot.cn", "aliases": ["Kimi", "moon"]},
         "deepseek-flash": {"aliases": ["ds"]},                          # 覆盖内置字段
         "broken": {"provider": "nope", "api_key_env": "X", "base_url": "u"},   # 未知 provider
-        "nokey": {"provider": "anthropic", "base_url": "u"},                    # 缺 api_key_env
+        "nokey": {"provider": "openai_compat", "base_url": "u"},              # 缺 api_key_env
         "_comment": "ignored",
     }}})
     llm_client.load_models()   # 恢复真实 config.json
@@ -351,7 +251,7 @@ def test_spec_fallback_honours_config_override_of_default():
 
 
 def test_missing_key_and_ready_note(monkeypatch):
-    for v in ("LLM_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY", "ZHIPU_API_KEY"):
+    for v in ("LLM_MODEL", "DEEPSEEK_MODEL", "DEEPSEEK_API_KEY", "ZHIPU_API_KEY"):
         monkeypatch.delenv(v, raising=False)
     assert llm_client.missing_key("deepseek-flash") == "DEEPSEEK_API_KEY"
     assert llm_client.missing_key("glm-5.3-flash") == "ZHIPU_API_KEY"
@@ -362,21 +262,17 @@ def test_missing_key_and_ready_note(monkeypatch):
 
 
 def test_chat_dispatches_by_provider(monkeypatch):
-    llm_client.load_models({"llm": {"models": {"claude-opus-5": CLAUDE}}})   # 注入 anthropic 条目
+    llm_client.load_models({"llm": {"models": {
+        "k2": {"provider": "openai_compat", "api_key_env": "K", "base_url": "u"}}}})
     try:
         seen = {}
-        monkeypatch.setitem(prov.PROVIDERS, "anthropic",
+        monkeypatch.setitem(prov.PROVIDERS, "openai_compat",
                             lambda spec, m, t, e, **o: seen.update(spec=spec, e=e, o=o) or {"content": "c"})
-        out = llm_client.chat([{"role": "user", "content": "x"}], None, "claude-opus-5", "low", timeout=5)
+        out = llm_client.chat([{"role": "user", "content": "x"}], None, "k2", "low", timeout=5)
         assert out == {"content": "c"}
-        assert seen["spec"]["api_model"] == "claude-opus-5" and seen["e"] == "low" and seen["o"] == {"timeout": 5}
+        assert seen["spec"]["api_model"] == "k2" and seen["e"] == "low" and seen["o"] == {"timeout": 5}
     finally:
         llm_client.load_models()   # 恢复真实 config.json
-
-
-def test_config_ships_no_claude_entry():
-    assert "claude-opus-5" not in llm_client.MODELS
-    assert llm_client.canon_model("opus") is None
 
 
 def test_config_ships_glm_entry_as_deepseek_fallback():
@@ -394,11 +290,6 @@ def test_config_ships_glm_entry_as_deepseek_fallback():
 @pytest.fixture
 def two_models(monkeypatch):
     """主 m 回 calls["m_reply"]（默认 None=失败），备 fb 记录被调参数。"""
-    llm_client.load_models({"llm": {"models": {
-        "m": {"provider": "openai_compat", "api_key_env": "K1", "base_url": "u", "fallback": "fb"},
-        "fb": {"provider": "anthropic", "api_key_env": "K2", "base_url": "u"}}}})
-    monkeypatch.setenv("K1", "1")
-    monkeypatch.setenv("K2", "2")
     calls = {"m": 0, "fb": [], "m_reply": None}
 
     def primary(spec, *a, **o):
@@ -412,7 +303,12 @@ def two_models(monkeypatch):
         return {"content": "备"}
 
     monkeypatch.setitem(prov.PROVIDERS, "openai_compat", primary)
-    monkeypatch.setitem(prov.PROVIDERS, "anthropic", backup)
+    monkeypatch.setitem(prov.PROVIDERS, "backup", backup)   # 假提供商：备模型走它，与主模型区分
+    llm_client.load_models({"llm": {"models": {
+        "m": {"provider": "openai_compat", "api_key_env": "K1", "base_url": "u", "fallback": "fb"},
+        "fb": {"provider": "backup", "api_key_env": "K2", "base_url": "u"}}}})
+    monkeypatch.setenv("K1", "1")
+    monkeypatch.setenv("K2", "2")
     yield calls
     llm_client.load_models()
 
@@ -451,6 +347,6 @@ def test_fallback_of_ignores_self_and_unknown():
         "b": {"provider": "openai_compat", "api_key_env": "K", "base_url": "u", "fallback": "ghost"}}}})
     try:
         assert llm_client.fallback_of("a") == "" and llm_client.fallback_of("b") == ""
-        assert llm_client.fallback_of("claude-opus-5") == ""
+        assert llm_client.fallback_of("not-a-model") == ""
     finally:
         llm_client.load_models()

@@ -44,7 +44,7 @@
   ],
   "reminder_lead_days": 30,
   "llm": {
-    "_comment": "Agent 模型表。键 = /model 用的名字（内置 deepseek-flash 为默认，此处同名条目可覆盖其字段）。provider ∈ llm_providers.PROVIDERS（openai_compat / anthropic）；api_model=发给 API 的 id（缺省同键名）；api_key_env=密钥环境变量（缺失时 /model 列出但拒切）；base_url 默认端点，base_url_env 可覆盖；aliases=/model 别名；effort=false 表示该模型不吃推理档参数。openai_compat 可选：chat_path（缺省 /v1/chat/completions）、effort_map（档位改名，GLM-5.3 只认 low/high/max）、stream_usage=false（不发 stream_options，GLM 每块自带 usage）、timeout（流式静默秒数，语义见 llm_providers 模块 docstring）。fallback=另一模型键（语义见 llm_client 模块 docstring）。启动默认模型/推理档走 LLM_MODEL / LLM_EFFORT 环境变量。",
+    "_comment": "Agent 模型表。键 = /model 用的名字（内置 deepseek-flash 为默认，此处同名条目可覆盖其字段）。provider ∈ llm_providers.PROVIDERS（openai_compat）；api_model=发给 API 的 id（缺省同键名）；api_key_env=密钥环境变量（缺失时 /model 列出但拒切）；base_url 默认端点，base_url_env 可覆盖；aliases=/model 别名；effort=false 表示该模型不吃推理档参数。openai_compat 可选：chat_path（缺省 /v1/chat/completions）、effort_map（档位改名，GLM-5.3 只认 low/high/max）、stream_usage=false（不发 stream_options，GLM 每块自带 usage）、timeout（流式静默秒数，语义见 llm_providers 模块 docstring）。fallback=另一模型键（语义见 llm_client 模块 docstring）。启动默认模型/推理档走 LLM_MODEL / LLM_EFFORT 环境变量。",
     "models": {
       "deepseek-flash": {
         "timeout": 30,
