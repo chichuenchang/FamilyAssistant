@@ -81,7 +81,7 @@
   （YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu）双语搜集"大家在怎么说"，出中立第三方舆情报告
 - **后台运行 + 完成推送**：立即回"已开始"（不卡住会话），数分钟后报告自动发回发起人；同一用户同时只跑一个
 - 仅显式说出触发词才启动（普通查资讯仍走上面的联网搜索）；查询主题等瞬态任务文件不进云备份
-- 依赖外部 KnowKing 项目（独立 uv 项目，自带 API 密钥配置；`config.json`
+- 依赖外部 KnowKing 项目 + PATH 上的 [`uv`](https://docs.astral.sh/uv/)（独立 uv 项目，自带 API 密钥配置；`config.json`
   `knowking.project_dir` 指向其位置，未安装则该功能不可用，其余功能不受影响）
 
 ### ☁️ 云盘备份（Remote Backup，可选）
@@ -100,9 +100,8 @@
 ### 电脑端
 
 ```bash
-# 1. 安装依赖
-pip install "weixin-ilink[qr]"
-pip install matplotlib   # 可选：工作表数据可视化（缺失则该功能优雅降级）
+# 1. 安装依赖（Python 3.10+；核心仅 stdlib，requirements.txt 全可选，逐条注释用途与缺失降级）
+pip install -r requirements.txt
 
 # 2. 设 LLM API key（必须；默认模型 deepseek-flash。其他模型：config.json llm.models 加条目 + 对应 key，聊天里 /model 切）
 setx DEEPSEEK_API_KEY "sk-xxx"
@@ -179,8 +178,8 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
 ```bash
 # 1. 装 Python 3.10+ 与依赖，克隆代码
-pip install "weixin-ilink[qr]"
 git clone <你的仓库地址> && cd FamilyAssistant
+pip install -r requirements.txt
 
 # 2. 设 Google Drive 凭据（恢复用）。CLIENT_ID/SECRET 来自 Google Cloud Console 的 OAuth 客户端
 setx GDRIVE_CLIENT_ID "xxx"
@@ -298,7 +297,7 @@ FamilyAssistant/
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
 ├── docs/                 ← 设计 spec 与实现 plan 存档
-└── requirements.txt      ← 全部可选依赖（pytest；weixin-ilink、yt-dlp、matplotlib、numpy、pypdf、pypdfium2、Pillow —— 缺失则相关功能优雅降级）
+└── requirements.txt      ← 全部可选依赖（逐条注释，缺失则相关功能优雅降级）
 ```
 
 ## 技术栈
