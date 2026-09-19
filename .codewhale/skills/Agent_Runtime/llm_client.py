@@ -126,7 +126,7 @@ def load_overrides() -> dict:
     for user, entry in (raw.items() if isinstance(raw, dict) else []):
         if not isinstance(entry, dict):
             continue
-        clean = {k: v for k, v in _CANON.items() if (v := canon(entry.get(k)))}
+        clean = {k: val for k, canon in _CANON.items() if (val := canon(entry.get(k)))}
         dropped = {k: entry[k] for k in _CANON if k in entry and k not in clean}
         if dropped:
             _log.warning("LLM 覆盖 %r 含未登记值 %s，已丢弃（模型表变了？）",
