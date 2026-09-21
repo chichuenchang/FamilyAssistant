@@ -147,10 +147,9 @@ def pdf_page_count(path: Path) -> Optional[int]:
         pdf.close()
 
 
-def _ocr_pdf_page(b64: str, n: int) -> Optional[str]:
-    """PDF 第 n 页（1 起）OCR。None = 调用失败 / 越界页；无字页返回 ""。"""
-    data = _call_ocr({"ImageBase64": b64, "IsPdf": True,
-                      "PdfPageNumber": n, "LanguageType": "zh"})
+def _ocr_text(payload: dict) -> Optional[str]:
+    """OCR 一次，文字按行拼接。None = 调用失败（PDF 含越界页）；无字返回 ""。"""
+    data = _call_ocr({**payload, "LanguageType": "zh"})
     if not data:
         return None
     return "\n".join(d["DetectedText"] for d in data.get("TextDetections", [])
@@ -178,7 +177,7 @@ def ocr_pdf_range(pdf_path: str, first: int, last: int) -> Optional[dict]:
     pages: list[tuple[int, str]] = []
     failed: list[int] = []
     for n in range(first, last + 1):
-        text = _ocr_pdf_page(b64, n)
+        text = _ocr_text({"ImageBase64": b64, "IsPdf": True, "PdfPageNumber": n})
         if text is not None:
             pages.append((n, text))
         elif n == first:
@@ -206,13 +205,7 @@ def ocr_image(image_path: str) -> Optional[str]:
             return None
         return "\n".join(text for _, text in r["pages"] if text)
 
-    b64 = base64.b64encode(p.read_bytes()).decode()
-    data = _call_ocr({"ImageBase64": b64, "LanguageType": "zh"})
-    if not data:
-        return None
-    words = [d["DetectedText"] for d in data.get("TextDetections", [])
-             if d.get("DetectedText")]
-    return "\n".join(words) if words else ""
+    return _ocr_text({"ImageBase64": base64.b64encode(p.read_bytes()).decode()})
 
 
 def ocr_image_words(image_path: str) -> Optional[list]:
