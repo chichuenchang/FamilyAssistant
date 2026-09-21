@@ -134,7 +134,7 @@ def _call_ocr(payload: dict) -> Optional[dict]:
 
 # ── 通用 OCR ────────────────────────────────────────────────
 
-def _pdf_page_count(path: Path) -> Optional[int]:
+def pdf_page_count(path: Path) -> Optional[int]:
     """pypdfium2 读页数；未安装 / 解析失败返回 None。"""
     try:
         import pypdfium2 as pdfium
@@ -147,6 +147,49 @@ def _pdf_page_count(path: Path) -> Optional[int]:
         pdf.close()
 
 
+def _ocr_text(payload: dict) -> Optional[str]:
+    """OCR 一次，文字按行拼接。None = 调用失败（PDF 含越界页）；无字返回 ""。"""
+    data = _call_ocr({**payload, "LanguageType": "zh"})
+    if not data:
+        return None
+    return "\n".join(d["DetectedText"] for d in data.get("TextDetections", [])
+                     if d.get("DetectedText"))
+
+
+def ocr_pdf_range(pdf_path: str, first: int, last: int) -> Optional[dict]:
+    """PDF 指定页段 OCR（可读第 20 页之后）；单次最多 MAX_PDF_PAGES 页，超出截到 first+19。
+
+    返回 {"total": 总页数或 None(未知), "first", "last": 实际页段,
+          "pages": [(页号, 文字)], "failed": [页号]}；页段越界时 pages 空、last < first。
+    None = 文件不存在 / 非 PDF / 段首页失败（OCR 不可用、PDF 不可读，或探测模式下已越界）。
+    """
+    p = Path(pdf_path)
+    if not p.exists() or p.suffix.lower() != ".pdf":
+        return None
+    # 页数本地可知就只调这么多次；否则逐页探测到失败为止
+    # （越界页腾讯报 FailedOperation.OcrFailed，白耗一次调用）
+    total = pdf_page_count(p)
+    first = max(1, first)
+    last = min(max(first, last), first + MAX_PDF_PAGES - 1)
+    if total:
+        last = min(last, total)
+    b64 = base64.b64encode(p.read_bytes()).decode()
+    pages: list[tuple[int, str]] = []
+    failed: list[int] = []
+    for n in range(first, last + 1):
+        text = _ocr_text({"ImageBase64": b64, "IsPdf": True, "PdfPageNumber": n})
+        if text is not None:
+            pages.append((n, text))
+        elif n == first:
+            return None                  # 段首页失败：不再烧额度
+        elif total:
+            failed.append(n)             # 页数已知：单页失败不丢后面的页
+        else:
+            last = n - 1                 # 探测模式：无数据 = 文档到此结束
+            break
+    return {"total": total, "first": first, "last": last, "pages": pages, "failed": failed}
+
+
 def ocr_image(image_path: str) -> Optional[str]:
     """通用文字识别。图片直接 OCR；.pdf 用腾讯 IsPdf 逐页 OCR 后拼接。
 
@@ -155,34 +198,14 @@ def ocr_image(image_path: str) -> Optional[str]:
     p = Path(image_path)
     if not p.exists():
         return None
-    b64 = base64.b64encode(p.read_bytes()).decode()
 
     if p.suffix.lower() == ".pdf":
-        pages: list[str] = []
-        # 页数本地可知就只调这么多次；否则逐页探测到失败为止
-        # （越界页腾讯报 FailedOperation.OcrFailed，白耗一次调用）
-        count = _pdf_page_count(p)
-        for n in range(1, min(count or MAX_PDF_PAGES, MAX_PDF_PAGES) + 1):
-            data = _call_ocr({"ImageBase64": b64, "IsPdf": True,
-                              "PdfPageNumber": n, "LanguageType": "zh"})
-            if not data:
-                if n == 1:
-                    return None          # 首页失败 = OCR 不可用 / PDF 不可读
-                if count:
-                    continue             # 页数已知：单页失败不丢后面的页
-                break                    # 探测模式：后续页无数据 = 文档到此结束
-            words = [d["DetectedText"] for d in data.get("TextDetections", [])
-                     if d.get("DetectedText")]
-            if words:
-                pages.append("\n".join(words))
-        return "\n".join(pages) if pages else ""
+        r = ocr_pdf_range(image_path, 1, MAX_PDF_PAGES)
+        if r is None:
+            return None
+        return "\n".join(text for _, text in r["pages"] if text)
 
-    data = _call_ocr({"ImageBase64": b64, "LanguageType": "zh"})
-    if not data:
-        return None
-    words = [d["DetectedText"] for d in data.get("TextDetections", [])
-             if d.get("DetectedText")]
-    return "\n".join(words) if words else ""
+    return _ocr_text({"ImageBase64": base64.b64encode(p.read_bytes()).decode()})
 
 
 def ocr_image_words(image_path: str) -> Optional[list]:

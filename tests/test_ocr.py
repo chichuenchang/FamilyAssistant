@@ -199,3 +199,117 @@ def test_cli_extract_standalone_process_imports_llm_client(tmp_path):
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
     assert '"raw_text": "COFFEE 5.00"' in r.stdout
+
+
+# ── 页段 OCR（ocr_pdf_range / ocr_read_pages）─────────────────
+
+def _echo_pages(seen):
+    def fake(payload):
+        seen.append(payload["PdfPageNumber"])
+        return {"TextDetections": [{"DetectedText": f"p{payload['PdfPageNumber']}"}]}
+    return fake
+
+
+def test_ocr_pdf_range_reads_beyond_page_20(monkeypatch, tmp_path):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(tmp_path / "big.pdf", pages=30)
+    seen = []
+    monkeypatch.setattr(ocr, "_call_ocr", _echo_pages(seen))
+    r = ocr.ocr_pdf_range(str(f), 21, 30)
+    assert seen == list(range(21, 31))
+    assert r == {"total": 30, "first": 21, "last": 30, "failed": [],
+                 "pages": [(n, f"p{n}") for n in range(21, 31)]}
+
+
+def test_ocr_pdf_range_caps_window_and_clamps_to_total(monkeypatch, tmp_path):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(tmp_path / "big.pdf", pages=50)
+    seen = []
+    monkeypatch.setattr(ocr, "_call_ocr", _echo_pages(seen))
+    assert ocr.ocr_pdf_range(str(f), 5, 100)["last"] == 5 + ocr.MAX_PDF_PAGES - 1
+    assert len(seen) == ocr.MAX_PDF_PAGES
+    seen.clear()
+    assert ocr.ocr_pdf_range(str(f), 45, 60)["last"] == 50
+    assert seen == list(range(45, 51))
+
+
+def test_ocr_pdf_range_out_of_range_no_calls(monkeypatch, tmp_path):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(tmp_path / "two.pdf", pages=2)
+    seen = []
+    monkeypatch.setattr(ocr, "_call_ocr", _echo_pages(seen))
+    r = ocr.ocr_pdf_range(str(f), 5, 8)
+    assert r["pages"] == [] and seen == []
+
+
+def test_ocr_pdf_range_probe_mode_stops_at_end(monkeypatch, tmp_path):
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-fake")   # 页数读不出 → 探测
+    monkeypatch.setattr(ocr, "_call_ocr", lambda payload: (
+        {"TextDetections": [{"DetectedText": "x"}]} if payload["PdfPageNumber"] <= 23 else None))
+    r = ocr.ocr_pdf_range(str(f), 21, 30)
+    assert r["total"] is None and r["last"] == 23
+    assert [n for n, _ in r["pages"]] == [21, 22, 23]
+
+
+def test_ocr_pdf_range_probe_first_page_failure_is_none(monkeypatch, tmp_path):
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-fake")   # 页数读不出 → 探测；段首页失败不能报成越界
+    seen = []
+    monkeypatch.setattr(ocr, "_call_ocr", lambda payload: seen.append(1))
+    assert ocr.ocr_pdf_range(str(f), 21, 30) is None
+    assert len(seen) == 1
+
+
+def test_ocr_pdf_range_all_failed_is_none(monkeypatch, tmp_path):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(tmp_path / "two.pdf", pages=2)
+    monkeypatch.setattr(ocr, "_call_ocr", lambda payload: None)
+    assert ocr.ocr_pdf_range(str(f), 1, 2) is None
+    assert ocr.ocr_pdf_range(str(tmp_path / "x.jpg"), 1, 2) is None
+
+
+def test_ocr_read_pages_tool_formats_pages(monkeypatch):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(_paths.data_root() / "manual.pdf", pages=30)
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "_call_ocr", _echo_pages([]))
+    out = _ocr_at.tool_ocr_read_pages({"path": str(f), "first_page": 21, "last_page": 22})
+    assert out.splitlines() == ["[第 21-22 页，共 30 页]；还有第 23-30 页未读",
+                                "--- 第 21 页 ---", "p21", "--- 第 22 页 ---", "p22"]
+    out = _ocr_at.tool_ocr_read_pages({"path": str(f), "first_page": 40, "last_page": 45})
+    assert out.startswith("[页段越界]")
+
+
+def test_ocr_read_pages_tool_lists_failed_pages(monkeypatch):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(_paths.data_root() / "gaps.pdf", pages=3)
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    echo = _echo_pages([])
+    monkeypatch.setattr(ocr, "_call_ocr", lambda p: None if p["PdfPageNumber"] == 2 else echo(p))
+    out = _ocr_at.tool_ocr_read_pages({"path": str(f), "first_page": 1, "last_page": 3})
+    assert out.splitlines()[0] == "[第 1-3 页，共 3 页] 识别失败页: 2"
+
+
+def test_ocr_read_pages_rejects_non_pdf_and_outside_root(tmp_path):
+    img = _paths.data_root() / "scan.jpg"
+    img.write_bytes(b"jpg")
+    assert _ocr_at.tool_ocr_read_pages({"path": str(img), "first_page": 1,
+                                        "last_page": 2}).startswith("[错误]")
+    assert _ocr_at.tool_ocr_read_pages({"path": str(tmp_path / "a.pdf"), "first_page": 1,
+                                        "last_page": 2}).startswith("[错误]")
+
+
+def test_ocr_read_flags_pdf_over_20_pages(monkeypatch):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(_paths.data_root() / "long.pdf", pages=25)
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda p: "前文")
+    out = _ocr_at.tool_ocr_read({"path": str(f)})
+    assert out == "前文\n[仅读了前 20 页，共 25 页；用户要后面内容再用 ocr_read_pages]"
+
+
+def test_ocr_read_pages_registered_and_untrusted():
+    names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
+    assert "ocr_read_pages" in names and "ocr_read_pages" in ac._TOOL_MAP
+    assert "ocr_read_pages" in ac._UNTRUSTED_TOOLS
