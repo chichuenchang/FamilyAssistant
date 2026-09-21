@@ -49,6 +49,33 @@ def test_ocr_image_pdf_caps_at_max_pages(monkeypatch, tmp_path):
     assert out.count("\n") == ocr.MAX_PDF_PAGES - 1         # all pages joined
 
 
+def test_ocr_image_pdf_known_page_count_no_probe(monkeypatch, tmp_path):
+    # 页数本地可读：只调实际页数，不再探测越界页（腾讯报 OcrFailed、白耗额度）
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(tmp_path / "two.pdf", pages=2)
+    seen = []
+
+    def fake(payload):
+        seen.append(payload["PdfPageNumber"])
+        return {"TextDetections": [{"DetectedText": f"p{payload['PdfPageNumber']}"}]}
+
+    monkeypatch.setattr(ocr, "_call_ocr", fake)
+    assert ocr.ocr_image(str(f)) == "p1\np2"
+    assert seen == [1, 2]
+
+
+def test_ocr_image_pdf_known_count_skips_failed_middle_page(monkeypatch, tmp_path):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(tmp_path / "three.pdf", pages=3)
+
+    def fake(payload):
+        n = payload["PdfPageNumber"]
+        return None if n == 2 else {"TextDetections": [{"DetectedText": f"p{n}"}]}
+
+    monkeypatch.setattr(ocr, "_call_ocr", fake)
+    assert ocr.ocr_image(str(f)) == "p1\np3"
+
+
 def test_ocr_image_image_path_has_no_ispdf(monkeypatch, tmp_path):
     f = tmp_path / "x.jpg"
     f.write_bytes(b"img")
