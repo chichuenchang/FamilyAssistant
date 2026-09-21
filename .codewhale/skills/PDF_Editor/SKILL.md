@@ -10,8 +10,8 @@
 | `pdf_layout.py` | 版面：AcroForm 字段框 / pdfium 文字行框 / 扫描页 OCR → 视觉像素空间 |
 | `pdf_plan.py` | 会话存储；instruction + 版面 → 完整 ops（`llm_client.chat`）；ops 校验 |
 | `pdf_apply.py` | ops → PDF：页序列重建 → pypdf 填字段 → reportlab 覆盖层 → 旋转 |
-| `cli.py` | `pdf-inspect` / `pdf-edit` / `pdf-list` |
-| `agent_tools.py` | manifest：`inspect_pdf` / `edit_pdf` / `pdf_edit_list` |
+| `cli.py` | `pdf-inspect` / `pdf-edit` / `pdf-list` / `pdf-pages`（只数页，不建会话） |
+| `agent_tools.py` | manifest：`inspect_pdf` / `edit_pdf` / `pdf_edit_list` / `pdf_pages` |
 
 ## 踩过的坑
 

@@ -134,6 +134,19 @@ def _call_ocr(payload: dict) -> Optional[dict]:
 
 # ── 通用 OCR ────────────────────────────────────────────────
 
+def _pdf_page_count(path: Path) -> Optional[int]:
+    """pypdfium2 读页数；未安装 / 解析失败返回 None。"""
+    try:
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(str(path))
+    except Exception:
+        return None
+    try:
+        return len(pdf) or None
+    finally:
+        pdf.close()
+
+
 def ocr_image(image_path: str) -> Optional[str]:
     """通用文字识别。图片直接 OCR；.pdf 用腾讯 IsPdf 逐页 OCR 后拼接。
 
@@ -146,13 +159,18 @@ def ocr_image(image_path: str) -> Optional[str]:
 
     if p.suffix.lower() == ".pdf":
         pages: list[str] = []
-        for n in range(1, MAX_PDF_PAGES + 1):
+        # 页数本地可知就只调这么多次；否则逐页探测到失败为止
+        # （越界页腾讯报 FailedOperation.OcrFailed，白耗一次调用）
+        count = _pdf_page_count(p)
+        for n in range(1, min(count or MAX_PDF_PAGES, MAX_PDF_PAGES) + 1):
             data = _call_ocr({"ImageBase64": b64, "IsPdf": True,
                               "PdfPageNumber": n, "LanguageType": "zh"})
             if not data:
                 if n == 1:
                     return None          # 首页失败 = OCR 不可用 / PDF 不可读
-                break                    # 后续页无数据 = 文档到此结束
+                if count:
+                    continue             # 页数已知：单页失败不丢后面的页
+                break                    # 探测模式：后续页无数据 = 文档到此结束
             words = [d["DetectedText"] for d in data.get("TextDetections", [])
                      if d.get("DetectedText")]
             if words:

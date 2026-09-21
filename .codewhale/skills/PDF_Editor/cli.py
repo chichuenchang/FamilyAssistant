@@ -38,15 +38,20 @@ def _gate(path: str, member: str) -> Path:
     return _paths.resolve_rel(rel)
 
 
-def _build_layout(src: Path) -> dict:
+def _read_or_die(read, src: Path):
+    """read(src)；缺 pypdf / 加密 / 解析失败 → _die。"""
     if not pdf_layout.has_pypdf():
         _die("缺少 pypdf 依赖，无法读取 PDF。pip install pypdf")
     try:
-        return pdf_layout.build(src)
+        return read(src)
     except ValueError as e:
         _die(str(e))
     except Exception as e:
         _die(f"PDF 解析失败: {e}")
+
+
+def _build_layout(src: Path) -> dict:
+    return _read_or_die(pdf_layout.build, src)
 
 
 def _session_for_rel(rel: str, member: str, fresh: bool = False) -> dict:
@@ -109,6 +114,13 @@ def cmd_inspect(args):
     print(pdf_layout.describe(layout, coords=False))
 
 
+def cmd_pages(args):
+    """只数页：不建会话、不取版面、不 OCR。"""
+    src = _gate(args.file, args.member)
+    n = _read_or_die(lambda p: len(pdf_layout.open_reader(p).pages), src)
+    print(f"页数: {n}")
+
+
 def cmd_edit(args):
     plan, notice = _resolve_plan(args)
     src = _paths.resolve_rel(plan["source_pdf"])
@@ -169,6 +181,11 @@ def main(argv=None) -> int:
     p.add_argument("--file", required=True)
     p.add_argument("--member", required=True)
     p.set_defaults(func=cmd_inspect)
+
+    p = sub.add_parser("pdf-pages", help="只数 PDF 总页数")
+    p.add_argument("--file", required=True)
+    p.add_argument("--member", required=True)
+    p.set_defaults(func=cmd_pages)
 
     p = sub.add_parser("pdf-edit", help="按一句指令编辑 PDF")
     p.add_argument("--file", default="")

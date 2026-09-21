@@ -11,13 +11,14 @@ from tool_runtime import fn, s
 
 ORDER = 95
 
-COMMANDS = {"pdf-inspect", "pdf-edit", "pdf-list"}
+COMMANDS = {"pdf-inspect", "pdf-edit", "pdf-list", "pdf-pages"}
 CLI_TIMEOUTS = {"pdf-inspect": 120, "pdf-edit": 300}
 
 TOOLS = {
     "inspect_pdf": "pdf-inspect",
     "edit_pdf": "pdf-edit",
     "pdf_edit_list": "pdf-list",
+    "pdf_pages": "pdf-pages",
 }
 
 MEMBER_LOCKED = set(TOOLS)
@@ -27,6 +28,9 @@ UNTRUSTED_TOOLS = {"inspect_pdf", "edit_pdf"}   # 来件 PDF 的字段/OCR 文�
 SCHEMAS = [
     fn("inspect_pdf", "看一份 PDF 是什么类型、几页、里面要填什么（表单字段或各页文字）。"
        "不知道这份表要哪些信息时先调它，再向用户要值。", {
+        "file": s("PDF 路径（用户发来的保存路径，data 内）"),
+    }, ["file"]),
+    fn("pdf_pages", "只查一份 PDF 总共几页（快，不建编辑会话、不 OCR）。只要页数时用它，别用 inspect_pdf。", {
         "file": s("PDF 路径（用户发来的保存路径，data 内）"),
     }, ["file"]),
     fn("edit_pdf", "按一句指令编辑 PDF 并自动把结果发给用户：填表单、在任意位置写字、打勾、"
