@@ -281,6 +281,16 @@ def test_ocr_read_pages_tool_formats_pages(monkeypatch):
     assert out.startswith("[页段越界]")
 
 
+def test_ocr_read_pages_tool_lists_failed_pages(monkeypatch):
+    from pdf_samples import build_digital_pdf
+    f = build_digital_pdf(_paths.data_root() / "gaps.pdf", pages=3)
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    echo = _echo_pages([])
+    monkeypatch.setattr(ocr, "_call_ocr", lambda p: None if p["PdfPageNumber"] == 2 else echo(p))
+    out = _ocr_at.tool_ocr_read_pages({"path": str(f), "first_page": 1, "last_page": 3})
+    assert out.splitlines()[0] == "[第 1-3 页，共 3 页] 识别失败页: 2"
+
+
 def test_ocr_read_pages_rejects_non_pdf_and_outside_root(tmp_path):
     img = _paths.data_root() / "scan.jpg"
     img.write_bytes(b"jpg")
