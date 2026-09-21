@@ -249,6 +249,10 @@ DOC_SENTINEL = "\x01DOC:"
 TRUNCATED_REPLY_MARK = "（回复超出长度上限被截断）"
 TRUNCATED_TOOLS_NOTE = ("[系统] 你上一条输出超出长度上限被截断，其中的工具调用参数不完整，"
                         "全部未执行。请减少推理、把工作拆成更小的批次重新调用。")
+# 工具轮数用完仍在调工具：补一次收尾调用，要求只用已有结果作答
+TOOL_ROUNDS = 16
+TOOL_LIMIT_NOTE = ("[系统] 本轮工具调用次数已用完，不要再调用任何工具。请直接用已拿到的结果"
+                   "回复用户：列出已完成的部分，说明还剩哪些没做，并提示用户回复“继续”接着处理。")
 
 CLEAR_COMMANDS = ("/clear", "清除上下文", "清空上下文", "清空记忆")
 
@@ -403,7 +407,7 @@ class Agent:
         shown: dict[str, str] = {}        # SHOW_TOOLS 成功原文（每工具留最后一次），必达用户
         # 多轮工具循环：单轮可并发多次调用；上限给足，让账单/流水逐行批量记账
         # 能跨轮记完（行数多时模型分多条回复继续）。普通对话一两轮即 break，不受影响。
-        for _ in range(8):
+        for _ in range(TOOL_ROUNDS):
             message = self._call_llm(msgs, user=user)
             if message is None:
                 if tool_counts:
@@ -473,6 +477,19 @@ class Agent:
                              "tool_call_id": tc.get("id", ""),
                              "content": _apply_fence(
                                  name, _budget.clip_tool_result(result))})
+        else:
+            # 轮数用完没 break：收尾一次。仍带 tools（历史里有 tool_calls，
+            # 部分 API 不带 tools 会拒），返回的 tool_calls 一律不执行
+            _log.warning("工具轮数 %d 用完，收尾调用 用户=%s", TOOL_ROUNDS, user)
+            msgs.append({"role": "user", "content": TOOL_LIMIT_NOTE})
+            message = self._call_llm(msgs, user=user)
+            if message is not None:
+                usage = message.pop("_usage", None) or {}
+                truncated = message.pop("_finish", None) == "length"
+                fallback = message.pop("_fallback", None) or fallback
+                tokens["in"] += usage.get("prompt_tokens") or 0
+                tokens["out"] += usage.get("completion_tokens") or 0
+                reply = (message.get("content") or "").strip()
 
         badge = []
         if tool_counts:
