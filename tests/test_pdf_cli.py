@@ -284,3 +284,37 @@ def test_list_sessions(cli, capsys, inbox, monkeypatch):
                           "--instruction", "名字填 ZHANGSAN", "--member", "jim")
     _, out, _ = _run(cli, capsys, "pdf-list", "--member", "jim")
     assert _sid(edit_out) in out and "form.pdf" in out and "名字填 ZHANGSAN" in out
+
+
+def test_pages_counts_every_page_without_session(cli, capsys, inbox, data_root):
+    pdf = build_digital_pdf(inbox / "form.pdf", pages=15)     # 超过 MAX_LAYOUT_PAGES
+    code, out, _ = _run(cli, capsys, "pdf-pages", "--file", str(pdf), "--member", "jim")
+    assert code == 0 and out.strip() == "页数: 15"
+    assert not (data_root / "jim" / "pdf_edits").exists()
+
+
+def test_pages_rejects_foreign_member_file(cli, capsys, data_root):
+    other = data_root / "wenliang" / "inbox"
+    other.mkdir(parents=True)
+    pdf = build_digital_pdf(other / "form.pdf")
+    code, out, _ = _run(cli, capsys, "pdf-pages", "--file", str(pdf), "--member", "jim")
+    assert code == 1 and "路径不允许" in out
+
+
+def test_pages_bad_pdf_is_an_error(cli, capsys, inbox):
+    bad = inbox / "bad.pdf"
+    bad.write_bytes(b"not a pdf")
+    code, out, _ = _run(cli, capsys, "pdf-pages", "--file", str(bad), "--member", "jim")
+    assert code == 1 and "[错误]" in out
+
+
+def test_pages_encrypted_is_an_error(cli, capsys, inbox):
+    from pypdf import PdfWriter
+    w = PdfWriter()
+    w.append(PdfReader(str(build_digital_pdf(inbox / "d.pdf"))))
+    w.encrypt("secret")
+    enc = inbox / "enc.pdf"
+    with open(enc, "wb") as fh:
+        w.write(fh)
+    code, out, _ = _run(cli, capsys, "pdf-pages", "--file", str(enc), "--member", "jim")
+    assert code == 1 and "已加密" in out

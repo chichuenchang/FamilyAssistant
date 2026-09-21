@@ -1,11 +1,11 @@
 # tests/test_pdf_agent.py — PDF_Editor 的 agent_core 接线（取代 Form_Filler）。
 import agent_core
 
-PDF_TOOLS = {"inspect_pdf", "edit_pdf", "pdf_edit_list"}
+PDF_TOOLS = {"inspect_pdf", "edit_pdf", "pdf_edit_list", "pdf_pages"}
 
 
 def test_commands_allowed_and_routed():
-    for c in ("pdf-inspect", "pdf-edit", "pdf-list"):
+    for c in ("pdf-inspect", "pdf-edit", "pdf-list", "pdf-pages"):
         assert c in agent_core.ALLOWED_COMMANDS
         assert agent_core._cli_path(c).parent.name == "PDF_Editor"
 
