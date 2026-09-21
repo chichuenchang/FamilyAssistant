@@ -252,6 +252,15 @@ def test_ocr_pdf_range_probe_mode_stops_at_end(monkeypatch, tmp_path):
     assert [n for n, _ in r["pages"]] == [21, 22, 23]
 
 
+def test_ocr_pdf_range_probe_first_page_failure_is_none(monkeypatch, tmp_path):
+    f = tmp_path / "doc.pdf"
+    f.write_bytes(b"%PDF-fake")   # 页数读不出 → 探测；段首页失败不能报成越界
+    seen = []
+    monkeypatch.setattr(ocr, "_call_ocr", lambda payload: seen.append(1))
+    assert ocr.ocr_pdf_range(str(f), 21, 30) is None
+    assert len(seen) == 1
+
+
 def test_ocr_pdf_range_all_failed_is_none(monkeypatch, tmp_path):
     from pdf_samples import build_digital_pdf
     f = build_digital_pdf(tmp_path / "two.pdf", pages=2)

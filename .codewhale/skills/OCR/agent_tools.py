@@ -70,7 +70,8 @@ def tool_ocr_read_pages(args):
             return "[OCR 未配置]"
         r = ocr_pdf_range(str(resolved), first, last)
         if r is None:
-            return "[OCR 失败] PDF 读不出文字（可能是加密扫描件）"
+            return (f"[OCR 失败] 第 {max(1, first)} 页读不出文字"
+                    "（可能是加密扫描件，或该页已超出总页数）")
         total = r["total"]
         of = f"共 {total} 页" if total else "总页数未知"
         if not r["pages"]:

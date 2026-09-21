@@ -162,7 +162,7 @@ def ocr_pdf_range(pdf_path: str, first: int, last: int) -> Optional[dict]:
 
     返回 {"total": 总页数或 None(未知), "first", "last": 实际页段,
           "pages": [(页号, 文字)], "failed": [页号]}；页段越界时 pages 空、last < first。
-    None = 文件不存在 / 非 PDF / OCR 不可用。
+    None = 文件不存在 / 非 PDF / 段首页失败（OCR 不可用、PDF 不可读，或探测模式下已越界）。
     """
     p = Path(pdf_path)
     if not p.exists() or p.suffix.lower() != ".pdf":
@@ -179,13 +179,13 @@ def ocr_pdf_range(pdf_path: str, first: int, last: int) -> Optional[dict]:
         text = _ocr_pdf_page(b64, n)
         if text is not None:
             pages.append((n, text))
+        elif n == first:
+            return None                  # 段首页失败：不再烧额度
         elif total:
             failed.append(n)             # 页数已知：单页失败不丢后面的页
         else:
             last = n - 1                 # 探测模式：无数据 = 文档到此结束
             break
-    if not pages and (failed or first == 1):
-        return None                      # 整段全败 = OCR 不可用 / PDF 不可读
     return {"total": total, "first": first, "last": last, "pages": pages, "failed": failed}
 
 
