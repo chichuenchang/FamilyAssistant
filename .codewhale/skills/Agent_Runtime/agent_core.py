@@ -173,6 +173,14 @@ def _apply_fence(tool_name: str, result: str) -> str:
     return rt.fence(result, tool_name) if tool_name in _UNTRUSTED_TOOLS else result
 
 
+def _pop_meta(message: dict, tokens: dict) -> tuple[bool, str | None]:
+    """pop 私有键（不得回传 API），usage 累进 tokens。返回 (被截断, 顶替模型名)。"""
+    usage = message.pop("_usage", None) or {}
+    tokens["in"] += usage.get("prompt_tokens") or 0
+    tokens["out"] += usage.get("completion_tokens") or 0
+    return message.pop("_finish", None) == "length", message.pop("_fallback", None)
+
+
 # ── system prompt ───────────────────────────────────────────
 
 # 与具体 skill 无关的准则；各 skill 自己的条目由 manifest PROMPT_RULES 提供，排在前面
@@ -413,12 +421,8 @@ class Agent:
                 if tool_counts:
                     break   # 工具已生效：走收尾，照常进历史与存档
                 return "\n\n".join(["抱歉，暂时出错了。", *shown.values()])
-            usage = message.pop("_usage", None) or {}   # 私有键，不得回传 API
-            cut = message.pop("_finish", None) == "length"
-            used = message.pop("_fallback", None)   # 本次调用的顶替模型，无则空
+            cut, used = _pop_meta(message, tokens)   # used: 本次调用的顶替模型，无则空
             fallback = used or fallback
-            tokens["in"] += usage.get("prompt_tokens") or 0
-            tokens["out"] += usage.get("completion_tokens") or 0
             # 思考链进 INFO 日志；键不 pop——DeepSeek 同轮工具调用须原样回传。
             # 封顶 2000 字：高档推理链 2–50k 字，全量几天就轮转掉 traceback。
             cot = (message.get("reasoning_content") or "").strip()
@@ -484,11 +488,8 @@ class Agent:
             msgs.append({"role": "user", "content": TOOL_LIMIT_NOTE})
             message = self._call_llm(msgs, user=user)
             if message is not None:
-                usage = message.pop("_usage", None) or {}
-                truncated = message.pop("_finish", None) == "length"
-                fallback = message.pop("_fallback", None) or fallback
-                tokens["in"] += usage.get("prompt_tokens") or 0
-                tokens["out"] += usage.get("completion_tokens") or 0
+                truncated, used = _pop_meta(message, tokens)
+                fallback = used or fallback
                 reply = (message.get("content") or "").strip()
 
         badge = []

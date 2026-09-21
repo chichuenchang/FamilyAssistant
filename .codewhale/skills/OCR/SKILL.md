@@ -47,6 +47,7 @@ info = ocr_extract("path/to/receipt.jpg")  # 票据/账单（图片或 PDF）
 |------|------|------|
 | `is_available()` | `bool` | 是否配置了腾讯云密钥 |
 | `ocr_image(path)` | `str` / `None` | 通用文字识别（图片或 PDF）；PDF 用腾讯 `IsPdf` 逐页 OCR，上限 `MAX_PDF_PAGES=20` 页；`None` = 不可用或文件不存在 |
+| `ocr_pdf_range(path, first, last)` | `dict` / `None` | PDF 指定页段 OCR，可读 20 页之后；单次窗口 `MAX_PDF_PAGES`。Agent 工具 `ocr_read_pages`（备用：`ocr_read` 提示 PDF 超 20 页时才用） |
 | `ocr_extract(path)` | `dict` / `None` | OCR + LLM 逐笔交易提取，返回 `{"currency", "transactions":[...]}`（账单只取明细行，不取总额）；当前模型缺 API key 时返回 `{"raw_text": ...}`。也接受 PDF |
 
 ## 配置
