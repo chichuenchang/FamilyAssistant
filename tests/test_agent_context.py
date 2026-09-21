@@ -262,3 +262,42 @@ def test_huge_tool_result_truncated_in_history(monkeypatch):
     assert len(tool_msgs[0]["content"]) <= agent_core._HIST_TOOL_CAP + 20
     assert tool_msgs[0]["content"].startswith("会话: 20260713_222813_2b73")  # 首行保留
     assert "截断" in tool_msgs[0]["content"]
+
+
+def _tool_loop_agent(monkeypatch, final):
+    """每轮都要调工具的假 LLM；收到 TOOL_LIMIT_NOTE 后回 final。"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    agent = agent_core.Agent(idle_clear_hours=0)
+    ran = []
+    monkeypatch.setitem(agent_core._TOOL_MAP, "fake_ocr", lambda a: ran.append(1) or "ok")
+    calls = []
+
+    def fake_llm(msgs, user=""):
+        calls.append(msgs[-1].get("content"))
+        if msgs[-1].get("content") == agent_core.TOOL_LIMIT_NOTE:
+            return final
+        return {"content": "", "tool_calls": [{"id": f"t{len(calls)}", "function": {
+            "name": "fake_ocr", "arguments": "{}"}}]}
+
+    monkeypatch.setattr(agent, "_call_llm", fake_llm)
+    return agent, ran, calls
+
+
+def test_tool_round_cap_gets_summary_reply(monkeypatch):
+    """轮数用完仍在调工具：补一次收尾调用，回复用户已完成/剩余，不再是"生成回复失败"。"""
+    agent, ran, calls = _tool_loop_agent(monkeypatch, {"content": "已处理 9 张，剩 16 张，回复继续"})
+    out = agent.handle("OCR 全部账单", user="u", member="Jim")
+    assert len(calls) == agent_core.TOOL_ROUNDS + 1
+    assert len(ran) == agent_core.TOOL_ROUNDS
+    assert "剩 16 张" in out and "生成回复失败" not in out
+    assert agent.history["u"][-1]["content"] == "已处理 9 张，剩 16 张，回复继续"
+    assert not any(m.get("content") == agent_core.TOOL_LIMIT_NOTE for m in agent.history["u"])
+
+
+def test_tool_round_cap_summary_tool_calls_not_run(monkeypatch):
+    """收尾调用仍返回 tool_calls：不执行，无文字则退回原兜底文案。"""
+    agent, ran, _ = _tool_loop_agent(monkeypatch, {"content": "", "tool_calls": [
+        {"id": "x", "function": {"name": "fake_ocr", "arguments": "{}"}}]})
+    out = agent.handle("OCR 全部账单", user="u", member="Jim")
+    assert len(ran) == agent_core.TOOL_ROUNDS
+    assert "生成回复失败" in out
