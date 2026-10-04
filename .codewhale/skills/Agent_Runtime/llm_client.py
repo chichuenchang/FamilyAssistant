@@ -265,3 +265,12 @@ def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
         return out
     except _providers.RequestRejected:
         return None
+
+
+def ask(system: str, user: str, via=None) -> str:
+    """后台一次性问答（无工具、全局模型设置）：返回去空白的正文，无回复 = ""。
+    via 替身同 chat 签名（测试用）；异常照抛。"""
+    model, effort = settings(load_overrides(), "")
+    msg = (via or chat)([{"role": "system", "content": system},
+                         {"role": "user", "content": user}], None, model, effort)
+    return ((msg or {}).get("content") or "").strip()

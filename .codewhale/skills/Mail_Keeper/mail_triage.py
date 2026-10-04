@@ -73,14 +73,10 @@ def _why(v) -> str:
 def classify(mails: list[dict], chat=None) -> dict[str, tuple[bool, str]]:
     """{id: (需处理, 理由)}。LLM 失败或回复解析不了抛 TriageError。"""
     import llm_client as _llm
-    model, effort = _llm.settings(_llm.load_overrides(), "")
     try:
-        msg = (chat or _llm.chat)([{"role": "system", "content": SYSTEM},
-                                   {"role": "user", "content": _prompt(mails)}],
-                                  None, model, effort)
+        text = _llm.ask(SYSTEM, _prompt(mails), via=chat)
     except Exception as e:
         raise TriageError(f"LLM 调用失败：{e}") from e
-    text = ((msg or {}).get("content") or "").strip()
     if not text:
         raise TriageError("LLM 无回复")
     out: dict[str, tuple[bool, str]] = {}
