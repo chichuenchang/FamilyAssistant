@@ -130,7 +130,7 @@ def format_push(items: list[dict], older: int = 0, sorted_ok: bool = True) -> st
     return "\n".join(lines)
 
 
-def _sort(rows: list[dict], mod, prefix: str, rules: list[dict], chat
+def _partition(rows: list[dict], mod, prefix: str, rules: list[dict], chat
           ) -> tuple[list[dict], list[dict], int, bool]:
     """(要推的, 没推的, 超出 MAX_META 只计数的条数, 分拣是否成功)。顺序同 rows（旧→新）。"""
     if any(r.get("kind") != "label" for r in rules if _rules.push_of(r) == "always"):
@@ -145,8 +145,8 @@ def _sort(rows: list[dict], mod, prefix: str, rules: list[dict], chat
         m["labels"] = labels.get(m["id"], [])
         if _rules.match(m, rules, "always"):
             m.update(pushed=True, why="")
-        elif mute := _rules.match(m, rules):
-            m.update(pushed=False, why=f"mute 规则 #{_rules.index_of(mute, rules)}")
+        elif rule := _rules.match(m, rules):
+            m.update(pushed=False, why=f"mute 规则 #{_rules.index_of(rule, rules)}")
         else:
             pending.append(m)
     verdicts, ok = _triage.judge(pending, chat=chat)
@@ -214,7 +214,7 @@ def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
             if rows is None:              # 游标过旧 → 重新起点，这轮不播报
                 chan[member] = {"history_id": new_hid, "at": now}
                 continue
-            push, drop, older, ok = _sort(rows, mod, prefix, _rules.load(member), chat)
+            push, drop, older, ok = _partition(rows, mod, prefix, _rules.load(member), chat)
             if (push or older) and not _push_all(push_fn, ids, format_push(push, older, ok)):
                 raise RuntimeError("所有 id 都推送失败")
             record(member, push + drop)
