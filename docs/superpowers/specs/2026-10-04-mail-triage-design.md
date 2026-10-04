@@ -6,13 +6,13 @@
 
 ## 流程
 
-**拍**（`check_and_push`，~20 秒）：成员过 `MIN_POLL_S`、本 `(频道, 成员)` 无 worker 在跑 → 锁内占位，起守护线程，立即返回。
-LLM 慢（秒到几十秒），不得堵传输层轮询。同 Daily_Banner `_claim` / `_spawn`（`spawn` 可注入供测试）。
+**拍**（`mail_watch.tick`，~20 秒）：本频道无 worker 在跑 → 锁内占位，起守护线程跑 `check_and_push`，立即返回。
+LLM 慢（秒到几十秒），不得堵传输层轮询。占位按频道不按成员：worker 内逐成员串行，一家人量够用。`spawn` 可注入供测试。
 
-**worker**：
+**worker**（`check_and_push` 内，每成员）：
 1. `history_since(游标)`。首次 / 游标过旧：落游标不推（同现状）。
 2. 规则两道，每道 always 先判、命中 always 就不再看 mute：
-   - 先用 history 带回的标签判 label 规则：mute 命中 → 丢，不取信。
+   - 先用 history 带回的标签判 label 规则：mute 命中 → 丢，不取信，不进日志（无信头可记）。
    - 余下取最新 `MAX_META` 封 `get_message`（一次拿 from/subject/body，替代 `message_metas`），判全部规则。
    - always 命中 → 推，无理由；mute 命中 → 丢；都不中 → 进分拣。
 3. 分拣：先查判决缓存；未命中的正文截 `TRIAGE_BODY_CAP` 1500 字，整批一次 LLM。
