@@ -13,6 +13,7 @@ LLM 慢（秒到几十秒），不得堵传输层轮询。占位按频道不按�
 1. `history_since(游标)`。首次 / 游标过旧：落游标不推（同现状）。
 2. 规则两道，每道 always 先判、命中 always 就不再看 mute：
    - 先用 history 带回的标签判 label 规则：mute 命中 → 丢，不取信，不进日志（无信头可记）。
+     成员有非 label 的 always 规则时跳过这道：只有标签判不了 sender/domain/subject always。
    - 余下取最新 `MAX_META` 封 `get_message`（一次拿 from/subject/body，替代 `message_metas`），判全部规则。
    - always 命中 → 推，无理由；mute 命中 → 丢；都不中 → 进分拣。
 3. 分拣：先查判决缓存；未命中的正文截 `TRIAGE_BODY_CAP` 1500 字，整批一次 LLM。
@@ -20,7 +21,8 @@ LLM 慢（秒到几十秒），不得堵传输层轮询。占位按频道不按�
 5. 推成功或无可推 → 推进游标。推送失败 / worker 异常 → 游标不动，下拍重做；缓存命中故不重付 LLM。
    worker 无论成败 `finally` 释放占位。
 
-上限照旧：`MAX_META` 25 封取信（更早的只计数）、`MAX_LINES` 5 行。
+上限：`MAX_META` 25 封取信；更早的不判，单列"另有 N 封更早的新邮件没分拣"，不算进"需处理"，只有它也推。
+`MAX_LINES` 5 封，其余"…还有 N 封"，但全数记日志。
 
 ## 分拣 `mail_triage.py`（新，纯逻辑）
 
@@ -33,7 +35,7 @@ LLM 慢（秒到几十秒），不得堵传输层轮询。占位按频道不按�
   - `i` 不认识 / 重复 → 忽略
   - `why` 去换行，截 `WHY_CAP` 40 字
   - 回复里缺的信 → 当 needs-action，无理由
-- **fail-open**：LLM 异常 / 超时 / JSON 解析不了 → 整批当 needs-action 推，抬头 `📬 新邮件 N 封（未分拣）：`。不写缓存。宁多推，不漏推。
+- **fail-open**：LLM 异常 / 超时 / JSON 解析不了 → 缓存未命中的当 needs-action 推（已缓存的照判决），抬头 `📬 新邮件 N 封（未分拣）：`。不写缓存。宁多推，不漏推。
 
 缓存 `data/.state/.mail_verdicts.json`：`{id: {act, why, at}}`，写时删 7 天前的（history 只覆盖约一周）。
 微信、Telegram 两进程共用，按 id 去重；竞争最坏 = 多一次 LLM。
