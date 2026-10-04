@@ -110,12 +110,14 @@ def watch_enabled(member: str, members_path: Path | None = None) -> bool:
     return bool(pref and pref["enabled"] and pref["watch"])
 
 
-def format_push(items: list[dict], extra: int = 0, sorted_ok: bool = True) -> str:
-    """播报文本。发件人/主题/理由是外部内容（理由由 LLM 读信产出），原样转述。"""
+def format_push(items: list[dict], older: int = 0, sorted_ok: bool = True) -> str:
+    """播报文本，只列最新 MAX_LINES 封。发件人/主题/理由是外部内容（理由由 LLM 读信产出），原样转述。"""
+    shown = items[-MAX_LINES:]
+    extra = len(items) - len(shown) + older
     head = "需处理" if sorted_ok else "新邮件"
     tail = "" if sorted_ok else "（未分拣）"
-    lines = [f"📬 {head} {len(items) + extra} 封{tail}："]
-    for m in items:
+    lines = [f"📬 {head} {len(shown) + extra} 封{tail}："]
+    for m in shown:
         lines.append(f"- {m.get('from') or '(无发件人)'}｜{m.get('subject') or '(无主题)'}")
         if m.get("why"):
             lines.append(f"  → {m['why']}")
@@ -126,7 +128,7 @@ def format_push(items: list[dict], extra: int = 0, sorted_ok: bool = True) -> st
 
 def _sort(rows: list[dict], mod, prefix: str, rules: list[dict], chat
           ) -> tuple[list[dict], list[dict], int, bool]:
-    """(要推的, 没推的, 只计数的条数, 分拣是否成功)。顺序同 rows（旧→新）。"""
+    """(要推的, 没推的, 超出 MAX_META 只计数的条数, 分拣是否成功)。顺序同 rows（旧→新）。"""
     if any(r.get("kind") != "label" for r in rules if (r.get("push") or "mute") == "always"):
         live = rows
     else:
@@ -149,8 +151,7 @@ def _sort(rows: list[dict], mod, prefix: str, rules: list[dict], chat
         m.update(pushed=act, why=why if act else (f"无需处理：{why}" if why else "无需处理"))
     push = [m for m in mails if m["pushed"]]
     drop = [m for m in mails if not m["pushed"]]
-    extra = len(live) - len(head) + max(0, len(push) - MAX_LINES)
-    return push[-MAX_LINES:], drop, extra, ok
+    return push, drop, len(live) - len(head), ok
 
 
 def _cursors(chan: dict) -> dict:
@@ -209,8 +210,8 @@ def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
             if rows is None:              # 游标过旧 → 重新起点，这轮不播报
                 chan[member] = {"history_id": new_hid, "at": now}
                 continue
-            push, drop, extra, ok = _sort(rows, mod, prefix, _rules.load(member), chat)
-            if push and not _push_all(push_fn, ids, format_push(push, extra, ok)):
+            push, drop, older, ok = _sort(rows, mod, prefix, _rules.load(member), chat)
+            if push and not _push_all(push_fn, ids, format_push(push, older, ok)):
                 raise RuntimeError("所有 id 都推送失败")
             record(member, push + drop)
         except Exception:

@@ -753,6 +753,8 @@ class TestMailWatch:
         self._run(push, _WatchStub(pages=[_hist(many)]), monkeypatch, now=time.time() + 100)
         text = out[0][1]
         assert text.count("Subj m") == mw.MAX_LINES and "2" in text.splitlines()[-1]
+        logged = mw.last_push("MemberA")
+        assert len(logged) == len(many) and all(i["pushed"] for i in logged)
 
     def test_stale_cursor_reseeds_and_pushes_nothing(self, monkeypatch, sent):
         out, push = sent
