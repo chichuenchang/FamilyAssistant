@@ -73,8 +73,10 @@ reply = agent.handle_media(paths, text, user="<频道内唯一id>", member="<成
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode test
 # 微信：扫码登录并运行
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
-# 微信：换账号重新扫码
+# 微信：默认账号重新扫码
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
+# 微信：新增账号 mom（无凭据即扫码；--relogin 重扫）；运行总加载全部账号
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --account mom
 
 # Telegram：设好 token 直接跑
 python .codewhale/skills/Agent_Runtime/telegram_bot.py
@@ -88,6 +90,9 @@ python .codewhale/skills/Agent_Runtime/telegram_bot.py --no-debug
 微信引用反查缓存存于 `data/.state/wechat_recent_msgs.json`（近期入站消息）与
 `data/.state/wechat_sent_msgs.json`（bot 出站回复，按时间戳匹配）——均为运行时状态，不进备份。
 微信 Bot 启动时抢单实例锁（绑定 `127.0.0.1:47831`）：双开会导致每条消息处理/回复两次，后启动的进程直接退出。
+多账号：一个 ClawBot 账号一份凭据 `wechat_creds_<标签>.json`（默认账号仍 `wechat_creds.json`），一进程全挂。
+每账号一条轮询线程，消息排队主线程串行分发（Agent/缓存非线程安全）；后台节拍全进程一份，推送找该用户发过消息的 bot（context_token 存在各 bot 内存）。
+`bot.run()` 不可用：装 signal 处理器只许主线程。新账号成员 id 取 `忽略未注册来源 <id>` 日志行，跨账号是否同 id 未验证。
 
 ## 新增频道
 
