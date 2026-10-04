@@ -21,7 +21,7 @@ messages.batchModify，不删信。旧 token 缺后两个 scope → 403，抛 Sc
 发件附件：send_mail(attachments=[本地路径…])。走 messages.send 的 JSON raw（非 /upload URI），
     故整封上限 RAW_SEND_CAP_BYTES；更大要改用 uploadType=multipart 的 /upload 端点（未实现）。
 
-新邮件播报（mail_watch 用）要的三件：
+新邮件播报（mail_watch 用）要的三件 + 分拣取全文 get_messages(ids, prefix)（同 message_metas 规则）：
     profile_history_id(prefix) -> str                       当前游标（首次起点）
     history_since(cursor, prefix) -> (rows | None, 新游标)   rows=[{id, thread_id, labels}]（新进收件箱）；
                                                             None = 游标过旧已失效，新游标是重新起点
@@ -230,12 +230,12 @@ def message_meta(msg_id: str, prefix: str = DEFAULT_PREFIX) -> dict:
             "unread": "UNREAD" in (full.get("labelIds") or [])}
 
 
-def message_metas(ids: list[str], prefix: str = DEFAULT_PREFIX) -> list[dict]:
-    """并发取一批信头，保持 ids 的顺序。列出后又被彻底删除的信（404）略过——
+def _fetch_many(fetch, ids: list[str], prefix: str) -> list[dict]:
+    """并发取一批信，保持 ids 的顺序。列出后又被彻底删除的信（404）略过——
     history/搜索结果里仍带着它的 id，一封取不到不能拖垮整批。"""
     def one(mid: str) -> dict | None:
         try:
-            return message_meta(mid, prefix)
+            return fetch(mid, prefix)
         except ApiError as e:
             if e.status == 404:
                 return None
@@ -246,6 +246,15 @@ def message_metas(ids: list[str], prefix: str = DEFAULT_PREFIX) -> list[dict]:
     _token(prefix)                        # 先刷好 token，免得各线程各刷一次
     with ThreadPoolExecutor(max_workers=META_WORKERS) as pool:
         return [m for m in pool.map(one, ids) if m]
+
+
+def message_metas(ids: list[str], prefix: str = DEFAULT_PREFIX) -> list[dict]:
+    return _fetch_many(message_meta, ids, prefix)
+
+
+def get_messages(ids: list[str], prefix: str = DEFAULT_PREFIX) -> list[dict]:
+    """一批 get_message（含正文），同 message_metas 的并发/保序/404 略过。"""
+    return _fetch_many(get_message, ids, prefix)
 
 
 def search(query: str, max_results: int = 10, prefix: str = DEFAULT_PREFIX) -> list[dict]:

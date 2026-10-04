@@ -613,6 +613,19 @@ class TestProviderHistory:
         metas = gp.message_metas(["m2", "gone", "m3"], PREFIX)
         assert [m["id"] for m in metas] == ["m2", "m3"]
 
+    def test_get_messages_skip_deleted_and_keep_order_with_body(self, monkeypatch):
+        stub = _WatchStub()
+        monkeypatch.setattr(gp, "_http", lambda m, url, *a, **k: (
+            (404, b"{}") if "/messages/gone" in url else stub(m, url, *a, **k)))
+        msgs = gp.get_messages(["m3", "gone", "m2"], PREFIX)
+        assert [m["id"] for m in msgs] == ["m3", "m2"]
+        assert "body" in msgs[0] and msgs[0]["subject"] == "Subj m3"
+
+    def test_get_messages_other_errors_still_raise(self, monkeypatch):
+        monkeypatch.setattr(gp, "_http", lambda *a, **k: (500, b"{}"))
+        with pytest.raises(RuntimeError):
+            gp.get_messages(["m2"], PREFIX)
+
     def test_metas_other_errors_still_raise(self, monkeypatch):
         monkeypatch.setattr(gp, "_http", lambda *a, **k: (500, b"{}"))
         with pytest.raises(RuntimeError):
