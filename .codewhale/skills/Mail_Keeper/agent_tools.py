@@ -461,8 +461,8 @@ def tool_mail_filters(args):
 
 
 def _mail_watch_tick(push_text, channel: str):
-    """FAST_TICKS（~20 秒）：mail.watch=true 的成员有新邮件就播报（见 mail_watch）。"""
-    return _watch.check_and_push(push_text, channel, provider_for=_provider)
+    """FAST_TICKS（~20 秒）：mail.watch=true 的成员有需处理的新邮件就播报（见 mail_watch）。"""
+    return _watch.tick(push_text, channel, provider_for=_provider)
 
 
 TOOLS = {
