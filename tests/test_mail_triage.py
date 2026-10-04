@@ -65,6 +65,10 @@ class TestClassify:
                      {"i": 9, "act": False, "why": "c"}])
         assert mt.classify([_mail("m1")], chat=chat) == {"m1": (False, "a")}
 
+    def test_boolean_index_is_not_mail_one(self):
+        chat = Chat([{"i": True, "act": False, "why": "冒充"}])
+        assert mt.classify([_mail("m1")], chat=chat) == {"m1": (True, "")}
+
     def test_mail_missing_from_reply_needs_action(self):
         chat = Chat([{"i": 1, "act": False, "why": "订阅"}])
         got = mt.classify([_mail("m1"), _mail("m2")], chat=chat)

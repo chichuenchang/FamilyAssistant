@@ -85,11 +85,12 @@ def classify(mails: list[dict], chat=None) -> dict[str, tuple[bool, str]]:
         raise TriageError("LLM 无回复")
     out: dict[str, tuple[bool, str]] = {}
     for row in _parse(text):
-        if not isinstance(row, dict) or not isinstance(row.get("i"), int):
+        i = row.get("i") if isinstance(row, dict) else None
+        if not isinstance(i, int) or isinstance(i, bool):     # true 也是 int，会冒充第 1 封
             continue
-        if not 1 <= row["i"] <= len(mails):
+        if not 1 <= i <= len(mails):
             continue
-        mid = mails[row["i"] - 1]["id"]
+        mid = mails[i - 1]["id"]
         if mid in out:
             continue
         act = row.get("act")
