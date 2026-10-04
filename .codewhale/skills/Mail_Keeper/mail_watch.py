@@ -133,7 +133,7 @@ def format_push(items: list[dict], older: int = 0, sorted_ok: bool = True) -> st
 def _sort(rows: list[dict], mod, prefix: str, rules: list[dict], chat
           ) -> tuple[list[dict], list[dict], int, bool]:
     """(要推的, 没推的, 超出 MAX_META 只计数的条数, 分拣是否成功)。顺序同 rows（旧→新）。"""
-    if any(r.get("kind") != "label" for r in rules if (r.get("push") or "mute") == "always"):
+    if any(r.get("kind") != "label" for r in rules if _rules.push_of(r) == "always"):
         live = rows
     else:
         live = [r for r in rows if _rules.match(r, rules, "always") or not _rules.match(r, rules)]

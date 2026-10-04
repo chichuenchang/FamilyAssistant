@@ -75,7 +75,8 @@ def normalise(kind: str, value: str) -> tuple[str, str]:
     return kind, v
 
 
-def _push(rule: dict) -> str:
+def push_of(rule: dict) -> str:
+    """mute | always；缺字段 = mute（旧规则文件）。"""
     return rule.get("push") or "mute"
 
 
@@ -119,7 +120,7 @@ def match(meta: dict, rules: list[dict], push: str = "mute") -> dict | None:
     meta 用 gmail_provider.message_meta 的形状；label 规则只需要其中的 labels，
     故 mail_watch 可在取信头之前先用 history 带回的标签过一遍。
     """
-    rules = [r for r in rules if _push(r) == push]
+    rules = [r for r in rules if push_of(r) == push]
     if not rules:
         return None
     addr = (parseaddr(meta.get("from") or "")[1] or "").lower()
@@ -150,7 +151,7 @@ def describe(rules: list[dict]) -> str:
     titles = {"mute": "不播报：", "always": "一律播报（不经 AI 判断）："}
     lines = []
     for push in PUSHES:
-        rows = [(i, r) for i, r in enumerate(rules, 1) if _push(r) == push]
+        rows = [(i, r) for i, r in enumerate(rules, 1) if push_of(r) == push]
         if not rows:
             continue
         lines.append(titles[push])
