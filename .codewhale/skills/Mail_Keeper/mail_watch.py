@@ -26,7 +26,7 @@ Agent 靠 mail_last_push 工具才查得到。
   - 一轮总耗时超过 TICK_BUDGET_S → 剩下的成员留到下一轮
   - label mute 先用 history 带回的标签过一遍 → 命中的连信都不取（省配额、不进日志）；
     成员有非 label 的 always 规则时跳过这道（不取信头不知道它是不是 always）
-  - 一轮最多取 MAX_META 封；更早的只计入条数
+  - 一轮最多取 MAX_META 封；更早的不判，播报里单列"另有 N 封没分拣"（不算需处理，也不漏）
   - 一条播报最多 MAX_LINES 封，其余只报条数（订阅邮件爆量不刷屏）
 """
 
@@ -111,18 +111,22 @@ def watch_enabled(member: str, members_path: Path | None = None) -> bool:
 
 
 def format_push(items: list[dict], older: int = 0, sorted_ok: bool = True) -> str:
-    """播报文本，只列最新 MAX_LINES 封。发件人/主题/理由是外部内容（理由由 LLM 读信产出），原样转述。"""
-    shown = items[-MAX_LINES:]
-    extra = len(items) - len(shown) + older
-    head = "需处理" if sorted_ok else "新邮件"
-    tail = "" if sorted_ok else "（未分拣）"
-    lines = [f"📬 {head} {len(shown) + extra} 封{tail}："]
-    for m in shown:
-        lines.append(f"- {m.get('from') or '(无发件人)'}｜{m.get('subject') or '(无主题)'}")
-        if m.get("why"):
-            lines.append(f"  → {m['why']}")
-    if extra:
-        lines.append(f"…还有 {extra} 封（说\"查邮箱\"我再细看）")
+    """播报文本，只列最新 MAX_LINES 封。发件人/主题/理由是外部内容（理由由 LLM 读信产出），原样转述。
+    older = 超出 MAX_META 没取没判的，单列一行，不算进"需处理"。"""
+    lines = []
+    if items:
+        shown = items[-MAX_LINES:]
+        head = "需处理" if sorted_ok else "新邮件"
+        tail = "" if sorted_ok else "（未分拣）"
+        lines.append(f"📬 {head} {len(items)} 封{tail}：")
+        for m in shown:
+            lines.append(f"- {m.get('from') or '(无发件人)'}｜{m.get('subject') or '(无主题)'}")
+            if m.get("why"):
+                lines.append(f"  → {m['why']}")
+        if len(items) > len(shown):
+            lines.append(f"…还有 {len(items) - len(shown)} 封（说\"查邮箱\"我再细看）")
+    if older:
+        lines.append(f"{'' if items else '📬 '}另有 {older} 封更早的新邮件没分拣（说\"查邮箱\"我再细看）")
     return "\n".join(lines)
 
 
@@ -211,14 +215,14 @@ def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
                 chan[member] = {"history_id": new_hid, "at": now}
                 continue
             push, drop, older, ok = _sort(rows, mod, prefix, _rules.load(member), chat)
-            if push and not _push_all(push_fn, ids, format_push(push, older, ok)):
+            if (push or older) and not _push_all(push_fn, ids, format_push(push, older, ok)):
                 raise RuntimeError("所有 id 都推送失败")
             record(member, push + drop)
         except Exception:
             _log.exception("新邮件播报失败（游标不动，下轮重试）: %s/%s", channel, member)
             continue
         chan[member] = {"history_id": new_hid, "at": now}
-        pushed += bool(push)
+        pushed += bool(push or older)
     if _cursors(chan) != before:
         _save(channel, chan)
     return pushed

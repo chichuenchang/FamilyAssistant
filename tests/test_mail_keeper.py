@@ -1077,6 +1077,26 @@ class TestMailWatchFiltering:
         assert text.splitlines() == ["📬 需处理 1 封：", "- m2 <m2@example.com>｜Subj m2",
                                      "  → 周五前签同意书"]
 
+    def test_mail_beyond_meta_cap_is_counted_apart_from_needs_action(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        monkeypatch.setattr(mw, "MAX_META", 2)
+        llm.verdicts["Subj m3"] = (False, "广告")
+        llm.verdicts["Subj m4"] = (True, "签字")
+        self._poll(push, _WatchStub(pages=[_hist([_added("m2"), _added("m3"), _added("m4")])]),
+                   monkeypatch)
+        lines = out[0][1].splitlines()
+        assert lines[0] == "📬 需处理 1 封："
+        assert lines[-1].startswith("另有 1 封更早的新邮件没分拣")
+
+    def test_only_unsorted_backlog_still_gets_a_count(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        monkeypatch.setattr(mw, "MAX_META", 1)
+        llm.verdicts["Subj m3"] = (False, "广告")
+        n = self._poll(push, _WatchStub(pages=[_hist([_added("m2"), _added("m3")])]), monkeypatch)
+        assert n == 1 and out[0][1].startswith("📬 另有 1 封更早的新邮件没分拣")
+
     def test_always_rule_beats_mute_and_skips_llm(self, monkeypatch, sent, llm):
         out, push = sent
         self._seed(push, monkeypatch)
