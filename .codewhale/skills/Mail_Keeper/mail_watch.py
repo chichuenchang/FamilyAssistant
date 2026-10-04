@@ -5,10 +5,7 @@ Mail Keeper — 新邮件播报（FAST_TICKS 钩子，按成员 opt-in）。设�
 传输层每 ~20 秒调 tick：本频道没 worker 在跑才起守护线程跑 check_and_push（LLM 要几秒到几十秒，
 不能堵传输层轮询）。对每个 mail.watch=true 的成员调 provider.history_since(游标)。
 
-该播报哪些（mail_rules 先，LLM 后）：
-  - always 规则命中 → 推，不问 LLM；mute 命中 → 丢；同一封 always 胜
-  - 其余整批交 mail_triage.judge → 需处理的推，附一行理由；LLM 挂了 → 全推，抬头标"未分拣"
-  - 只推发件人 + 主题 + 理由，不带正文
+该播报哪些：mail_rules 规则先（文件头），余下交 mail_triage.judge（文件头）。不带正文。
 没推的也记进 .mail_last_push.json（带原因）：播报不经 Agent，用户说"漏推了/别推这种"时
 Agent 靠 mail_last_push 工具才查得到。
 
