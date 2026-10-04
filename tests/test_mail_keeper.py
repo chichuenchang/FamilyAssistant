@@ -1171,6 +1171,42 @@ class TestMuteTools:
     def test_rules_tool_on_empty_list(self):
         assert "没有" in at.tool_mail_rules({"member": "MemberA"})
 
+    def test_always_tool_is_registered_member_locked(self):
+        names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
+        assert "mail_always" in names and "mail_always" in ac._MEMBER_LOCKED
+
+    def test_always_persists_always_rule(self):
+        out = at.tool_mail_always({"member": "MemberA", "domain": "school.example",
+                                   "note": "学校的信都要看"})
+        assert "school.example" in out
+        r = mr.load("MemberA")[0]
+        assert (r["kind"], r["value"], r["push"]) == ("domain", "school.example", "always")
+
+    def test_always_needs_one_criterion(self):
+        assert at.tool_mail_always({"member": "MemberA"}).startswith("[错误]")
+
+    def test_mute_after_always_switches_the_rule(self):
+        at.tool_mail_always({"member": "MemberA", "sender": "d@shop.example"})
+        at.tool_mail_mute({"member": "MemberA", "sender": "d@shop.example"})
+        rules = mr.load("MemberA")
+        assert len(rules) == 1 and rules[0]["push"] == "mute"
+
+    def test_rules_tool_removes_always_rule(self):
+        at.tool_mail_always({"member": "MemberA", "sender": "d@shop.example"})
+        out = at.tool_mail_rules({"member": "MemberA", "remove": 1})
+        assert "d@shop.example" in out and mr.load("MemberA") == []
+
+    def test_last_push_shows_dropped_mail_with_reason(self):
+        mw.record("MemberA", [
+            {"id": "m2", "from": "a@school.example", "subject": "Trip form", "labels": [],
+             "pushed": True, "why": "周五前签字"},
+            {"id": "m3", "from": "news@shop.example", "subject": "Sale", "labels": [],
+             "pushed": False, "why": "无需处理：广告"}])
+        out = at.tool_mail_last_push({"member": "MemberA"})
+        pushed, dropped = out.index("播报过"), out.index("没播报")
+        assert pushed < out.index("Trip form") < dropped < out.index("Sale")
+        assert "无需处理：广告" in out and "周五前签字" in out
+
 
 class TestAttachments:
     """附件：信里列出 → 用户要了才下载 → 只落 data/<成员>/inbox/ 内。"""
