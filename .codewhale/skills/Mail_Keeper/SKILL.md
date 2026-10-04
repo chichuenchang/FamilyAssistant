@@ -27,7 +27,8 @@ Testing，refresh token 7 天后失效需重授权；生产未验证状态个人
 
 ## 新邮件事件（默认关，成员 `mail` 块 `"watch": true` 开）
 
-播报规则/状态文件：`mail_watch.py` 文件头。忽略规则：`mail_rules.py` 文件头。
+只推需处理的信：LLM 读信头+正文判（`mail_triage.py` 文件头），用户教的 mute/always 规则先于 LLM（`mail_rules.py` 文件头）。
+流程/状态文件：`mail_watch.py` 文件头。设计：`docs/superpowers/specs/2026-10-04-mail-triage-design.md`。
 
 为何轮询而不用 Gmail 推送：
 
@@ -42,7 +43,7 @@ Testing，refresh token 7 天后失效需重授权；生产未验证状态个人
 
 ## 边界
 
-- ❌ 主动查邮箱（工具只在用户开口时动；播报是独立的 `watch` 开关，且只给发件人+主题）
+- ❌ 主动查邮箱（工具只在用户开口时动；播报是独立的 `watch` 开关，只给发件人+主题+LLM 理由 ≤40 字）
 - ❌ 抄送、一封多收件人、群发
 - ❌ 删信/标已读（代码不调；`gmail.modify` 只用于建标签、移旧信）
 - 正文优先 `text/plain`，只有 HTML 时去标签取文本，截断 `BODY_CAP` 6000 字
