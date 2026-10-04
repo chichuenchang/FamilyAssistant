@@ -863,6 +863,38 @@ class TestMailRules:
     def test_no_rules_matches_nothing(self):
         assert mr.match(_meta(), []) is None
 
+    def test_match_defaults_to_mute_rules_only(self):
+        rules = [{"kind": "sender", "value": "deals@shop.example", "push": "always"}]
+        assert mr.match(_meta(), rules) is None
+        assert mr.match(_meta(), rules, push="always") is rules[0]
+
+    def test_rule_without_push_field_is_mute(self):
+        rules = [{"kind": "sender", "value": "deals@shop.example"}]
+        assert mr.match(_meta(), rules) is rules[0]
+        assert mr.match(_meta(), rules, push="always") is None
+
+    def test_re_adding_rule_with_other_push_switches_it(self):
+        mr.add("MemberA", kind="sender", value="a@x.example")
+        mr.add("MemberA", kind="sender", value="a@x.example", push="always")
+        rules = mr.load("MemberA")
+        assert len(rules) == 1 and rules[0]["push"] == "always"
+
+    def test_unknown_push_is_refused(self):
+        with pytest.raises(ValueError):
+            mr.add("MemberA", kind="sender", value="a@x.example", push="sometimes")
+
+    def test_describe_groups_rules_keeping_original_numbers(self):
+        mr.add("MemberA", kind="sender", value="a@x.example", push="always")
+        mr.add("MemberA", kind="subject", value="newsletter")
+        text = mr.describe(mr.load("MemberA"))
+        mute_at, always_at = text.index("不播报"), text.index("一律播报")
+        assert mute_at < text.index("2. 主题含：newsletter")
+        assert always_at < text.index("1. 发件人：a@x.example")
+
+    def test_index_of_is_one_based_position(self):
+        rules = [{"kind": "sender", "value": "a"}, {"kind": "sender", "value": "b"}]
+        assert mr.index_of(rules[1], rules) == 2
+
 
 class TestMailWatchFiltering:
     MEMBERS = {"MemberA": {"wechat": ["wx-a"], "dir": "membera",
