@@ -114,13 +114,19 @@ _CANON = {"model": canon_model,
 
 
 def load_overrides() -> dict:
-    """读每用户 LLM 覆盖。文件缺失 → {}；损坏/值非法 → 跳过并告警（手工改过也不炸）。"""
+    """读每用户 LLM 覆盖。文件缺失 → {}；损坏/值非法 → 跳过并告警（手工改过也不炸）。
+    告警只一次：损坏文件挪成 .bad，非法值清掉后写回——ask() 每次都重读，否则每次都告警。"""
+    p = overrides_path()
     try:
-        raw = json.loads(overrides_path().read_text(encoding="utf-8"))
+        raw = json.loads(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
     except Exception:
-        _log.warning("LLM 覆盖状态文件损坏，按无覆盖启动", exc_info=True)
+        _log.warning("LLM 覆盖状态文件损坏，挪至 %s.bad，按无覆盖启动", p.name, exc_info=True)
+        try:
+            os.replace(p, p.with_name(p.name + ".bad"))
+        except OSError:
+            pass
         return {}
     out = {}
     for user, entry in (raw.items() if isinstance(raw, dict) else []):
@@ -129,10 +135,15 @@ def load_overrides() -> dict:
         clean = {k: val for k, canon in _CANON.items() if (val := canon(entry.get(k)))}
         dropped = {k: entry[k] for k in _CANON if k in entry and k not in clean}
         if dropped:
-            _log.warning("LLM 覆盖 %r 含未登记值 %s，已丢弃（模型表变了？）",
+            _log.warning("LLM 覆盖 %r 含未登记值 %s，已丢弃并写回（模型表变了？）",
                          user, dropped)
         if clean:
             out[user] = clean
+    if out != raw:
+        try:
+            save_overrides(out)
+        except OSError:
+            _log.warning("LLM 覆盖清理写回失败", exc_info=True)
     return out
 
 
