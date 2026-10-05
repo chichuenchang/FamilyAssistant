@@ -236,3 +236,18 @@ def test_agent_is_lazy():
     assert t._agent is None
     t.deliver(1, "只发文字")           # 投递不构造 Agent
     assert t._agent is None
+
+
+def test_push_text_records_sent_for_quote_lookup():
+    t = FakeTransport()
+    assert t.push_text("u1", "新邮件") is True
+    assert t.calls == [("text", "u1", "新邮件"), ("after", "u1", "新邮件")]
+
+
+def test_failed_push_text_not_recorded():
+    class Refusing(FakeTransport):
+        def send_text(self, target, text):
+            return False
+    t = Refusing()
+    assert t.push_text("u1", "新邮件") is False
+    assert t.calls == []

@@ -18,8 +18,11 @@
     # 运行模式（扫码登录 + 长轮询）
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 
-    # 重新扫码（切换账号）
+    # 重新扫码（默认账号）
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
+
+    # 新增/重扫另一个账号（同一进程同时服务全部已登录账号）
+    python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --account mom
 
     # 调试日志默认开（写 data/.state/bot_debug.log）；关闭用 --no-debug
     python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --no-debug
@@ -33,7 +36,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
+import re
 import sys
+import threading
 import time
 from collections import OrderedDict
 from datetime import datetime
@@ -62,8 +68,33 @@ import paths as _paths
 log = logging.getLogger("familyassist.wechat")
 
 # 凭据存储路径（跟随 data_root；备份硬排除任何含 "creds" 的文件名）
+# 多账号：默认账号 wechat_creds.json，其余 wechat_creds_<标签>.json；SDK cursor 各自紧贴为 .sync
 CREDS_FILE = _paths.state_file("wechat_creds.json")
 _paths.state_file("wechat_creds.json.sync")  # SDK 的 cursor 文件紧贴凭据，随之迁入 .state/
+_LABEL_RE = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def creds_path(label=None, state_dir=None) -> Path:
+    """账号标签 → 凭据文件。None/"default" = 原单账号文件。"""
+    d = Path(state_dir) if state_dir else CREDS_FILE.parent
+    if label in (None, "default"):
+        return d / "wechat_creds.json"
+    if not _LABEL_RE.fullmatch(label):
+        raise ValueError(f"账号标签只能含字母/数字/_/-: {label!r}")
+    return d / f"wechat_creds_{label}.json"
+
+
+def creds_files(state_dir=None) -> dict:
+    """已登录的全部账号 {标签: 凭据文件}（.sync cursor 不算）。"""
+    d = Path(state_dir) if state_dir else CREDS_FILE.parent
+    out = {}
+    for p in sorted(d.glob("wechat_creds*.json")):
+        stem = p.stem
+        if stem == "wechat_creds":
+            out["default"] = p
+        elif stem.startswith("wechat_creds_"):
+            out[stem[len("wechat_creds_"):]] = p
+    return out
 
 
 _LOCK_PORT = 47831  # 单实例锁端口（仅 localhost，不对外）
@@ -128,26 +159,29 @@ def _load_recent_msgs(path=None) -> None:
 
 # bot 出站回复：服务端不回传 message_id（send 响应 {}，轮询不回显 BOT 消息，
 # 均实测 2026-07-10），引用 bot 回复只能按时间对齐 —— 记录每次发送的时间戳+文本。
-_SENT_REPLIES: list = []          # [[ts_ms, text], ...] 按发送顺序
+_SENT_REPLIES: list = []          # [[ts_ms, user, text], ...] 按发送顺序；user "" = 旧格式/不分用户
 _SENT_REPLIES_CAP = 100
 _SENT_REPLIES_FILE = _paths.state_file("wechat_sent_msgs.json")
 _SENT_MATCH_WINDOW_MS = 15_000    # 引用时间戳与发送时间允许的最大偏差
+_SENT_LOCK = threading.Lock()     # 回复（主线程）与后台推送（节拍线程）都会写
 
 
-def _remember_sent(text: str, ts_ms=None, persist_file=None) -> None:
-    """记录一条 bot 出站文字（发送时刻 + 内容），供引用时间戳匹配。"""
+def _remember_sent(text: str, ts_ms=None, persist_file=None, user: str = "") -> None:
+    """记录一条 bot 出站文字（发送时刻 + 收件人 + 内容），供引用时间戳匹配。
+    按收件人分开：多账号/多人同时段的回复不串到别人的引用里。"""
     if not text:
         return
     if ts_ms is None:
         ts_ms = int(time.time() * 1000)
-    _SENT_REPLIES.append([int(ts_ms), text])
-    del _SENT_REPLIES[:-_SENT_REPLIES_CAP]
-    if persist_file is not None:
-        try:
-            Path(persist_file).write_text(
-                json.dumps(_SENT_REPLIES, ensure_ascii=False), encoding="utf-8")
-        except OSError:
-            log.exception("出站消息记录写入失败（忽略）")
+    with _SENT_LOCK:
+        _SENT_REPLIES.append([int(ts_ms), str(user or ""), text])
+        del _SENT_REPLIES[:-_SENT_REPLIES_CAP]
+        if persist_file is not None:
+            try:
+                Path(persist_file).write_text(
+                    json.dumps(_SENT_REPLIES, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                log.exception("出站消息记录写入失败（忽略）")
 
 
 def _load_sent_replies(path=None) -> None:
@@ -158,23 +192,32 @@ def _load_sent_replies(path=None) -> None:
     except (OSError, ValueError):
         return
     if isinstance(data, list):
-        _SENT_REPLIES.extend(
-            [int(e[0]), e[1]] for e in data
-            if isinstance(e, list) and len(e) == 2 and isinstance(e[1], str))
+        for e in data:
+            if not isinstance(e, list) or not e or not isinstance(e[-1], str):
+                continue
+            if len(e) == 2:     # 旧格式 [ts, text]
+                _SENT_REPLIES.append([int(e[0]), "", e[1]])
+            elif len(e) == 3:
+                _SENT_REPLIES.append([int(e[0]), str(e[1]), e[2]])
         del _SENT_REPLIES[:-_SENT_REPLIES_CAP]
 
 
-def _match_sent_by_time(ts_ms: int, window_ms: int = _SENT_MATCH_WINDOW_MS):
-    """按时间戳找最接近的 bot 出站回复；偏差超窗口返回 None。"""
+def _match_sent_by_time(ts_ms: int, window_ms: int = _SENT_MATCH_WINDOW_MS, user=None):
+    """按时间戳找最接近的 bot 出站回复；给 user 则只看发给他的（及旧格式不分用户的）；
+    偏差超窗口返回 None。"""
     best, best_diff = None, window_ms + 1
-    for sent_ts, text in _SENT_REPLIES:
+    with _SENT_LOCK:
+        sent = list(_SENT_REPLIES)
+    for sent_ts, to, text in sent:
+        if user is not None and to and to != str(user):
+            continue
         diff = abs(sent_ts - ts_ms)
         if diff <= window_ms and diff < best_diff:
             best, best_diff = text, diff
     return best
 
 
-def _quoted_text(raw_item: dict):
+def _quoted_text(raw_item: dict, user=None):
     """解析引用消息的原文。
 
     iLink 实际报文（实测 2026-07-10）里 ref_msg 只带被引消息的 msg_id 和
@@ -196,7 +239,7 @@ def _quoted_text(raw_item: dict):
         return cached
     ts = item.get("create_time_ms") or 0
     if ts:
-        sent = _match_sent_by_time(ts)
+        sent = _match_sent_by_time(ts, user=user)
         if sent:
             body = sent[:200] + ("…" if len(sent) > 200 else "")
             return f"我此前的回复「{body}」"
@@ -207,19 +250,28 @@ def _quoted_text(raw_item: dict):
 
 
 class WeChatTransport(Transport):
-    """微信：target = 收到的 msg（reply_* 回原会话）或 wxid（后台推送，经 bot.send_text）。"""
+    """微信：target = 收到的 msg（reply_* 回原会话）或 wxid（后台推送，经 bot.send_text）。
+    多账号共用一个实例（后台节拍只跑一份，提醒不重发）；推送按 wxid 找对的 bot。"""
     channel = "wechat"
     tag = "wx"
 
-    def __init__(self, bot=None, agent=None):
+    def __init__(self, bots, agent=None):
         super().__init__(agent)
-        self.bot = bot
+        self.bots = list(bots)
+
+    def _bot_for(self, user):
+        """后台推送用哪个 bot：该用户发过消息的那个（context_token 存在 bot 自己的 _ctx_cache）。
+        都没见过 → 第一个（SDK 照旧报"没有 context_token"）。"""
+        for b in self.bots:
+            if user in b._ctx_cache:
+                return b
+        return self.bots[0]
 
     def send_text(self, target, text: str) -> None:
         if hasattr(target, "reply_text"):
             target.reply_text(text)
         else:
-            self.bot.send_text(target, text)
+            self._bot_for(target).send_text(target, text)
 
     def send_photo(self, target, path: str) -> None:
         target.reply_image(path)
@@ -228,7 +280,8 @@ class WeChatTransport(Transport):
         target.reply_file(path)
 
     def after_text_sent(self, target, text: str) -> None:
-        _remember_sent(text, persist_file=_SENT_REPLIES_FILE)   # bot 出站记录（引用反查）
+        user = getattr(target, "from_user", target)
+        _remember_sent(text, persist_file=_SENT_REPLIES_FILE, user=user)   # bot 出站记录（引用反查）
 
     def save_incoming(self, msg, member: str, ext: str):
         """来件落盘到成员 inbox；失败返回 None（on_media 会提示重发）。"""
@@ -244,35 +297,10 @@ class WeChatTransport(Transport):
 
 # ── 模式 1: 运行 Bot ────────────────────────────────────────
 
-def run_bot(relogin: bool = False) -> None:
-    """扫码登录并启动长轮询 Bot。"""
-    from weixin_ilink import WeixinBot
-
-    if not _acquire_single_instance_lock():
-        print("[wechat_ilink] 已有 Bot 实例在运行（单实例锁被占用），本进程退出。")
-        print("  双开会导致每条消息被处理两次、回复两次。")
-        sys.exit(1)
-
-    _load_recent_msgs()    # 重启后仍能反查引用的历史消息
-    _load_sent_replies()   # bot 出站记录（引用 bot 回复按时间匹配）
-
-    # 如果要求重新登录或凭据文件不存在，走扫码流程
-    if relogin or not CREDS_FILE.exists():
-        print("[wechat_ilink] 等待扫码...")
-        print("  将打开二维码，请用微信扫码授权。")
-        print("  注意：需要在微信 ClawBot 插件中先启用。")
-        print()
-        bot = WeixinBot.from_login(save_to=str(CREDS_FILE))
-    else:
-        print(f"[wechat_ilink] 加载已有凭据: {CREDS_FILE}")
-        bot = WeixinBot(credentials_file=str(CREDS_FILE))
-
-    print(f"[wechat_ilink] 登录成功 — 账号: {bot.account_id}")
-    print("[wechat_ilink] 等待微信消息... (Ctrl+C 停止)")
-
-    # 自愈：陈旧 cursor 会让 getupdates 持续返回 ret=-1，而 SDK 只特判 ret=-14
-    # (SESSION_EXPIRED)，其余 ret 一律以同一个坏 cursor 无限重试 → 静默收不到消息。
-    # 连续 3 次 ret=-1 就清空 cursor 并删除 .sync 文件，下一轮以空 buf 重新拉取自愈。
+def _self_heal_poll(bot) -> None:
+    """自愈：陈旧 cursor 会让 getupdates 持续返回 ret=-1，而 SDK 只特判 ret=-14
+    (SESSION_EXPIRED)，其余 ret 一律以同一个坏 cursor 无限重试 → 静默收不到消息。
+    连续 3 次 ret=-1 就清空 cursor 并删除 .sync 文件，下一轮以空 buf 重新拉取自愈。"""
     _orig_poll = bot.client.poll
     _poll_neg1 = {"n": 0}
 
@@ -281,8 +309,8 @@ def run_bot(relogin: bool = False) -> None:
         if (resp.get("ret") or 0) == -1:
             _poll_neg1["n"] += 1
             if _poll_neg1["n"] >= 3:
-                print("[wechat_ilink] poll ret=-1 连续 3 次 → 清空陈旧 cursor 自愈")
-                log.warning("poll ret=-1 x3 → 重置 cursor 并删除 .sync 文件")
+                print(f"[wechat_ilink] {bot.account_id} poll ret=-1 连续 3 次 → 清空陈旧 cursor 自愈")
+                log.warning("%s poll ret=-1 x3 → 重置 cursor 并删除 .sync 文件", bot.account_id)
                 bot.client.cursor = ""
                 if bot._cursor_file:
                     try:
@@ -296,7 +324,10 @@ def run_bot(relogin: bool = False) -> None:
 
     bot.client.poll = _poll_with_selfheal
 
-    t = WeChatTransport(bot)
+
+def _wire(bot, t: WeChatTransport) -> None:
+    """一个账号的 bot 挂上自愈轮询 + 全部消息处理（各账号同一套，共用 t）。"""
+    _self_heal_poll(bot)
 
     @bot.on_text
     def handle_text(msg):
@@ -305,7 +336,7 @@ def run_bot(relogin: bool = False) -> None:
             return
         _remember_msg(msg.message_id, msg.text, persist_file=_RECENT_MSGS_FILE)
         print(f"[wx] 文字消息 from {msg.from_user}({member}): {msg.text[:60]}")
-        t.on_text(msg, msg.from_user, member, msg.text, quoted=_quoted_text(msg.raw_item))
+        t.on_text(msg, msg.from_user, member, msg.text, quoted=_quoted_text(msg.raw_item, user=msg.from_user))
 
     @bot.on_image
     def handle_image(msg):
@@ -340,11 +371,78 @@ def run_bot(relogin: bool = False) -> None:
             return
         msg.reply_text("收到视频（暂不支持视频处理）")
 
-    # weixin-ilink bot.run() 阻塞、无轮询钩子 → 后台线程：提醒+备份 600s、懂王投递 20s
+
+_POLL_DONE = object()
+
+
+def serve(bots) -> None:
+    """每个 bot 一条轮询线程，消息汇入队列，由调用线程逐条分发（串行）。
+    Agent/引用缓存/状态文件原本只被单线程碰，多账号并发处理会抢 → 宁可排队。
+    不用 bot.run()：它阻塞且装 signal 处理器（只许主线程）。
+    全部轮询结束（测试）或 Ctrl+C 返回/抛出；退出时 stop 全部 bot。"""
+    q: queue.Queue = queue.Queue()
+
+    def _poll(bot):
+        try:
+            for msg in bot.messages():
+                q.put((bot, msg))
+        except Exception:
+            log.exception("轮询线程异常退出")
+        finally:
+            q.put((bot, _POLL_DONE))
+
+    for i, b in enumerate(bots):
+        threading.Thread(target=_poll, args=(b,), daemon=True, name=f"wx-poll-{i}").start()
+    live = len(bots)
+    try:
+        while live:
+            try:   # 带超时：Windows 上无限期 get 收不到 Ctrl+C
+                bot, msg = q.get(timeout=1)
+            except queue.Empty:
+                continue
+            if msg is _POLL_DONE:
+                live -= 1
+            else:
+                bot._dispatch(msg)
+    finally:
+        for b in bots:
+            b.stop()
+
+
+def run_bot(relogin: bool = False, account: str | None = None) -> None:
+    """加载全部已登录账号（缺则扫码）并启动长轮询。account = 本次扫码写哪个账号的凭据。"""
+    from weixin_ilink import WeixinBot
+
+    if not _acquire_single_instance_lock():
+        print("[wechat_ilink] 已有 Bot 实例在运行（单实例锁被占用），本进程退出。")
+        print("  双开会导致每条消息被处理两次、回复两次。")
+        sys.exit(1)
+
+    _load_recent_msgs()    # 重启后仍能反查引用的历史消息
+    _load_sent_replies()   # bot 出站记录（引用 bot 回复按时间匹配）
+
+    # 要求重新登录 / 指定账号尚无凭据 / 一个账号都没有 → 扫码
+    target = creds_path(account)
+    if relogin or not creds_files() or (account and not target.exists()):
+        print(f"[wechat_ilink] 等待扫码（账号 {account or 'default'}）...")
+        print("  将打开二维码，请用微信扫码授权。")
+        print("  注意：需要在微信 ClawBot 插件中先启用。")
+        print()
+        WeixinBot.from_login(save_to=str(target))
+
+    t = WeChatTransport([])
+    for label, path in creds_files().items():
+        bot = WeixinBot(credentials_file=str(path))
+        print(f"[wechat_ilink] 已加载账号 {label}: {bot.account_id}")
+        _wire(bot, t)
+        t.bots.append(bot)
+    print("[wechat_ilink] 等待微信消息... (Ctrl+C 停止)")
+
+    # 轮询线程阻塞在 SDK 里、无轮询钩子 → 后台线程：提醒+备份 600s、懂王投递 20s（全账号一份）
     t.start_background_threads()
 
     try:
-        bot.run()
+        serve(t.bots)
     except KeyboardInterrupt:
         print("\n[wechat_ilink] 已停止。")
 
@@ -386,6 +484,9 @@ def main():
                         default="run", help="运行模式 (默认: run)")
     parser.add_argument("--relogin", action="store_true",
                         help="重新扫码登录（忽略已有凭据）")
+    parser.add_argument("--account", metavar="LABEL",
+                        help="扫码写入哪个账号（wechat_creds_<LABEL>.json；无凭据即扫码新增）；"
+                             "运行时总是加载全部账号")
     parser.add_argument("--debug", action="store_true", default=True,
                         help="开启调试日志（写 data/.state/bot_debug.log，默认开）")
     parser.add_argument("--no-debug", dest="debug", action="store_false",
@@ -396,7 +497,7 @@ def main():
     if args.mode == "test":
         run_test()
     else:
-        run_bot(relogin=args.relogin)
+        run_bot(relogin=args.relogin, account=args.account)
 
 
 if __name__ == "__main__":
