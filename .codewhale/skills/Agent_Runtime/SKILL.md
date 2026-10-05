@@ -88,7 +88,7 @@ python .codewhale/skills/Agent_Runtime/telegram_bot.py --no-debug
 
 微信凭据加密存于 `data/.state/wechat_creds.json`；Telegram 去重 offset 存于 `data/.state/.telegram_offset`。
 微信引用反查缓存存于 `data/.state/wechat_recent_msgs.json`（近期入站消息）与
-`data/.state/wechat_sent_msgs.json`（bot 出站回复，按时间戳匹配）——均为运行时状态，不进备份。
+`data/.state/wechat_sent_msgs.json`（bot 出站回复+后台推送，按收件人+时间戳匹配）——均为运行时状态，不进备份。
 微信 Bot 启动时抢单实例锁（绑定 `127.0.0.1:47831`）：双开会导致每条消息处理/回复两次，后启动的进程直接退出。
 多账号：一个 ClawBot 账号一份凭据 `wechat_creds_<标签>.json`（默认账号仍 `wechat_creds.json`），一进程全挂。
 每账号一条轮询线程，消息排队主线程串行分发（Agent/缓存非线程安全）；后台节拍全进程一份，推送找该用户发过消息的 bot（context_token 存在各 bot 内存）。

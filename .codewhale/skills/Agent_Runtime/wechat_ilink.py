@@ -163,6 +163,7 @@ _SENT_REPLIES: list = []          # [[ts_ms, user, text], ...] 按发送顺序�
 _SENT_REPLIES_CAP = 100
 _SENT_REPLIES_FILE = _paths.state_file("wechat_sent_msgs.json")
 _SENT_MATCH_WINDOW_MS = 15_000    # 引用时间戳与发送时间允许的最大偏差
+_SENT_LOCK = threading.Lock()     # 回复（主线程）与后台推送（节拍线程）都会写
 
 
 def _remember_sent(text: str, ts_ms=None, persist_file=None, user: str = "") -> None:
@@ -172,14 +173,15 @@ def _remember_sent(text: str, ts_ms=None, persist_file=None, user: str = "") -> 
         return
     if ts_ms is None:
         ts_ms = int(time.time() * 1000)
-    _SENT_REPLIES.append([int(ts_ms), str(user or ""), text])
-    del _SENT_REPLIES[:-_SENT_REPLIES_CAP]
-    if persist_file is not None:
-        try:
-            Path(persist_file).write_text(
-                json.dumps(_SENT_REPLIES, ensure_ascii=False), encoding="utf-8")
-        except OSError:
-            log.exception("出站消息记录写入失败（忽略）")
+    with _SENT_LOCK:
+        _SENT_REPLIES.append([int(ts_ms), str(user or ""), text])
+        del _SENT_REPLIES[:-_SENT_REPLIES_CAP]
+        if persist_file is not None:
+            try:
+                Path(persist_file).write_text(
+                    json.dumps(_SENT_REPLIES, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                log.exception("出站消息记录写入失败（忽略）")
 
 
 def _load_sent_replies(path=None) -> None:
@@ -204,7 +206,9 @@ def _match_sent_by_time(ts_ms: int, window_ms: int = _SENT_MATCH_WINDOW_MS, user
     """按时间戳找最接近的 bot 出站回复；给 user 则只看发给他的（及旧格式不分用户的）；
     偏差超窗口返回 None。"""
     best, best_diff = None, window_ms + 1
-    for sent_ts, to, text in _SENT_REPLIES:
+    with _SENT_LOCK:
+        sent = list(_SENT_REPLIES)
+    for sent_ts, to, text in sent:
         if user is not None and to and to != str(user):
             continue
         diff = abs(sent_ts - ts_ms)

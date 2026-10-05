@@ -99,3 +99,11 @@ def test_legacy_sent_entries_still_load(tmp_path):
     f.write_text('[[111, "旧格式"]]', encoding="utf-8")
     wechat_ilink._load_sent_replies(f)
     assert wechat_ilink._match_sent_by_time(111, user="dad") == "旧格式"
+
+
+def test_quoting_a_push_resolves_pushed_text():
+    t = wechat_ilink.WeChatTransport([FakeBot(users=["mom"])])
+    assert t.push_text("mom", "新邮件：学校通知")
+    ts = wechat_ilink._SENT_REPLIES[-1][0]
+    item = {"ref_msg": {"message_item": {"msg_id": "7", "create_time_ms": ts}}}
+    assert "新邮件：学校通知" in wechat_ilink._quoted_text(item, user="mom")
