@@ -1,12 +1,14 @@
 """
-Mail Keeper — 新邮件播报的「别再推这种」规则（用户教出来的，纯逻辑）。
+Mail Keeper — 新邮件播报规则（用户教出来的，纯逻辑）。
 
-起点是**全推**：规则表空 = 每封新邮件都播报。用户说"这种以后别推"时，Agent 调
-mail_mute 落一条规则，此后命中的信 mail_watch 直接丢（不播报、游标照常前进）。
-判断在代码里按规则做，不让 LLM 每封信现想 —— 便宜、可解释、可撤销（mail_rules 删）。
+无规则 = 每封由 mail_triage 让 LLM 判是否需处理。规则先于 LLM，命中就不问 LLM：
+    mute    别推（"这种以后别推" → mail_mute）
+    always  必推（"这种要推"/漏推了 → mail_always），同一封两类都中 always 胜
+可撤销（mail_rules 删）。
 
 规则 data/<成员>/mail/rules.json（学来的偏好，入备份，跟人走）：
-    [{"kind": sender|domain|subject|label, "value": str, "note": str, "added_at": ts}]
+    [{"kind": sender|domain|subject|label, "value": str, "push": mute|always,
+      "note": str, "added_at": ts}]       缺 push = mute
 
 四种 kind 覆盖实际会说的话：
     sender   某个地址（"这个发件人别推了"）
@@ -28,6 +30,7 @@ import members as _members      # noqa: F401  测试打桩 load_members 走这�
 import paths as _paths
 
 KINDS = ("sender", "domain", "subject", "label")
+PUSHES = ("mute", "always")
 # 口语 → Gmail 分类标签（用户不会说 CATEGORY_PROMOTIONS）
 LABEL_ALIASES = {
     "promotions": "CATEGORY_PROMOTIONS", "promotion": "CATEGORY_PROMOTIONS",
@@ -72,17 +75,26 @@ def normalise(kind: str, value: str) -> tuple[str, str]:
     return kind, v
 
 
-def add(member: str, *, kind: str, value: str, note: str = "") -> list[dict]:
-    """加一条规则（同 kind+value 已存在则只更新备注）。返回规则表。"""
+def push_of(rule: dict) -> str:
+    """mute | always；缺字段 = mute（旧规则文件）。"""
+    return rule.get("push") or "mute"
+
+
+def add(member: str, *, kind: str, value: str, note: str = "", push: str = "mute") -> list[dict]:
+    """加一条规则（同 kind+value 已存在则改 push、更新备注，不留两条）。返回规则表。"""
+    if push not in PUSHES:
+        raise ValueError(f"push 必须是 {PUSHES}")
     kind, value = normalise(kind, value)
     rules = load(member)
     for r in rules:
         if r.get("kind") == kind and str(r.get("value", "")).lower() == value.lower():
+            r["push"] = push
             if note:
                 r["note"] = note
             _save(member, rules)
             return rules
-    rules.append({"kind": kind, "value": value, "note": note, "added_at": time.time()})
+    rules.append({"kind": kind, "value": value, "push": push, "note": note,
+                  "added_at": time.time()})
     _save(member, rules)
     return rules
 
@@ -97,13 +109,19 @@ def remove(member: str, index: int) -> dict | None:
     return gone
 
 
-def match(meta: dict, rules: list[dict]) -> dict | None:
-    """这封信命中哪条规则（命中即不播报）；都不中返回 None。
+def index_of(rule: dict, rules: list[dict]) -> int:
+    """规则编号（1 起，同 describe / remove）。"""
+    return next(i for i, r in enumerate(rules, 1) if r is rule)
+
+
+def match(meta: dict, rules: list[dict], push: str = "mute") -> dict | None:
+    """这封信命中哪条 push 类规则；都不中返回 None。默认只看 mute（早报也这么滤）。
 
     meta 用 gmail_provider.message_meta 的形状；label 规则只需要其中的 labels，
     故 mail_watch 可在取信头之前先用 history 带回的标签过一遍。
     """
-    if not rules:                     # 规则表空 = 全推，不必解析这封信
+    rules = [r for r in rules if push_of(r) == push]
+    if not rules:
         return None
     addr = (parseaddr(meta.get("from") or "")[1] or "").lower()
     host = addr.rsplit("@", 1)[-1] if "@" in addr else ""
@@ -128,10 +146,17 @@ def match(meta: dict, rules: list[dict]) -> dict | None:
 def describe(rules: list[dict]) -> str:
     """给用户看的规则表（编号即 remove 用的序号）。"""
     if not rules:
-        return "目前没有忽略规则：每封新邮件都会播报。"
+        return "目前没有播报规则：每封新邮件由 AI 判断要不要你处理，要才播报。"
     names = {"sender": "发件人", "domain": "域名", "subject": "主题含", "label": "Gmail 分类"}
-    lines = ["当前不播报的邮件（说\"恢复第 N 条\"可撤销）："]
-    for i, r in enumerate(rules, 1):
-        note = f"（{r['note']}）" if r.get("note") else ""
-        lines.append(f"{i}. {names.get(r.get('kind'), r.get('kind'))}：{r.get('value')}{note}")
+    titles = {"mute": "不播报：", "always": "一律播报（不经 AI 判断）："}
+    lines = []
+    for push in PUSHES:
+        rows = [(i, r) for i, r in enumerate(rules, 1) if push_of(r) == push]
+        if not rows:
+            continue
+        lines.append(titles[push])
+        for i, r in rows:
+            note = f"（{r['note']}）" if r.get("note") else ""
+            lines.append(f"{i}. {names.get(r.get('kind'), r.get('kind'))}：{r.get('value')}{note}")
+    lines.append("其余新邮件由 AI 判断要不要你处理。说\"撤销第 N 条\"可删规则。")
     return "\n".join(lines)

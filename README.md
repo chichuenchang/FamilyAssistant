@@ -268,7 +268,8 @@ FamilyAssistant/
 │       │   ├── gmail_provider.py ← Gmail REST 实现（可按契约换）
 │       │   ├── mail_draft.py     ← 待确认草稿 + 发信闸门
 │       │   ├── mail_watch.py     ← 新邮件播报（可选，按成员开）
-│       │   └── mail_rules.py     ← 「这种别推」忽略规则（用户教）
+│       │   ├── mail_triage.py    ← LLM 判新邮件需不需处理
+│       │   └── mail_rules.py     ← mute / always 播报规则（用户教）
 │       ├── Web_Reach/        ← 只读联网：搜索 / 网页摘要 / YouTube 转写
 │       │   ├── SKILL.md
 │       │   ├── .env.example       ← RAPIDAPI_KEY 模板

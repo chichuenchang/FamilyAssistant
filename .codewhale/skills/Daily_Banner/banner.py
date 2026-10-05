@@ -242,11 +242,7 @@ def compose(d: Digest, chat=None) -> str:
         return fallback
     try:
         import llm_client as _llm
-        model, effort = _llm.settings(_llm.load_overrides(), "")
-        msg = (chat or _llm.chat)([{"role": "system", "content": SYSTEM},
-                                   {"role": "user", "content": llm_input(d)}],
-                                  None, model, effort)
-        return ((msg or {}).get("content") or "").strip() or fallback
+        return _llm.ask(SYSTEM, llm_input(d), via=chat) or fallback
     except Exception:
         _log.exception("早报 LLM 成文失败，改用模板")
         return fallback

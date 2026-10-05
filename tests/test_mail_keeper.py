@@ -536,7 +536,38 @@ class TestComposeNewMail:
 
 # ── 新邮件播报（mail_watch）────────────────────────────────
 
+import re
+import threading
+
+import llm_client
+import mail_triage as mt
 import mail_watch as mw
+
+
+class _FakeLLM:
+    """假 llm_client.chat：按主题查 verdicts 回 JSON，默认需处理无理由。"""
+
+    def __init__(self):
+        self.calls, self.verdicts, self.fail = [], {}, False
+
+    def __call__(self, messages, tools, model, effort):
+        self.calls.append(messages)
+        if self.fail:
+            raise RuntimeError("llm down")
+        parts = re.split(r"^\[(\d+)\]\n", messages[-1]["content"], flags=re.M)
+        rows = []
+        for i, block in zip(parts[1::2], parts[2::2]):
+            act, why = self.verdicts.get(re.search(r"主题：(.*)", block).group(1), (True, ""))
+            rows.append({"i": int(i), "act": act, "why": why})
+        return {"role": "assistant", "content": json.dumps(rows, ensure_ascii=False)}
+
+
+@pytest.fixture(autouse=True)
+def llm(monkeypatch):
+    fake = _FakeLLM()
+    monkeypatch.setattr(llm_client, "chat", fake)
+    mt.cache_path().unlink(missing_ok=True)
+    return fake
 
 
 def _hist(msgs, history_id="200", token=None):
@@ -613,6 +644,19 @@ class TestProviderHistory:
         metas = gp.message_metas(["m2", "gone", "m3"], PREFIX)
         assert [m["id"] for m in metas] == ["m2", "m3"]
 
+    def test_get_messages_skip_deleted_and_keep_order_with_body(self, monkeypatch):
+        stub = _WatchStub()
+        monkeypatch.setattr(gp, "_http", lambda m, url, *a, **k: (
+            (404, b"{}") if "/messages/gone" in url else stub(m, url, *a, **k)))
+        msgs = gp.get_messages(["m3", "gone", "m2"], PREFIX)
+        assert [m["id"] for m in msgs] == ["m3", "m2"]
+        assert "body" in msgs[0] and msgs[0]["subject"] == "Subj m3"
+
+    def test_get_messages_other_errors_still_raise(self, monkeypatch):
+        monkeypatch.setattr(gp, "_http", lambda *a, **k: (500, b"{}"))
+        with pytest.raises(RuntimeError):
+            gp.get_messages(["m2"], PREFIX)
+
     def test_metas_other_errors_still_raise(self, monkeypatch):
         monkeypatch.setattr(gp, "_http", lambda *a, **k: (500, b"{}"))
         with pytest.raises(RuntimeError):
@@ -676,6 +720,7 @@ class TestMailWatch:
         assert n == 1 and len(out) == 1
         cid, text = out[0]
         assert cid == "wx-a" and "m2@example.com" in text and "Subj m2" in text
+        assert text.startswith("📬 需处理 1 封")
         assert mw._load("wechat")["MemberA"]["history_id"] == "600"
 
     def test_member_without_watch_flag_is_never_polled(self, monkeypatch, sent):
@@ -708,6 +753,8 @@ class TestMailWatch:
         self._run(push, _WatchStub(pages=[_hist(many)]), monkeypatch, now=time.time() + 100)
         text = out[0][1]
         assert text.count("Subj m") == mw.MAX_LINES and "2" in text.splitlines()[-1]
+        logged = mw.last_push("MemberA")
+        assert len(logged) == len(many) and all(i["pushed"] for i in logged)
 
     def test_stale_cursor_reseeds_and_pushes_nothing(self, monkeypatch, sent):
         out, push = sent
@@ -786,6 +833,46 @@ class TestMailWatch:
         assert any(getattr(f, "__name__", "") == "_mail_watch_tick"
                    for f in ac.REGISTRY.fast_ticks)
 
+    def test_tick_runs_the_watch_off_the_caller_thread(self, monkeypatch, sent):
+        out, push = sent
+        monkeypatch.setattr(gp, "_http", _WatchStub(profile_id="500"))
+        threads = []
+        assert mw.tick(push, "wechat", provider_for=self._provider_for,
+                       spawn=lambda f: threads.append(f)) is True
+        assert mw._load("wechat") == {}                 # nothing ran yet: caller not blocked
+        threads[0]()
+        assert mw._load("wechat")["MemberA"]["history_id"] == "500"
+
+    def test_tick_does_not_start_a_second_worker_per_channel(self, sent):
+        out, push = sent
+        pending = []
+        spawn = pending.append
+        assert mw.tick(push, "wechat", provider_for=self._provider_for, spawn=spawn)
+        assert not mw.tick(push, "wechat", provider_for=self._provider_for, spawn=spawn)
+        assert mw.tick(push, "telegram", provider_for=self._provider_for, spawn=spawn)
+        for f in pending:
+            f()
+        assert mw.tick(push, "wechat", provider_for=self._provider_for, spawn=pending.append)
+        pending[-1]()
+
+    def test_worker_crash_releases_the_channel(self, monkeypatch, sent):
+        out, push = sent
+
+        def boom(*a, **k):
+            raise RuntimeError("bug")
+
+        monkeypatch.setattr(mw, "check_and_push", boom)
+        run = lambda f: f()                             # noqa: E731
+        assert mw.tick(push, "wechat", provider_for=self._provider_for, spawn=run)
+        assert mw.tick(push, "wechat", provider_for=self._provider_for, spawn=run)
+
+    def test_tick_default_spawn_is_a_daemon_thread(self, monkeypatch, sent):
+        out, push = sent
+        done = threading.Event()
+        monkeypatch.setattr(mw, "check_and_push", lambda *a, **k: done.set())
+        assert mw.tick(push, "wechat", provider_for=self._provider_for)
+        assert done.wait(5)
+
 
 # ── 播报过滤规则（mail_rules）──────────────────────────────
 
@@ -863,6 +950,38 @@ class TestMailRules:
     def test_no_rules_matches_nothing(self):
         assert mr.match(_meta(), []) is None
 
+    def test_match_defaults_to_mute_rules_only(self):
+        rules = [{"kind": "sender", "value": "deals@shop.example", "push": "always"}]
+        assert mr.match(_meta(), rules) is None
+        assert mr.match(_meta(), rules, push="always") is rules[0]
+
+    def test_rule_without_push_field_is_mute(self):
+        rules = [{"kind": "sender", "value": "deals@shop.example"}]
+        assert mr.match(_meta(), rules) is rules[0]
+        assert mr.match(_meta(), rules, push="always") is None
+
+    def test_re_adding_rule_with_other_push_switches_it(self):
+        mr.add("MemberA", kind="sender", value="a@x.example")
+        mr.add("MemberA", kind="sender", value="a@x.example", push="always")
+        rules = mr.load("MemberA")
+        assert len(rules) == 1 and rules[0]["push"] == "always"
+
+    def test_unknown_push_is_refused(self):
+        with pytest.raises(ValueError):
+            mr.add("MemberA", kind="sender", value="a@x.example", push="sometimes")
+
+    def test_describe_groups_rules_keeping_original_numbers(self):
+        mr.add("MemberA", kind="sender", value="a@x.example", push="always")
+        mr.add("MemberA", kind="subject", value="newsletter")
+        text = mr.describe(mr.load("MemberA"))
+        mute_at, always_at = text.index("不播报"), text.index("一律播报")
+        assert mute_at < text.index("2. 主题含：newsletter")
+        assert always_at < text.index("1. 发件人：a@x.example")
+
+    def test_index_of_is_one_based_position(self):
+        rules = [{"kind": "sender", "value": "a"}, {"kind": "sender", "value": "b"}]
+        assert mr.index_of(rules[1], rules) == 2
+
 
 class TestMailWatchFiltering:
     MEMBERS = {"MemberA": {"wechat": ["wx-a"], "dir": "membera",
@@ -935,7 +1054,96 @@ class TestMailWatchFiltering:
         self._poll(push, _WatchStub(pages=[_hist([_added("m2")])]), monkeypatch)
         items = mw.last_push("MemberA")
         assert [i["id"] for i in items] == ["m2"]
-        assert items[0]["from"] == "m2 <m2@example.com>"
+        assert items[0]["from"] == "m2 <m2@example.com>" and items[0]["pushed"] is True
+
+    def test_mail_needing_no_action_is_dropped_and_logged(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        llm.verdicts["Subj m2"] = (False, "订阅推送")
+        n = self._poll(push, _WatchStub(pages=[_hist([_added("m2")], history_id="600")]),
+                       monkeypatch)
+        assert (n, out) == (0, [])
+        assert mw._load("wechat")["MemberA"]["history_id"] == "600"
+        item = mw.last_push("MemberA")[0]
+        assert item["pushed"] is False and item["why"] == "无需处理：订阅推送"
+
+    def test_reason_is_shown_under_the_mail(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        llm.verdicts["Subj m2"] = (True, "周五前签同意书")
+        llm.verdicts["Subj m3"] = (False, "广告")
+        self._poll(push, _WatchStub(pages=[_hist([_added("m2"), _added("m3")])]), monkeypatch)
+        text = out[0][1]
+        assert text.splitlines() == ["📬 需处理 1 封：", "- m2 <m2@example.com>｜Subj m2",
+                                     "  → 周五前签同意书"]
+
+    def test_mail_beyond_meta_cap_is_counted_apart_from_needs_action(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        monkeypatch.setattr(mw, "MAX_META", 2)
+        llm.verdicts["Subj m3"] = (False, "广告")
+        llm.verdicts["Subj m4"] = (True, "签字")
+        self._poll(push, _WatchStub(pages=[_hist([_added("m2"), _added("m3"), _added("m4")])]),
+                   monkeypatch)
+        lines = out[0][1].splitlines()
+        assert lines[0] == "📬 需处理 1 封："
+        assert lines[-1].startswith("另有 1 封更早的新邮件没分拣")
+
+    def test_only_unsorted_backlog_still_gets_a_count(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        monkeypatch.setattr(mw, "MAX_META", 1)
+        llm.verdicts["Subj m3"] = (False, "广告")
+        n = self._poll(push, _WatchStub(pages=[_hist([_added("m2"), _added("m3")])]), monkeypatch)
+        assert n == 1 and out[0][1].startswith("📬 另有 1 封更早的新邮件没分拣")
+
+    def test_always_rule_beats_mute_and_skips_llm(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        mr.add("MemberA", kind="domain", value="example.com")
+        mr.add("MemberA", kind="sender", value="m2@example.com", push="always")
+        llm.verdicts["Subj m2"] = (False, "x")
+        self._poll(push, _WatchStub(pages=[_hist([_added("m2")])]), monkeypatch)
+        assert "Subj m2" in out[0][1] and "→" not in out[0][1]
+        assert llm.calls == []
+
+    def test_always_sender_survives_a_label_mute(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        mr.add("MemberA", kind="label", value="promotions")
+        mr.add("MemberA", kind="sender", value="m2@example.com", push="always")
+        stub = _WatchStub(pages=[_hist([_added("m2", labels=("INBOX", "CATEGORY_PROMOTIONS"))])])
+        self._poll(push, stub, monkeypatch)
+        assert out and "Subj m2" in out[0][1]
+
+    def test_muted_mail_skips_llm_and_logs_rule_number(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        mr.add("MemberA", kind="subject", value="unrelated")
+        mr.add("MemberA", kind="sender", value="m2@example.com")
+        self._poll(push, _WatchStub(pages=[_hist([_added("m2")])]), monkeypatch)
+        assert out == [] and llm.calls == []
+        assert mw.last_push("MemberA")[0]["why"] == "mute 规则 #2"
+
+    def test_llm_failure_pushes_everything_marked_unsorted(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        llm.fail = True
+        self._poll(push, _WatchStub(pages=[_hist([_added("m2"), _added("m3")])]), monkeypatch)
+        text = out[0][1]
+        assert text.startswith("📬 新邮件 2 封（未分拣）") and "Subj m3" in text
+
+    def test_push_failure_retries_from_cache_without_llm(self, monkeypatch, sent, llm):
+        out, push = sent
+        self._seed(push, monkeypatch)
+        stub = _WatchStub(pages=[_hist([_added("m2")], history_id="600")])
+        monkeypatch.setattr(gp, "_http", stub)
+        mw.check_and_push(lambda c, t: False, "wechat", provider_for=self._provider_for,
+                          now=time.time() + 100)
+        assert mw._load("wechat")["MemberA"]["history_id"] == "500" and len(llm.calls) == 1
+        mw.check_and_push(push, "wechat", provider_for=self._provider_for, now=time.time() + 200)
+        assert out and len(llm.calls) == 1
+        assert mw._load("wechat")["MemberA"]["history_id"] == "600"
 
 
 class TestMuteTools:
@@ -955,8 +1163,8 @@ class TestMuteTools:
         assert "mail_last_push" in ac._UNTRUSTED_TOOLS
 
     def test_last_push_lists_what_was_broadcast(self):
-        mw.record_last_push("MemberA", [{"id": "m2", "from": "Shop <d@shop.example>",
-                                         "subject": "50% off", "labels": ["INBOX"]}])
+        mw.record("MemberA", [{"id": "m2", "from": "Shop <d@shop.example>",
+                               "subject": "50% off", "labels": ["INBOX"], "pushed": True}])
         out = at.tool_mail_last_push({"member": "MemberA"})
         assert "d@shop.example" in out and "50% off" in out
 
@@ -984,6 +1192,42 @@ class TestMuteTools:
 
     def test_rules_tool_on_empty_list(self):
         assert "没有" in at.tool_mail_rules({"member": "MemberA"})
+
+    def test_always_tool_is_registered_member_locked(self):
+        names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
+        assert "mail_always" in names and "mail_always" in ac._MEMBER_LOCKED
+
+    def test_always_persists_always_rule(self):
+        out = at.tool_mail_always({"member": "MemberA", "domain": "school.example",
+                                   "note": "学校的信都要看"})
+        assert "school.example" in out
+        r = mr.load("MemberA")[0]
+        assert (r["kind"], r["value"], r["push"]) == ("domain", "school.example", "always")
+
+    def test_always_needs_one_criterion(self):
+        assert at.tool_mail_always({"member": "MemberA"}).startswith("[错误]")
+
+    def test_mute_after_always_switches_the_rule(self):
+        at.tool_mail_always({"member": "MemberA", "sender": "d@shop.example"})
+        at.tool_mail_mute({"member": "MemberA", "sender": "d@shop.example"})
+        rules = mr.load("MemberA")
+        assert len(rules) == 1 and rules[0]["push"] == "mute"
+
+    def test_rules_tool_removes_always_rule(self):
+        at.tool_mail_always({"member": "MemberA", "sender": "d@shop.example"})
+        out = at.tool_mail_rules({"member": "MemberA", "remove": 1})
+        assert "d@shop.example" in out and mr.load("MemberA") == []
+
+    def test_last_push_shows_dropped_mail_with_reason(self):
+        mw.record("MemberA", [
+            {"id": "m2", "from": "a@school.example", "subject": "Trip form", "labels": [],
+             "pushed": True, "why": "周五前签字"},
+            {"id": "m3", "from": "news@shop.example", "subject": "Sale", "labels": [],
+             "pushed": False, "why": "无需处理：广告"}])
+        out = at.tool_mail_last_push({"member": "MemberA"})
+        pushed, dropped = out.index("播报过"), out.index("没播报")
+        assert pushed < out.index("Trip form") < dropped < out.index("Sale")
+        assert "无需处理：广告" in out and "周五前签字" in out
 
 
 class TestAttachments:
