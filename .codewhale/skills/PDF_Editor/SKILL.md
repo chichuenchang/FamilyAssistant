@@ -7,7 +7,8 @@
 
 | 文件 | 职责 |
 |------|------|
-| `pdf_layout.py` | 版面：AcroForm 字段框 / pdfium 文字行框 / 扫描页 OCR → 视觉像素空间 |
+| `pdf_layout.py` | 版面：AcroForm 字段框 / pdfium 逐字框拼行 / 扫描页 OCR → 视觉像素空间 |
+| `pdf_boxes.py` | 「目标」：渲染页找闭合格子 + 方框字形 → 空格/勾选框/标签格 id，排版 LLM 只挑 id |
 | `pdf_plan.py` | 会话存储；instruction + 版面 → 完整 ops（`llm_client.chat`）；ops 校验 |
 | `pdf_apply.py` | ops → PDF：页序列重建 → pypdf 填字段 → reportlab 覆盖层 → 旋转 |
 | `cli.py` | `pdf-inspect` / `pdf-edit` / `pdf-list` / `pdf-pages`（只数页，不建会话） |
@@ -27,6 +28,11 @@
 - reportlab 空画布 `save()` 不出页（图片全坏时）→ `merge_page` 越界；`_overlay` 一律先 `showPage()`。
 - 自动字号 = 框高 × 0.9，夹在 9–12pt：pdfium 行框贴字形（12pt 字框高约 9pt），多行区框又很高，不夹就出蚂蚁字或巨字。
 - DeepSeek flash + `high`：合成两页表单实测一次排版 1.5–2.5s。
+- 平面表单只给文字坐标 → LLM 把值写在标签行上、勾错框。故有「目标」。
+- pdfium `get_rect` 遇逐字定位的 PDF 一字一框（实测一页 953 框、647 单字）。曾全书共用 800 行预算：第 1 页吃光，后页全瞎。现逐字拼行 + 每页 400。
+- 勾选框常是字形（`⬜` `❑`），不是线：从文字层取，不靠渲染。
+- DeepSeek `deepseek-flash` 收图（`input_modalities` 含 image），认得出表格结构，但给框偏 50–150px，0–1000 归一化更差；每页 ~65s、16k 推理 token。不用它定位。
+- 改版前的会话 `layout.json` 无 `targets` → 续改时自动重取。
 - LLM 忘/编会话 id 是常态：`pdf-edit` 兜底接续最近会话，提示走 stderr（stdout 首行是哨兵路径）。
 
 ## 会话

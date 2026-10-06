@@ -318,3 +318,20 @@ def test_pages_encrypted_is_an_error(cli, capsys, inbox):
         w.write(fh)
     code, out, _ = _run(cli, capsys, "pdf-pages", "--file", str(enc), "--member", "jim")
     assert code == 1 and "已加密" in out
+
+
+def test_stale_layout_cache_without_targets_is_rebuilt(cli, capsys, inbox, monkeypatch):
+    from pdf_samples import build_table_form_pdf
+    pdf = build_table_form_pdf(inbox / "table.pdf")
+    code, out, _ = _run(cli, capsys, "pdf-inspect", "--file", str(pdf), "--member", "jim")
+    plan = pdf_plan.load("jim", _sid(out))
+    old = pdf_plan.load_layout(plan)
+    del old["targets"]                       # 改版前建的会话
+    pdf_plan.save_layout(plan, old)
+    seen = []
+    _planner(monkeypatch, [{"op": "text", "target": "p0-1", "text": "Jichun"}], seen=seen)
+    code, out, _ = _run(cli, capsys, "pdf-edit", "--session", plan["id"],
+                        "--instruction", "GIVEN NAME 填 Jichun", "--member", "jim")
+    assert code == 0 and "目标 p0-1 空格" in seen[0]["layout"]
+    assert "targets" in pdf_plan.load_layout(plan)
+    assert "Jichun" in page_texts(Path(cli._paths.resolve_rel(out.splitlines()[0])))[0]
