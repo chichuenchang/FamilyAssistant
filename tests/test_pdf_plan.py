@@ -180,10 +180,11 @@ def test_validate_resolves_targets_to_coordinates():
                         "target": "p0-3"}
 
 
-def test_validate_rejects_unknown_target_and_text_in_checkbox():
+def test_validate_rejects_mismatched_targets():
     layout = {**LAYOUT, "targets": TARGETS}
     clean, warns = pdf_plan.validate_ops([
         {"op": "text", "target": "p9-9", "text": "x"},
         {"op": "text", "target": "p0-3", "text": "x"},
+        {"op": "check", "target": "p0-1"},          # 398×58 空格：画 X 会盖满整格
     ], layout, _ok)
-    assert clean == [] and "p9-9" in warns[0] and "勾选框" in warns[1]
+    assert clean == [] and "p9-9" in warns[0] and "勾选框" in warns[1] and "p0-1" in warns[2]

@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 import paths as _paths
+import pdf_boxes
 
 OVERLAY_OPS = ("text", "check", "erase", "image", "line")
 PAGE_OPS = ("page_delete", "page_rotate", "page_reorder", "page_insert")
@@ -231,6 +232,8 @@ def _target(op: dict, layout: dict) -> dict:
     if t is None:
         raise ValueError(f"版面里没有目标 {tid}")
     if op.get("op") == "check":
+        if t["kind"] != "check" and max(t["w"], t["h"]) > pdf_boxes.CHECK_MAX:
+            raise ValueError(f"{tid} 不是勾选框，画 X 会盖满整格")
         return {**op, "page": t["page"], "x": t["x"], "y": t["y"], "size": max(t["w"], t["h"])}
     if t["kind"] == "check":
         raise ValueError(f"{tid} 是勾选框，不能写字")
