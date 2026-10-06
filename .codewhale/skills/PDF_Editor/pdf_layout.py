@@ -16,7 +16,7 @@ from pathlib import Path
 
 SCALE = 2.0
 MAX_LAYOUT_PAGES = 12     # 取文字/OCR 的页数上限（页级操作不受限）
-MAX_PAGE_LINES = 400      # 每页进 LLM 的版面行上限（曾全书共用 800：第 1 页吃光，后页全瞎）
+MAX_PAGE_LINES = 400      # 每页进 LLM 的版面行上限（为何每页：SKILL.md 踩过的坑）
 MIN_TEXT_CHARS = 5        # 一页文字层少于此 → 当扫描页
 WORD_GAP = 0.25           # 字间距 > 行高 × 此值 → 补空格
 LINE_BREAK = 1.2          # 字间距 > 行高 × 此值 → 另起一行（跨栏/跨格）
@@ -160,7 +160,7 @@ def _chars(tp) -> list:
 
 def group_lines(chars) -> tuple:
     """逐字框 → (行 [[文字, l, b, r, t]], 勾选框字形 [(l, b, r, t)])，用户空间。
-    不用 pdfium get_rect：逐字定位的 PDF 每个字一个框（实测一页 953 框、647 个单字）。
+    不用 pdfium get_rect（为何见 SKILL.md 踩过的坑）。
     勾选框字形单独拿出、不进行：它右边的字才成独立一行，好当它的标签。"""
     lines, checks = [], []
     for ch, l, b, r, t in sorted(chars, key=lambda c: c[1]):

@@ -32,7 +32,6 @@
 - pdfium `get_rect` 遇逐字定位的 PDF 一字一框（实测一页 953 框、647 单字）。曾全书共用 800 行预算：第 1 页吃光，后页全瞎。现逐字拼行 + 每页 400。
 - 勾选框常是字形（`⬜` `❑`），不是线：从文字层取，不靠渲染。
 - DeepSeek `deepseek-flash` 收图（`input_modalities` 含 image），认得出表格结构，但给框偏 50–150px，0–1000 归一化更差；每页 ~65s、16k 推理 token。不用它定位。
-- 改版前的会话 `layout.json` 无 `targets` → 续改时自动重取。
 - LLM 忘/编会话 id 是常态：`pdf-edit` 兜底接续最近会话，提示走 stderr（stdout 首行是哨兵路径）。
 
 ## 会话
