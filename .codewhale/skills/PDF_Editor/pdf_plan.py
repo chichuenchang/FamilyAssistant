@@ -118,6 +118,7 @@ ops：
 规则：
 1. 只输出 JSON：{"ops":[…],"notes":["…"]}。不要解释，不要代码围栏。
 2. 已有 ops 是上一版结果：用户没提到的原样保留，提到的就改/删，再加新的。
+   已有 ops 可能放错了格：哪个值归哪栏以历史指令原话为准；历史与本次冲突时本次为准。
 3. 值只能来自用户指令，绝不自己编。指令要填某项却没给值 → 不生成该 op，在 notes 里说缺什么。
 4. 有表单字段能对上就用 field，不要用 text 去盖字段。
 5. 平面页填空/打勾一律先找「目标」行，用 target，不要自己算坐标。目标靠邻近文字对应：
@@ -156,14 +157,18 @@ def parse_reply(content: str) -> tuple:
     return ops, [str(n) for n in notes] if isinstance(notes, list) else []
 
 
-def compile_ops(layout_text: str, prior_ops: list, instruction: str, chat=None) -> tuple:
-    """→ (ops, notes)。JSON 不可解重试一次，再不行 PlanError。"""
+def compile_ops(layout_text: str, prior_ops: list, instruction: str, chat=None,
+                history=()) -> tuple:
+    """→ (ops, notes)。JSON 不可解重试一次，再不行 PlanError。
+    history = 本会话之前的指令：已有 ops 放错格时（实测"位置不对重放"把姓/名列对调），靠原话找回哪个值归哪栏。"""
     chat = chat or _chat
+    past = "\n".join(f"{i}. {h}" for i, h in enumerate(history, 1)) or "（无）"
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content":
             f"## 版面\n{layout_text}\n\n"
             f"## 已有 ops\n{json.dumps(prior_ops, ensure_ascii=False)}\n\n"
+            f"## 历史指令（旧→新）\n{past}\n\n"
             f"## 用户指令\n{instruction}"},
     ]
     for _ in range(2):

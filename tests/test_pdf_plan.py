@@ -79,6 +79,9 @@ def test_compile_carries_layout_prior_ops_and_instruction():
     assert seen["m"][0]["role"] == "system"
     user = seen["m"][1]["content"]
     assert "LAYOUT-TEXT" in user and "名字填张三" in user and '"erase"' in user
+    assert "## 历史指令（旧→新）\n（无）" in user
+    pdf_plan.compile_ops("L", [], "往右挪", chat=chat, history=["姓填李", "名填瑞"])
+    assert "## 历史指令（旧→新）\n1. 姓填李\n2. 名填瑞\n\n## 用户指令\n往右挪" in seen["m"][1]["content"]
 
 
 def test_compile_retries_once_then_raises():

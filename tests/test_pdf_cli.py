@@ -42,9 +42,10 @@ def inbox(data_root):
 
 
 def _planner(monkeypatch, ops, notes=(), seen=None):
-    def fake(layout_text, prior_ops, instruction, chat=None):
+    def fake(layout_text, prior_ops, instruction, chat=None, history=()):
         if seen is not None:
-            seen.append({"layout": layout_text, "prior": prior_ops, "instruction": instruction})
+            seen.append({"layout": layout_text, "prior": prior_ops, "instruction": instruction,
+                         "history": list(history)})
         return list(ops), list(notes)
     monkeypatch.setattr(pdf_plan, "compile_ops", fake)
 
@@ -333,5 +334,8 @@ def test_stale_layout_cache_without_targets_is_rebuilt(cli, capsys, inbox, monke
     code, out, _ = _run(cli, capsys, "pdf-edit", "--session", plan["id"],
                         "--instruction", "GIVEN NAME 填 Jichun", "--member", "jim")
     assert code == 0 and "目标 p0-1 空格" in seen[0]["layout"]
+    assert seen[0]["history"] == []
+    _run(cli, capsys, "pdf-edit", "--session", plan["id"], "--instruction", "往右挪", "--member", "jim")
+    assert seen[1]["history"] == ["GIVEN NAME 填 Jichun"]          # 续改带上原话
     assert "targets" in pdf_plan.load_layout(plan)
     assert "Jichun" in page_texts(Path(cli._paths.resolve_rel(out.splitlines()[0])))[0]

@@ -129,7 +129,7 @@ def cmd_edit(args):
     layout = _layout_of(plan, src)
     try:
         ops, notes = pdf_plan.compile_ops(pdf_layout.describe(layout), plan["ops"],
-                                          args.instruction)
+                                          args.instruction, history=plan["history"])
     except pdf_plan.PlanError as e:
         _die(str(e))
     planned = len(ops)
