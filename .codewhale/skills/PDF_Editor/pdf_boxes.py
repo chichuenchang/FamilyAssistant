@@ -14,7 +14,8 @@ from __future__ import annotations
 LIGHT = 200            # 灰度 > 此值算亮（浅灰底色的表头格仍算亮）
 MIN_SIDE = 10          # 像素；更小的是字内空洞
 CHECK_MAX = 48         # 两边都 ≤ 此值且近方形 = 勾选框
-EDGE_FILL = 0.9        # 内缩 2px 的四条边上属本连通域的比例下限 = 矩形
+EDGE_FILL = 0.9        # 内缩 EDGE_INSET 的四条边上属本连通域的比例下限 = 矩形
+EDGE_INSET = 2         # 像素；避开抗锯齿的边线
 MIN_FREE = (60, 20)    # 标签格剩余空白至少 w×h 才可写
 RIGHT_PREF = 150       # 标签右侧空白够这么宽就写右侧（下方常只剩一条缝）
 NEAR = {"above": 160, "below": 60, "left": 420, "right": 420}   # 邻近标签最大距离
@@ -76,7 +77,7 @@ def components(mask) -> tuple:
 def _is_rect(labels, k, x0, y0, x1, y1) -> bool:
     if x1 - x0 < MIN_SIDE or y1 - y0 < MIN_SIDE:
         return False
-    i = 2
+    i = EDGE_INSET
     edges = (labels[y0 + i, x0 + i:x1 - i], labels[y1 - 1 - i, x0 + i:x1 - i],
              labels[y0 + i:y1 - i, x0 + i], labels[y0 + i:y1 - i, x1 - 1 - i])
     return all(e.size and (e == k).mean() >= EDGE_FILL for e in edges)
@@ -180,7 +181,7 @@ def targets(page: int, gray, lines: list, checks: list = ()) -> list:
     for r in sorted(boxes, key=lambda r: (r["y"], r["x"])):
         r = {k: r[k] for k in ("x", "y", "w", "h")}
         texts = [] if r["w"] <= CHECK_MAX else [l for l in lines if _inside(l, r)]
-        t = {"id": f"p{page}-{len(out) + 1}", "page": page, **r}
+        t = {"page": page, **r}
         if texts:
             free = _free(r, texts)
             if free is None:
@@ -192,9 +193,7 @@ def targets(page: int, gray, lines: list, checks: list = ()) -> list:
         out.append(t)
     blanks = [t for t in out if t["kind"] == "blank"]
     out = [t for t in out if t["kind"] != "cell" or not any(_stacked(t, b) for b in blanks)]
-    for i, t in enumerate(out, 1):           # 删表头后重新连号
-        t["id"] = f"p{page}-{i}"
-    return out
+    return [{"id": f"p{page}-{i}", **t} for i, t in enumerate(out, 1)]   # 删表头后才编号
 
 
 def available() -> bool:
