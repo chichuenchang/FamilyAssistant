@@ -101,7 +101,7 @@ def _resolve_plan(args) -> tuple[dict, str]:
 
 def _layout_of(plan: dict, src: Path) -> dict:
     layout = pdf_plan.load_layout(plan)
-    if layout is None or "targets" not in layout:      # 缓存丢了 / 旧版缓存无目标 → 重取
+    if layout is None or layout.get("version") != pdf_layout.VERSION:    # 缓存丢了 / 旧版 → 重取
         layout = _build_layout(src)
         pdf_plan.save_layout(plan, layout)
     return layout

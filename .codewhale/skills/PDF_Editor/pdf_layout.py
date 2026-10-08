@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 SCALE = 2.0
+VERSION = 2                # 版面缓存格式；改了 build 输出就 +1，旧会话缓存自动重取
 MAX_LAYOUT_PAGES = 12     # 取文字/OCR 的页数上限（页级操作不受限）
 MAX_LINES = 1600          # 全书进 LLM 的版面行上限，各页均分（为何均分：SKILL.md 踩过的坑）
 MAX_PAGE_LINES = 400      # 均分后单页仍不超此数
@@ -273,7 +274,7 @@ def build(pdf_path) -> dict:
         else:
             notes.append("缺 numpy：找不到表格空格/勾选框，只能按文字坐标估位置。pip install numpy")
     kind = "acroform" if fields else ("scanned" if textless else "digital")
-    return {"kind": kind, "pages": geometry, "fields": fields,
+    return {"version": VERSION, "kind": kind, "pages": geometry, "fields": fields,
             "lines": lines, "targets": targets, "notes": notes}
 
 

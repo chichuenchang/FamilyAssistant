@@ -327,7 +327,7 @@ def test_stale_layout_cache_without_targets_is_rebuilt(cli, capsys, inbox, monke
     code, out, _ = _run(cli, capsys, "pdf-inspect", "--file", str(pdf), "--member", "jim")
     plan = pdf_plan.load("jim", _sid(out))
     old = pdf_plan.load_layout(plan)
-    del old["targets"]                       # 改版前建的会话
+    del old["version"], old["targets"]       # 改版前建的会话
     pdf_plan.save_layout(plan, old)
     seen = []
     _planner(monkeypatch, [{"op": "text", "target": "p0-1", "text": "Jichun"}], seen=seen)
