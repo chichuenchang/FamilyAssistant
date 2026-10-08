@@ -18,23 +18,36 @@ import pdf_layout
 MIN_FONT_PT = 6.0
 DEFAULT_FONT_PT = 10.0
 AUTO_FONT_PT = (9.0, 12.0)   # 自动字号夹在此区间：行框是贴字形的（偏矮），多行区是高框（偏高）
-FONT_NAME = "PDFEditFont"
+SCRIPT_FONT_PT = (12.0, 18.0)   # 手写体 x 高小，12pt 同字号看着小一号
 ERASE_WARNING = "白底覆盖不是脱敏：原内容仍留在文件里，可被复制或恢复"
+NO_SCRIPT_WARNING = "本机无手写体：签名用了普通字体"
 
-# (路径, 能否显示中文)
-_FONT_CANDIDATES = (
-    (r"C:\Windows\Fonts\msyh.ttc", True),
-    (r"C:\Windows\Fonts\simhei.ttf", True),
-    (r"C:\Windows\Fonts\simsun.ttc", True),
-    ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", True),
-    ("/System/Library/Fonts/STHeiti Medium.ttc", True),
-    ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", False),
-)
+# 字体风格 → (路径, 能否显示中文) 候选链。script = 代签名手写体；中文名走 script_cjk（行楷/楷体）
+_FONT_CANDIDATES = {
+    None: (
+        (r"C:\Windows\Fonts\msyh.ttc", True),
+        (r"C:\Windows\Fonts\simhei.ttf", True),
+        (r"C:\Windows\Fonts\simsun.ttc", True),
+        ("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc", True),
+        ("/System/Library/Fonts/STHeiti Medium.ttc", True),
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", False),
+    ),
+    "script": (
+        (r"C:\Windows\Fonts\BRUSHSCI.TTF", False),     # 渲染比过 8 款，最像签名
+        (r"C:\Windows\Fonts\LHANDW.TTF", False),
+        (r"C:\Windows\Fonts\segoesc.ttf", False),
+    ),
+    "script_cjk": (
+        (r"C:\Windows\Fonts\STXINGKA.TTF", True),
+        (r"C:\Windows\Fonts\simkai.ttf", True),
+        (r"C:\Windows\Fonts\STKAITI.TTF", True),
+    ),
+}
 
 _CHECK_ON = {"on", "yes", "true", "1", "是", "勾", "勾选", "选", "√", "✓", "对"}
 _CHECK_OFF = {"off", "no", "false", "0", "否", "不勾", "不选", "不", "×", ""}
 
-_font_cache = None
+_font_cache: dict = {}
 
 
 def has_reportlab() -> bool:
@@ -45,24 +58,25 @@ def has_reportlab() -> bool:
         return False
 
 
-def _font() -> tuple:
-    """(字体名, 能否显示中文)。候选全缺 → Helvetica（仅 latin-1）。"""
-    global _font_cache
-    if _font_cache is None:
+def _font(style: str | None = None) -> tuple:
+    """(字体名, 能否显示中文)。普通候选全缺 → Helvetica（仅 latin-1）；手写体全缺 → 普通字体。"""
+    if style not in _font_cache:
         from reportlab.pdfbase import pdfmetrics
         from reportlab.pdfbase.ttfonts import TTFont
-        _font_cache = ("Helvetica", False)
-        for cand, cjk in _FONT_CANDIDATES:
+        found = None
+        for cand, cjk in _FONT_CANDIDATES[style]:
             if not Path(cand).exists():
                 continue
             try:
+                name = f"PDFEdit_{style or 'default'}"
                 kw = {"subfontIndex": 0} if cand.lower().endswith(".ttc") else {}
-                pdfmetrics.registerFont(TTFont(FONT_NAME, cand, **kw))
-                _font_cache = (FONT_NAME, cjk)
+                pdfmetrics.registerFont(TTFont(name, cand, **kw))
+                found = (name, cjk)
                 break
             except Exception:
                 continue
-    return _font_cache
+        _font_cache[style] = found or (("Helvetica", False) if style is None else _font())
+    return _font_cache[style]
 
 
 # ── 页序列 ───────────────────────────────────────────────────
@@ -174,7 +188,12 @@ def _fit(text: str, font: str, size: float, max_w: float) -> tuple:
 
 
 def _draw_text(c, op, left, top, s, resolve_src, warnings):
-    font, cjk = _font()
+    style = op.get("font")
+    if style == "script" and any(ord(ch) > 255 for ch in op["text"]):
+        style = "script_cjk"
+    font, cjk = _font(style)
+    if style and font == _font()[0]:
+        warnings.append(NO_SCRIPT_WARNING)
     lines = op["text"].split("\n")
     if not cjk:
         if any(ord(ch) > 255 for ch in op["text"]):
@@ -186,7 +205,8 @@ def _draw_text(c, op, left, top, s, resolve_src, warnings):
     if op.get("size"):
         size = float(op["size"])
     elif box_h:
-        size = min(max(box_h * 0.9 / len(lines), AUTO_FONT_PT[0]), AUTO_FONT_PT[1])
+        lo, hi = SCRIPT_FONT_PT if style else AUTO_FONT_PT
+        size = min(max(box_h * 0.9 / len(lines), lo), hi)
     else:
         size = DEFAULT_FONT_PT
     if box_w:

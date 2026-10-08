@@ -179,3 +179,18 @@ def test_overlay_on_rotated_page_lands_visually(tmp_path, deg):
     ll, lb, lr, lt = _rect_of(out, "Name0")
     nl, nb, nr, nt = _rect_of(out, "BELOW")
     assert abs(ll - nl) <= 3 and nt < lb                     # 左对齐、在标签正下方、正着读
+
+
+def test_script_font_signs_in_cursive(tmp_path):
+    from reportlab.pdfbase import pdfmetrics
+    font, _ = pdf_apply._font("script")
+    if font == pdf_apply._font()[0]:
+        pytest.skip("本机无手写体")
+    src, out = build_digital_pdf(tmp_path / "d.pdf"), tmp_path / "o.pdf"
+    warns = _apply(src, [{"op": "text", "page": 0, "x": 320.0, "y": 164.0, "w": 400.0,
+                          "h": 40.0, "text": "Jim Zheng", "size": None, "font": "script"}], out)
+    assert warns == []
+    face = pdfmetrics.getFont(font).face.name.decode()
+    fonts = PdfReader(str(out)).pages[0]["/Resources"]["/Font"]
+    assert any(str(f.get_object()["/BaseFont"]).endswith(face) for f in fonts.values())
+    assert "Jim Zheng" in page_texts(out)[0]

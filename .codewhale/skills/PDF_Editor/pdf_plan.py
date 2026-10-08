@@ -106,6 +106,7 @@ ops：
 {"op":"text","target":"p0-3","text":"…"}   写进版面「目标」（空格/标签格），坐标由代码算
 {"op":"check","target":"p0-7"}   在「目标」勾选框上画 X
 {"op":"text","page":0,"x":0,"y":0,"w":0,"h":0,"text":"…","size":null}   没有合适目标时：x,y=文字框左上角；w,h=可用空白（可省）；size=字号 pt（可省，自动）
+text 加 "font":"script" = 手写体，指令要手写体签名时用
 {"op":"check","page":0,"x":0,"y":0,"size":18}   没有合适目标时：在方框处画 X；x,y=方框左上角，size=方框边长
 {"op":"erase","page":0,"x":0,"y":0,"w":0,"h":0}   白底盖住原内容
 {"op":"image","page":0,"x":0,"y":0,"w":0,"h":null,"src":"<图片路径>"}   贴图/签名；h 省略则按比例
@@ -273,8 +274,9 @@ def _clean(op: dict, layout: dict, resolve_src) -> dict:
             text = str(op.get("text") or "")
             if not text.strip():
                 raise ValueError("text 为空")
-            return {**base, "text": text, "w": _opt(op, "w"), "h": _opt(op, "h"),
-                    "size": _opt(op, "size")}
+            out = {**base, "text": text, "w": _opt(op, "w"), "h": _opt(op, "h"),
+                   "size": _opt(op, "size")}
+            return {**out, "font": "script"} if op.get("font") == "script" else out
         if kind == "check":
             return {**base, "size": _num(op, "size", 18.0, positive=True)}
         if kind == "erase":

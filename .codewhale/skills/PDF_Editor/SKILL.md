@@ -20,6 +20,7 @@
 - 旋转页叠字前必须 `page.transfer_rotation_to_content()`，否则字是躺着的。它不搬批注 → 旋转页 + 表单会警告。
 - `writer.append(reader, pages=[2,0])` 保序且保留 AcroForm；逐页 `add_page` 会丢表单。
 - reportlab 白矩形盖不掉文字层：`erase` 后原文仍可复制，工具每次都警告。
+- 代签名 `font:"script"`：拉丁 Brush Script（8 款 Windows 手写体渲染比过，最像签名），中文走华文行楷/楷体。只查 Windows 路径，别处退回普通字体 + 警告。旧规则「签名必须用户发图」让 agent 一直推说签不了（2026-10-08 日志）。
 - reportlab 只吃 TrueType 轮廓：Noto CJK（CFF）注册失败，候选链里没放。`.ttc` 要 `subfontIndex=0`。
 - 排版是纯文本调用：`llm_client.chat` 在 tools 为空时不带 `tools` 键（空数组 API 是否接受未验证，不赌）。
 - 排版用 `PLAN_EFFORT = "high"` 而非 max：`llm_client.chat` 单次超时 120s，至多两次，CLI 超时 300s。

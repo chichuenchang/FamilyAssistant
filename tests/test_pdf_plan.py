@@ -121,6 +121,14 @@ def test_validate_passes_known_ops_and_normalizes():
     assert clean[7]["deg"] == 270 and clean[9]["after"] == 2
 
 
+def test_validate_keeps_script_font_only():
+    base = {"op": "text", "page": 0, "x": 10, "y": 20, "text": "Jim Zheng"}
+    clean, warns = pdf_plan.validate_ops([{**base, "font": "script"}, {**base, "font": "comic"}],
+                                         LAYOUT, _ok)
+    assert warns == []
+    assert clean[0]["font"] == "script" and "font" not in clean[1]
+
+
 def test_validate_skips_bad_ops_with_warnings():
     ops = [
         {"op": "highlight", "page": 0},

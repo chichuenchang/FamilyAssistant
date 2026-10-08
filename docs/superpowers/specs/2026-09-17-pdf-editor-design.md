@@ -63,6 +63,7 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 {"op":"text","page":0,"x":210,"y":340,"text":"张三","size":null}
 {"op":"check","page":0,"x":88,"y":410,"size":18}
 {"op":"text","target":"p0-3","text":"张三"}
+{"op":"text","target":"p1-4","text":"张三","font":"script"}
 {"op":"check","target":"p0-7"}
 {"op":"erase","page":0,"x":200,"y":330,"w":180,"h":24}
 {"op":"image","page":5,"x":120,"y":700,"w":160,"h":50,"src":"爸爸/images/sig.png"}
@@ -140,7 +141,7 @@ JSON 不可解 → 重试一次 → `[错误] 排版模型没给出可用编辑�
 取代 Form_Filler 的逐字段问答条目：
 
 > 用户发来 PDF 要填写/修改 → 不知道表里要什么就先 `inspect_pdf` → **一条消息里把缺的值一起问**
-> （已知的不要问，含糊的才问，绝不编造值，签名一律要用户给图）→ 把全部信息写进一句 instruction
+> （已知的不要问，含糊的才问，绝不编造值；签名有图贴图，没图用本人姓名手写体签）→ 把全部信息写进一句 instruction
 > 调 `edit_pdf`，PDF 自动发回。用户说改哪儿 → 带同一 `session` 再调 `edit_pdf`，只说更正。
 > 结果里的 `警告:` 必须转述给用户。
 
