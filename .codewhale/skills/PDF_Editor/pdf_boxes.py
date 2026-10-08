@@ -118,18 +118,21 @@ def _free(r, texts) -> dict | None:
     return max(ok, key=lambda c: c["w"] * c["h"]) if ok else None
 
 
+def _overlap(a, b, axis="x") -> float:
+    """a、b 在 x 或 y 轴上的重叠长度；≤ 0 = 不重叠。"""
+    size = "w" if axis == "x" else "h"
+    return min(a[axis] + a[size], b[axis] + b[size]) - max(a[axis], b[axis])
+
+
 def _stacked(a, b) -> bool:
     """上下贴邻（≤ 6px）且横向重叠过半：表头/表注与它的空格。"""
-    overlap = min(a["x"] + a["w"], b["x"] + b["w"]) - max(a["x"], b["x"])
     gap = max(b["y"] - (a["y"] + a["h"]), a["y"] - (b["y"] + b["h"]))
-    return gap <= 6 and overlap >= 0.5 * min(a["w"], b["w"])
+    return gap <= 6 and _overlap(a, b) >= 0.5 * min(a["w"], b["w"])
 
 
 def _above(r, lines) -> str:
     """正上方的连续文字块（多行表头拼成一句）：最近一行起往上，行距 ≤ BLOCK_GAP 才连。"""
-    col = sorted((l for l in lines
-                  if l["x"] < r["x"] + r["w"] and r["x"] < l["x"] + l["w"]
-                  and l["y"] + l["h"] <= r["y"] + 2),
+    col = sorted((l for l in lines if _overlap(l, r) > 0 and l["y"] + l["h"] <= r["y"] + 2),
                  key=lambda l: -(l["y"] + l["h"]))
     if not col or r["y"] - (col[0]["y"] + col[0]["h"]) > NEAR["above"]:
         return ""
@@ -150,8 +153,7 @@ def _near(r, lines) -> dict:
             best[side] = (dist, text[:LABEL_MAX])
 
     for l in lines:
-        h_overlap = l["x"] < r["x"] + r["w"] and r["x"] < l["x"] + l["w"]
-        v_overlap = l["y"] < r["y"] + r["h"] and r["y"] < l["y"] + l["h"]
+        h_overlap, v_overlap = _overlap(l, r) > 0, _overlap(l, r, "y") > 0
         if h_overlap and l["y"] >= r["y"] + r["h"] - 2:
             keep("below", l["y"] - (r["y"] + r["h"]), l["text"])
         if v_overlap and l["x"] >= r["x"] + r["w"] - 2:
