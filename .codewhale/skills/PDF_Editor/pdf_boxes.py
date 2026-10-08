@@ -65,11 +65,8 @@ def components(mask) -> tuple:
         root = find(i)
         k = ids.setdefault(root, len(ids) + 1)
         labels[y, a:b] = k
-        s = stats.get(k)
-        if s is None:
-            stats[k] = [a, y, b, y + 1]
-        else:
-            s[0], s[1], s[2], s[3] = min(s[0], a), min(s[1], y), max(s[2], b), max(s[3], y + 1)
+        s = stats.setdefault(k, [a, y, b, y + 1])      # runs 按 y 递增：y0 定于首段，y1 = 当前行
+        s[0], s[2], s[3] = min(s[0], a), max(s[2], b), y + 1
     return labels, stats
 
 
