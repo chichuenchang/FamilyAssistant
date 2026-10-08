@@ -102,6 +102,7 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 ├── agent_tools.py   manifest
 ├── cli.py           pdf-inspect / pdf-edit / pdf-list
 ├── pdf_layout.py    档位判定 + 字段 rect + 文字层框 + 渲染/OCR
+├── pdf_boxes.py     「目标」：渲染页找格子 + 方框字形 → id
 ├── pdf_plan.py      会话与 plan CRUD + instruction→ops（llm_client.chat）
 └── pdf_apply.py     应用 ops：pypdf 填字段 + reportlab 覆盖层 + 页级操作
 ```
@@ -119,8 +120,8 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 
 ## instruction → ops
 
-`pdf_plan.py` 给 `llm_client.chat` 的内容：kind、各页尺寸、带坐标的版面行/字段清单、
-旧 ops（若续用会话）、用户指令。要求只回 JSON `{"ops":[…],"notes":[…]}`（裸数组也接受）。
+`pdf_plan.py` 给 `llm_client.chat` 的内容：kind、各页尺寸、带坐标的版面行/字段清单、「目标」行、
+旧 ops、历史指令（若续用会话）、用户指令。要求只回 JSON `{"ops":[…],"notes":[…]}`（裸数组也接受）。
 JSON 不可解 → 重试一次 → `[错误] 排版模型没给出可用编辑计划`。
 
 ## 依赖缺席

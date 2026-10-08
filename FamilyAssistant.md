@@ -85,7 +85,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `config.json` — 全局配置（分类/币种/路径/命令白名单的单一事实来源）
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
 - `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒；documents.db 独立家庭文档库，含 documents + profiles 表）
-- `.codewhale/skills/PDF_Editor/` — PDF 编辑 skill（cli.py 入口 + pdf_layout.py 版面 + pdf_plan.py 会话与排版 + pdf_apply.py 应用；按成员私有）
+- `.codewhale/skills/PDF_Editor/` — PDF 编辑 skill（cli.py 入口 + pdf_layout.py 版面 + pdf_boxes.py 表格空格/勾选框 + pdf_plan.py 会话与排版 + pdf_apply.py 应用；按成员私有）
 - `.codewhale/skills/Note_Keeper/` — 个人备忘 skill（cli.py 入口 + note_db.py 数据层；按成员私有）
 - `.codewhale/skills/Remote_Backup/` — 用户数据云盘镜像 skill（backup_provider.py 当前为 Google Drive 实现；按其文件头契约重写即可换成其他云盘）
 - `.codewhale/skills/Calendar_Keeper/` — 按成员私有的日程/待办 + 远程日历同步 skill（活动/待办分库；按成员/域选 provider，providers.py 注册表，calendar_provider.py 为 Google Calendar + Tasks 实现；image_gc.py 清理陈旧来图）
