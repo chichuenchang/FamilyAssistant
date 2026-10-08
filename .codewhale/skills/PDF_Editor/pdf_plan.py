@@ -161,7 +161,7 @@ def parse_reply(content: str) -> tuple:
 def compile_ops(layout_text: str, prior_ops: list, instruction: str, chat=None,
                 history=()) -> tuple:
     """→ (ops, notes)。JSON 不可解重试一次，再不行 PlanError。
-    history = 本会话之前的指令：已有 ops 放错格时（实测"位置不对重放"把姓/名列对调），靠原话找回哪个值归哪栏。"""
+    history = 本会话之前的指令（为何要：SKILL.md 踩过的坑）。"""
     chat = chat or _chat
     past = "\n".join(f"{i}. {h}" for i, h in enumerate(history, 1)) or "（无）"
     messages = [

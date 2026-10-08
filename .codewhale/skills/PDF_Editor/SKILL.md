@@ -24,6 +24,7 @@
 - 排版是纯文本调用：`llm_client.chat` 在 tools 为空时不带 `tools` 键（空数组 API 是否接受未验证，不赌）。
 - 排版用 `PLAN_EFFORT = "high"` 而非 max：`llm_client.chat` 单次超时 120s，至多两次，CLI 超时 300s。
 - 续改永远从原始 PDF 重渲染，LLM 回完整 ops，不回 diff。
+- 续改只给旧 ops 不够：实测"位置不对重放"把姓/名列对调，旧 ops 已错就无从纠正。排版 prompt 带历史指令原话，靠它找回哪个值归哪栏。
 - 实测排版模型会把字段**标签**当 `name` 填：版面里写成 `name="…"`，`validate_ops` 对唯一标签做兜底映射。
 - reportlab 空画布 `save()` 不出页（图片全坏时）→ `merge_page` 越界；`_overlay` 一律先 `showPage()`。
 - 自动字号 = 框高 × 0.9，夹在 9–12pt：pdfium 行框贴字形（12pt 字框高约 9pt），多行区框又很高，不夹就出蚂蚁字或巨字。
