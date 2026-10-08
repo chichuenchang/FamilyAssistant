@@ -55,6 +55,13 @@ def test_table_form_targets(tmp_path):
     assert [t["id"] for t in ts] == [f"p0-{i}" for i in range(1, len(ts) + 1)]
 
 
+def test_missing_numpy_is_a_note(tmp_path, monkeypatch):
+    monkeypatch.setattr(pdf_boxes, "available", lambda: False)
+    layout = pdf_layout.build(build_table_form_pdf(tmp_path / "t.pdf"))
+    assert layout["targets"] == {} and "GIVEN NAME" in [l["text"] for l in layout["lines"]["0"]]
+    assert any("pip install numpy" in n for n in layout["notes"])
+
+
 def test_describe_lists_targets_only_with_coords(tmp_path):
     layout = pdf_layout.build(build_table_form_pdf(tmp_path / "t.pdf"))
     full = pdf_layout.describe(layout)
