@@ -62,6 +62,8 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 {"op":"field","name":"Pt1Line1_FamilyName","value":"张"}
 {"op":"text","page":0,"x":210,"y":340,"text":"张三","size":null}
 {"op":"check","page":0,"x":88,"y":410,"size":18}
+{"op":"text","target":"p0-3","text":"张三"}
+{"op":"check","target":"p0-7"}
 {"op":"erase","page":0,"x":200,"y":330,"w":180,"h":24}
 {"op":"image","page":5,"x":120,"y":700,"w":160,"h":50,"src":"爸爸/images/sig.png"}
 {"op":"line","page":0,"x1":100,"y1":200,"x2":400,"y2":200,"width":2}
@@ -73,6 +75,7 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 
 - `size` 省略：有框取框高 0.9 夹在 9–12pt，无框取 10pt。放不下逐级缩到 6pt，仍放不下截断加 `…` 并警告。
 - `check`：画 `X`（部分字体缺 ✓ 字形）。
+- `target`：版面「目标」id（`pdf_boxes.py`），校验时换成坐标、覆盖自带 x/y。平面页优先用。
 - `erase`：不透明白矩形，**不是脱敏 —— 原内容仍在其下**。用到就出警告，Agent 必须转述。
 - 未知 `op`：跳过 + `警告: 不支持的操作 <op>`，不崩。新增动词 = 一个 apply 函数 + 一行 schema。
 
@@ -99,6 +102,7 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 ├── agent_tools.py   manifest
 ├── cli.py           pdf-inspect / pdf-edit / pdf-list
 ├── pdf_layout.py    档位判定 + 字段 rect + 文字层框 + 渲染/OCR
+├── pdf_boxes.py     「目标」：渲染页找格子 + 方框字形 → id
 ├── pdf_plan.py      会话与 plan CRUD + instruction→ops（llm_client.chat）
 └── pdf_apply.py     应用 ops：pypdf 填字段 + reportlab 覆盖层 + 页级操作
 ```
@@ -116,8 +120,8 @@ reportlab 画透明覆盖页 → pypdf `merge_page` 合到**原始页**上。原
 
 ## instruction → ops
 
-`pdf_plan.py` 给 `llm_client.chat` 的内容：kind、各页尺寸、带坐标的版面行/字段清单、
-旧 ops（若续用会话）、用户指令。要求只回 JSON `{"ops":[…],"notes":[…]}`（裸数组也接受）。
+`pdf_plan.py` 给 `llm_client.chat` 的内容：kind、各页尺寸、带坐标的版面行/字段清单、「目标」行、
+旧 ops、历史指令（若续用会话）、用户指令。要求只回 JSON `{"ops":[…],"notes":[…]}`（裸数组也接受）。
 JSON 不可解 → 重试一次 → `[错误] 排版模型没给出可用编辑计划`。
 
 ## 依赖缺席
@@ -127,6 +131,7 @@ JSON 不可解 → 重试一次 → `[错误] 排版模型没给出可用编辑�
 | pypdf | `[错误] pip install pypdf`（全部功能都要） |
 | reportlab | 纯 field 编辑仍可用；text/check/erase/image → `[错误] pip install reportlab` |
 | pypdfium2 | acroform 仍可用；digital/scanned → 安装提示 |
+| numpy | 无「目标」，排版退回按文字坐标估位置 + note |
 | 腾讯 OCR | 仅 scanned 档 → 提示配 `TENCENT_SECRET_ID/KEY` |
 | 加密 PDF | `[错误] PDF 已加密，无法读取` |
 

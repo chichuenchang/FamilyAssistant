@@ -79,6 +79,9 @@ def test_compile_carries_layout_prior_ops_and_instruction():
     assert seen["m"][0]["role"] == "system"
     user = seen["m"][1]["content"]
     assert "LAYOUT-TEXT" in user and "名字填张三" in user and '"erase"' in user
+    assert "## 历史指令（旧→新）\n（无）" in user
+    pdf_plan.compile_ops("L", [], "往右挪", chat=chat, history=["姓填李", "名填瑞"])
+    assert "## 历史指令（旧→新）\n1. 姓填李\n2. 名填瑞\n\n## 用户指令\n往右挪" in seen["m"][1]["content"]
 
 
 def test_compile_retries_once_then_raises():
@@ -153,3 +156,35 @@ def test_validate_gates_src_paths():
            {"op": "page_insert", "src": "../../etc/x.pdf", "after": 0}]
     clean, warns = pdf_plan.validate_ops(ops, LAYOUT, lambda p: None)
     assert clean == [] and all("路径不允许或文件不存在" in w for w in warns)
+
+
+TARGETS = {"0": [
+    {"id": "p0-1", "page": 0, "kind": "blank", "x": 100, "y": 264, "w": 398, "h": 58, "near": {}},
+    {"id": "p0-2", "page": 0, "kind": "cell", "x": 100, "y": 344, "w": 798, "h": 58,
+     "label": "Phone #", "free": {"x": 220, "y": 344, "w": 674, "h": 58}},
+    {"id": "p0-3", "page": 0, "kind": "check", "x": 120, "y": 444, "w": 20, "h": 21, "near": {}}]}
+
+
+def test_validate_resolves_targets_to_coordinates():
+    layout = {**LAYOUT, "targets": TARGETS}
+    clean, warns = pdf_plan.validate_ops([
+        {"op": "text", "target": "p0-1", "text": "Jichun", "x": 1, "y": 1},   # target 优先于自带坐标
+        {"op": "text", "target": "p0-2", "text": "825"},
+        {"op": "check", "target": "p0-3"},
+    ], layout, _ok)
+    assert warns == []
+    assert clean[0] == {"op": "text", "page": 0, "x": 106.0, "y": 264.0, "text": "Jichun",
+                        "w": 386.0, "h": 58.0, "size": None, "target": "p0-1"}
+    assert (clean[1]["x"], clean[1]["w"]) == (220.0, 674.0)
+    assert clean[2] == {"op": "check", "page": 0, "x": 120.0, "y": 444.0, "size": 21.0,
+                        "target": "p0-3"}
+
+
+def test_validate_rejects_mismatched_targets():
+    layout = {**LAYOUT, "targets": TARGETS}
+    clean, warns = pdf_plan.validate_ops([
+        {"op": "text", "target": "p9-9", "text": "x"},
+        {"op": "text", "target": "p0-3", "text": "x"},
+        {"op": "check", "target": "p0-1"},          # 398×58 空格：画 X 会盖满整格
+    ], layout, _ok)
+    assert clean == [] and "p9-9" in warns[0] and "勾选框" in warns[1] and "p0-1" in warns[2]

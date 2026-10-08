@@ -15,9 +15,14 @@ import tempfile
 from pathlib import Path
 
 SCALE = 2.0
+VERSION = 2                # 版面缓存格式；改了 build 输出就 +1，旧会话缓存自动重取
 MAX_LAYOUT_PAGES = 12     # 取文字/OCR 的页数上限（页级操作不受限）
-MAX_LINES = 800           # 进 LLM 的版面行上限
+MAX_LINES = 1600          # 全书进 LLM 的版面行上限，各页均分（为何均分：SKILL.md 踩过的坑）
+MAX_PAGE_LINES = 400      # 均分后单页仍不超此数
 MIN_TEXT_CHARS = 5        # 一页文字层少于此 → 当扫描页
+WORD_GAP = 0.25           # 字间距 > 行高 × 此值 → 补空格
+LINE_BREAK = 1.2          # 字间距 > 行高 × 此值 → 另起一行（跨栏/跨格）
+CHECK_GLYPHS = "☐□❑❏⬜▢◻"
 ENCRYPTED = "PDF 已加密，无法读取"
 
 
@@ -32,6 +37,14 @@ def has_pypdf() -> bool:
 def has_pdfium() -> bool:
     try:
         import pypdfium2  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def has_numpy() -> bool:
+    try:
+        import numpy  # noqa: F401
         return True
     except ImportError:
         return False
@@ -142,28 +155,67 @@ def acro_fields(reader, geometry) -> list:
     return list(fields.values())
 
 
+def _chars(tp) -> list:
+    """[(字, l, b, r, t)]，用户空间；空白与零面积字形跳过。"""
+    out = []
+    for i in range(tp.count_chars()):
+        ch = tp.get_text_range(i, 1)
+        if not ch or ch.isspace():
+            continue
+        l, b, r, t = tp.get_charbox(i)
+        if r > l and t > b:
+            out.append((ch, l, b, r, t))
+    return out
+
+
+def group_lines(chars) -> tuple:
+    """逐字框 → (行 [[文字, l, b, r, t]], 勾选框字形 [(l, b, r, t)])，用户空间。
+    不用 pdfium get_rect（为何见 SKILL.md 踩过的坑）。
+    勾选框字形单独拿出、不进行：它右边的字才成独立一行，好当它的标签。"""
+    lines, checks = [], []
+    for ch, l, b, r, t in sorted(chars, key=lambda c: c[1]):
+        if ch in CHECK_GLYPHS:
+            checks.append((l, b, r, t))
+            continue
+        best, best_gap = None, None
+        for g in lines:
+            h = max(g[4] - g[2], t - b)
+            overlap = min(g[4], t) - max(g[2], b)
+            gap = l - g[3]
+            if overlap >= 0.5 * min(g[4] - g[2], t - b) and -0.3 * h <= gap <= LINE_BREAK * h:
+                if best is None or gap < best_gap:
+                    best, best_gap = g, gap
+        if best is None:
+            lines.append([ch, l, b, r, t])
+            continue
+        if best_gap > WORD_GAP * max(best[4] - best[2], t - b):
+            best[0] += " "
+        best[0] += ch
+        best[1:] = [min(best[1], l), min(best[2], b), max(best[3], r), max(best[4], t)]
+    return lines, checks
+
+
 def _pdfium_lines(pdf_path, geometry) -> tuple:
-    """文字层行框 → ({页: 行}, 没文字的页号)。"""
+    """文字层 → ({页: 行}, 没文字的页号, {页: 勾选框字形框})，均视觉像素。"""
     import pypdfium2 as pdfium
-    lines, textless = {}, []
+    lines, textless, checks = {}, [], {}
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         for g in geometry[:MAX_LAYOUT_PAGES]:
-            tp = pdf[g["page"]].get_textpage()
-            out = []
-            for i in range(tp.count_rects()):
-                rect = tp.get_rect(i)
-                text = (tp.get_text_bounded(*rect) or "").strip()
-                if text:
-                    out.append({"text": text, **to_visual(rect, g["box"], g["rotate"])})
-            if sum(len(l["text"]) for l in out) < MIN_TEXT_CHARS:
+            chars = _chars(pdf[g["page"]].get_textpage())
+            if len(chars) < MIN_TEXT_CHARS:
                 textless.append(g["page"])
-            else:
-                out.sort(key=lambda l: (l["y"], l["x"]))
-                lines[str(g["page"])] = out
+                continue
+            grouped, boxes = group_lines(chars)
+            out = [{"text": text, **to_visual(rect, g["box"], g["rotate"])}
+                   for text, *rect in grouped]
+            out.sort(key=lambda l: (l["y"], l["x"]))
+            lines[str(g["page"])] = out
+            if boxes:
+                checks[str(g["page"])] = [to_visual(b, g["box"], g["rotate"]) for b in boxes]
     finally:
         pdf.close()
-    return lines, textless
+    return lines, textless, checks
 
 
 def _ocr_lines(pdf_path, pages) -> tuple:
@@ -195,9 +247,9 @@ def build(pdf_path) -> dict:
     reader = open_reader(pdf_path)
     geometry = page_geometry(reader)
     fields = acro_fields(reader, geometry)
-    lines, textless, notes = {}, [], []
+    lines, textless, checks, notes = {}, [], {}, []
     if has_pdfium():
-        lines, textless = _pdfium_lines(pdf_path, geometry)
+        lines, textless, checks = _pdfium_lines(pdf_path, geometry)
     else:
         notes.append("缺 pypdfium2：取不到版面文字坐标（表单字段与页级操作仍可用）。"
                      "pip install pypdfium2")
@@ -213,9 +265,17 @@ def build(pdf_path) -> dict:
                          "（配置 TENCENT_SECRET_ID/TENCENT_SECRET_KEY），该页暂无版面坐标")
     if len(geometry) > MAX_LAYOUT_PAGES:
         notes.append(f"只取了前 {MAX_LAYOUT_PAGES} 页的版面文字（共 {len(geometry)} 页）")
+    targets = {}
+    if has_pdfium() and not fields:                 # 有 AcroForm 就走 field，不找格子
+        import pdf_boxes
+        if has_numpy():
+            targets = pdf_boxes.page_targets(pdf_path, geometry[:MAX_LAYOUT_PAGES],
+                                             lines, checks)
+        else:
+            notes.append("缺 numpy：找不到表格空格/勾选框，只能按文字坐标估位置。pip install numpy")
     kind = "acroform" if fields else ("scanned" if textless else "digital")
-    return {"kind": kind, "pages": geometry, "fields": fields,
-            "lines": lines, "notes": notes}
+    return {"version": VERSION, "kind": kind, "pages": geometry, "fields": fields,
+            "lines": lines, "targets": targets, "notes": notes}
 
 
 def _box(b: dict) -> str:
@@ -238,7 +298,7 @@ def describe(layout: dict, coords: bool = True) -> str:
             out.append(_field_line(f))
         for w in f["widgets"]:
             placed.setdefault(w["page"], []).append((f, w))
-    budget = MAX_LINES
+    room = min(MAX_PAGE_LINES, MAX_LINES // max(len(layout["lines"]), 1))
     for g in layout["pages"]:
         fl = placed.get(g["page"], [])
         ll = layout["lines"].get(str(g["page"]), [])
@@ -246,10 +306,20 @@ def describe(layout: dict, coords: bool = True) -> str:
         for f, w in fl:
             state = f" state={w['state']}" if len(f["options"]) > 1 and "state" in w else ""
             out.append(_field_line(f) + state + (f" {_box(w)}" if coords else ""))
-        room = max(budget, 0)
         for l in ll[:room]:
             out.append((f"{_box(l)} " if coords else "") + l["text"])
         if len(ll) > room:
             out.append("（本页其余文字行已截断）")
-        budget -= len(ll)
+        if coords:
+            out += [_target_line(t) for t in layout.get("targets", {}).get(str(g["page"]), [])]
     return "\n".join(out)
+
+
+_KIND = {"blank": "空格", "check": "勾选框", "cell": "标签格"}
+_SIDE = {"above": "上", "below": "下", "left": "左", "right": "右"}
+
+
+def _target_line(t: dict) -> str:
+    near = " ".join(f"{_SIDE[k]}:{v}" for k, v in (t.get("near") or {}).items())
+    label = f" 格内:{t['label']}" if t.get("label") else ""
+    return f"目标 {t['id']} {_KIND[t['kind']]} {_box(t)}{label} {near}".rstrip()
