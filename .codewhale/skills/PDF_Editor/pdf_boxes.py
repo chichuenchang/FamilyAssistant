@@ -100,10 +100,11 @@ def _inside(line, r) -> bool:
     return r["x"] <= cx <= r["x"] + r["w"] and r["y"] <= cy <= r["y"] + r["h"]
 
 
-def _contains(outer, inner) -> bool:
-    return (outer is not inner and outer["x"] <= inner["x"] and outer["y"] <= inner["y"]
-            and inner["x"] + inner["w"] <= outer["x"] + outer["w"]
-            and inner["y"] + inner["h"] <= outer["y"] + outer["h"])
+def _contains(outer, inner, pad=0) -> bool:
+    """outer 四周放大 pad 后整个包住 inner。"""
+    return (outer is not inner and outer["x"] - pad <= inner["x"] and outer["y"] - pad <= inner["y"]
+            and inner["x"] + inner["w"] <= outer["x"] + outer["w"] + pad
+            and inner["y"] + inner["h"] <= outer["y"] + outer["h"] + pad)
 
 
 def _free(r, texts) -> dict | None:
@@ -166,9 +167,7 @@ def _near(r, lines) -> dict:
 
 def _in_text(r, lines) -> bool:
     """字内空洞（O/D/口 里的白）：整个落在某文字行框里。"""
-    return any(l["x"] - 2 <= r["x"] and l["y"] - 2 <= r["y"]
-               and r["x"] + r["w"] <= l["x"] + l["w"] + 2
-               and r["y"] + r["h"] <= l["y"] + l["h"] + 2 for l in lines)
+    return any(_contains(l, r, pad=2) for l in lines)
 
 
 def targets(page: int, gray, lines: list, checks: list = ()) -> list:
