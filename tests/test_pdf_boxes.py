@@ -71,3 +71,14 @@ def test_describe_budget_is_per_page():
               "lines": {"0": many, "1": [{"text": "second", "x": 0, "y": 0, "w": 1, "h": 1}]}}
     text = pdf_layout.describe(layout)
     assert "（本页其余文字行已截断）" in text and "second" in text
+
+
+def test_describe_total_budget_is_shared(monkeypatch):
+    monkeypatch.setattr(pdf_layout, "MAX_LINES", 6)
+    page = {"width": 100, "height": 100, "scale": 2.0, "box": [0, 0, 50, 50], "rotate": 0}
+    lines = {str(p): [{"text": f"p{p}l{i}", "x": 0, "y": i, "w": 1, "h": 1} for i in range(5)]
+             for p in range(3)}
+    layout = {"kind": "digital", "fields": [], "notes": [], "targets": {}, "lines": lines,
+              "pages": [{"page": p, **page} for p in range(3)]}
+    text = pdf_layout.describe(layout)
+    assert "p2l1" in text and "p2l2" not in text and text.count("已截断") == 3   # 6 行 3 页均分

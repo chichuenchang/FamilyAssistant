@@ -16,7 +16,8 @@ from pathlib import Path
 
 SCALE = 2.0
 MAX_LAYOUT_PAGES = 12     # 取文字/OCR 的页数上限（页级操作不受限）
-MAX_PAGE_LINES = 400      # 每页进 LLM 的版面行上限（为何每页：SKILL.md 踩过的坑）
+MAX_LINES = 1600          # 全书进 LLM 的版面行上限，各页均分（为何均分：SKILL.md 踩过的坑）
+MAX_PAGE_LINES = 400      # 均分后单页仍不超此数
 MIN_TEXT_CHARS = 5        # 一页文字层少于此 → 当扫描页
 WORD_GAP = 0.25           # 字间距 > 行高 × 此值 → 补空格
 LINE_BREAK = 1.2          # 字间距 > 行高 × 此值 → 另起一行（跨栏/跨格）
@@ -288,6 +289,7 @@ def describe(layout: dict, coords: bool = True) -> str:
             out.append(_field_line(f))
         for w in f["widgets"]:
             placed.setdefault(w["page"], []).append((f, w))
+    room = min(MAX_PAGE_LINES, MAX_LINES // max(len(layout["lines"]), 1))
     for g in layout["pages"]:
         fl = placed.get(g["page"], [])
         ll = layout["lines"].get(str(g["page"]), [])
@@ -295,9 +297,9 @@ def describe(layout: dict, coords: bool = True) -> str:
         for f, w in fl:
             state = f" state={w['state']}" if len(f["options"]) > 1 and "state" in w else ""
             out.append(_field_line(f) + state + (f" {_box(w)}" if coords else ""))
-        for l in ll[:MAX_PAGE_LINES]:
+        for l in ll[:room]:
             out.append((f"{_box(l)} " if coords else "") + l["text"])
-        if len(ll) > MAX_PAGE_LINES:
+        if len(ll) > room:
             out.append("（本页其余文字行已截断）")
         if coords:
             out += [_target_line(t) for t in layout.get("targets", {}).get(str(g["page"]), [])]
