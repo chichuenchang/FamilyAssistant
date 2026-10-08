@@ -37,7 +37,7 @@ def _runs(mask) -> list:
 
 
 def components(mask) -> tuple:
-    """亮像素 4 连通标记 → (labels 数组, {id: [x0, y0, x1, y1, 像素数]})，id 从 1 起。"""
+    """亮像素 4 连通标记 → (labels 数组, {id: [x0, y0, x1, y1]})，id 从 1 起。"""
     import numpy as np
     runs = _runs(mask)
     parent = list(range(len(runs)))
@@ -67,10 +67,9 @@ def components(mask) -> tuple:
         labels[y, a:b] = k
         s = stats.get(k)
         if s is None:
-            stats[k] = [a, y, b, y + 1, b - a]
+            stats[k] = [a, y, b, y + 1]
         else:
             s[0], s[1], s[2], s[3] = min(s[0], a), min(s[1], y), max(s[2], b), max(s[3], y + 1)
-            s[4] += b - a
     return labels, stats
 
 
@@ -88,7 +87,7 @@ def rects(gray) -> list:
     labels, stats = components(gray > LIGHT)
     hgt, wid = gray.shape
     out = []
-    for k, (x0, y0, x1, y1, _) in stats.items():
+    for k, (x0, y0, x1, y1) in stats.items():
         if x0 == 0 or y0 == 0 or x1 == wid or y1 == hgt:
             continue
         if _is_rect(labels, k, x0, y0, x1, y1):
