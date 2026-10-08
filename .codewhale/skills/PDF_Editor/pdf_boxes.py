@@ -196,14 +196,6 @@ def targets(page: int, gray, lines: list, checks: list = ()) -> list:
     return [{"id": f"p{page}-{i}", **t} for i, t in enumerate(out, 1)]   # 删表头后才编号
 
 
-def available() -> bool:
-    try:
-        import numpy  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
 def page_targets(pdf_path, geometry, lines: dict, checks: dict) -> dict:
     """各页渲染成灰度 → {页: 目标}。渲染同 pdf_layout.SCALE，已计 /Rotate = 视觉空间。"""
     import numpy as np

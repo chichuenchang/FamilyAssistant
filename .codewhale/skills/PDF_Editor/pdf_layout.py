@@ -41,6 +41,14 @@ def has_pdfium() -> bool:
         return False
 
 
+def has_numpy() -> bool:
+    try:
+        import numpy  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def open_reader(pdf_path):
     """空口令可解的加密 PDF 放行；其余加密 → ValueError(ENCRYPTED)。"""
     from pypdf import PdfReader
@@ -259,7 +267,7 @@ def build(pdf_path) -> dict:
     targets = {}
     if has_pdfium() and not fields:                 # 有 AcroForm 就走 field，不找格子
         import pdf_boxes
-        if pdf_boxes.available():
+        if has_numpy():
             targets = pdf_boxes.page_targets(pdf_path, geometry[:MAX_LAYOUT_PAGES],
                                              lines, checks)
         else:
