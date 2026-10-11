@@ -168,13 +168,14 @@ def cmd_add_batch(args):
 
 
 def cmd_list(args):
+    limit = args.limit or 200
     rows = get_transactions(
         type_=args.type,
         category=args.category,
         currency=args.currency,
         start_date=args.start,
         end_date=args.end,
-        limit=args.limit or 200,
+        limit=limit,
         member=args.member,
     )
     if not rows:
@@ -183,7 +184,7 @@ def cmd_list(args):
     for r in rows:
         print(f"#{r['id']} [{r['date']}] {r['type']} {r['amount']} {r['currency']} "
               f"| {r['category'] or '-'} | {r['description']}")
-    if len(rows) == (args.limit or 200):
+    if len(rows) == limit:
         print(f"…已到 {len(rows)} 条上限，可能还有更早的；缩小日期范围或用 query_ledger 聚合")
 
 
