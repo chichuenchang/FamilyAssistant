@@ -1,6 +1,6 @@
 """Vision 的 Agent manifest（契约见 Agent_Runtime/skill_registry.py）。
 
-view_image：把数据目录内的图片连同问题发给识图模型（llm_client.vision_model），返回文字回答。
+view_image：把数据目录内的图片连同问题发给识图模型（llm_client.vision_models()），返回文字回答。
 与主模型解耦：用户 /model 切到不识图的模型也能看图。路径限 data_root 内（同 OCR，防本地文件外泄）。
 """
 
