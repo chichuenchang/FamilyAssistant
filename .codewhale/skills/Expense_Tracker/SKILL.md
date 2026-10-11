@@ -212,6 +212,7 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 | "现在美元汇率多少" | `fx-get --from USD --to CNY` |
 | "这笔定期存款哪来的" | `transfer-list --to-deposit-id <id>` 或 `--trace <银行/账号>` |
 | "我把X块换成美元转去Y银行存定期" | `transfer-add ...`（自动建定期存款） |
+| 固定视图答不了的统计/对比 | Agent 工具 `query_ledger`（只读 SQL，`tool_runtime.ro_query`：只读 URI + authorizer 只放 SELECT，3 秒超时，200 行封顶） |
 
 ## 多币种策略
 

@@ -3,6 +3,7 @@
 - 命令路由表 / 白名单 / 超时：由 skill_registry.load() 填充，run_cli 查表执行
 - schema 小助手 fn / s / num / int_ / boolean
 - 来图搬迁 relocate_image、送文件闸门 resolve_sendable（路径安全，代码确定性执行）
+- 只读 SQL ro_query（模型自由查询家庭共享库）
 
 本模块不 import agent_core（避免环）；manifest 只依赖本模块 + paths/members。
 """
@@ -12,8 +13,10 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +94,45 @@ def json_arg(args: dict, key: str) -> dict:
     elif v is not None:
         args[key] = str(v)
     return args
+
+
+# ── 只读 SQL（模型自由查询；只读 URI + authorizer 双保险，库绝不被改） ──────
+
+_RO_ALLOWED = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION,
+               getattr(sqlite3, "SQLITE_RECURSIVE", 33)}
+RO_QUERY_SECONDS = 3
+
+
+def ro_query(db_path: str, sql: str, max_rows: int = 200) -> str:
+    """单条 SELECT（可 WITH）→ "列 | 列" 表头 + 每行一行；超 max_rows 截断并提示。
+    写/ATTACH/PRAGMA 被 authorizer 拒；超 RO_QUERY_SECONDS 秒中断。错误返回 "[错误] …"。"""
+    p = Path(db_path)
+    if not p.is_file():
+        return "[错误] 数据库不存在（还没有任何记录）"
+    deadline = time.monotonic() + RO_QUERY_SECONDS
+    try:
+        conn = sqlite3.connect(p.resolve().as_uri() + "?mode=ro", uri=True)
+    except sqlite3.Error as e:
+        return f"[错误] 打不开数据库: {e}"
+    try:
+        conn.set_authorizer(lambda action, *_: sqlite3.SQLITE_OK if action in _RO_ALLOWED
+                            else sqlite3.SQLITE_DENY)
+        conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
+        cur = conn.execute(sql)
+        cols = [d[0] for d in cur.description or ()]
+        rows = cur.fetchmany(max_rows + 1)
+    except (sqlite3.Error, sqlite3.Warning) as e:
+        msg = "查询超时，缩小范围或加条件" if "interrupted" in str(e) else str(e)
+        return f"[错误] SQL: {msg}"
+    finally:
+        conn.close()
+    if not rows:
+        return " | ".join(cols) + "\n（0 行）"
+    lines = [" | ".join(cols)]
+    lines += [" | ".join("" if v is None else str(v) for v in r) for r in rows[:max_rows]]
+    if len(rows) > max_rows:
+        lines.append(f"…只显示前 {max_rows} 行，更多请加 LIMIT/OFFSET 或聚合")
+    return "\n".join(lines)
 
 
 # ── schema 小助手（OpenAI function calling 格式） ──────────────

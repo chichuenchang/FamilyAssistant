@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 
 
+import models
 import tool_runtime as rt
 from tool_runtime import fn, s, num, int_, boolean
 
@@ -26,6 +28,21 @@ CURRENCIES = rt.CONFIG.get("supported_currencies") or ["USD", "CNY", "CAD"]
 BASE_CUR = rt.CONFIG.get("base_currency") or "USD"
 CATS_DESC = json.dumps(rt.CONFIG.get("categories", {}), ensure_ascii=False)
 
+
+def _table_columns(schema: str) -> str:
+    """models.SCHEMA → "表(列, 列…)"（schema 单一事实来源，不手抄）。"""
+    out = []
+    for name, body in re.findall(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", schema, re.S):
+        cols = [ln.split()[0] for ln in body.splitlines()
+                if ln.strip() and not ln.strip().startswith("--")]
+        out.append(f"{name}({', '.join(cols)})")
+    return "；".join(out)
+
+
+def tool_query_ledger(args):
+    return rt.ro_query(str(models.DB_PATH), args.get("sql") or "")
+
+
 def tool_add_transactions(args):
     return rt.run_cli("add-batch", rt.json_arg(args, "rows"))
 
@@ -33,6 +50,7 @@ def tool_add_transactions(args):
 TOOLS = {
     "add_transaction": "add",
     "add_transactions": tool_add_transactions,
+    "query_ledger": tool_query_ledger,
     "list_transactions": "list",
     "get_summary": "summary",
     "get_monthly": "monthly",
@@ -76,6 +94,12 @@ SCHEMAS = [
                      "force": boolean("确认是另一笔独立交易时跳过重复检查"),
                  }, "required": ["type", "amount", "date"]}},
     }, ["rows"]),
+    fn("query_ledger", "对家庭账本跑一条只读 SQL（SQLite 方言，单条 SELECT/WITH，写操作会被拒）。"
+       "任意统计、对比、趋势、跨表都可自己写；固定视图不够用时用它。最多返回 200 行。"
+       "表: " + _table_columns(models.SCHEMA)
+       + "。date 为 'YYYY-MM-DD' 文本，金额分币种不要混加", {
+        "sql": s("SQL 语句"),
+    }, ["sql"]),
     fn("list_transactions", "查询交易流水", {
         "type": s("交易类型", enum=TX_TYPES),
         "category": s("分类"),
