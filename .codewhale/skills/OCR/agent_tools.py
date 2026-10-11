@@ -22,6 +22,8 @@ def tool_ocr_image(args):
     resolved = rt.data_path_guard(args.get("path", ""))
     if resolved is None:
         return f"[错误] 只允许识别数据目录内的图片: {_paths.data_root().resolve()}"
+    if err := rt.missing_file(resolved, args.get("path", "")):
+        return err
     try:
         from ocr import ocr_extract, is_available
         if is_available():
@@ -36,6 +38,8 @@ def tool_ocr_read(args):
     resolved = rt.data_path_guard(args.get("path", ""))
     if resolved is None:
         return f"[错误] 只允许识别数据目录内的文件: {_paths.data_root().resolve()}"
+    if err := rt.missing_file(resolved, args.get("path", "")):
+        return err
     try:
         from ocr import MAX_PDF_PAGES, pdf_page_count, ocr_image, is_available
         if not is_available():
@@ -57,6 +61,8 @@ def tool_ocr_read_pages(args):
     resolved = rt.data_path_guard(args.get("path", ""))
     if resolved is None:
         return f"[错误] 只允许识别数据目录内的文件: {_paths.data_root().resolve()}"
+    if err := rt.missing_file(resolved, args.get("path", "")):
+        return err
     if resolved.suffix.lower() != ".pdf":
         return "[错误] 只支持 PDF；图片用 ocr_read"
     try:

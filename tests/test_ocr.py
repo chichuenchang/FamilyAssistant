@@ -154,6 +154,12 @@ def test_ocr_read_refuses_path_outside_data_root(tmp_path):
     assert _ocr_at.tool_ocr_read({"path": "../secret.png"}).startswith("[错误]")
 
 
+def test_ocr_tools_report_moved_file_as_missing():
+    # 存档里的来件路径可能已归档移走：报不存在，不能说"读不出文字"
+    for tool in (_ocr_at.tool_ocr_image, _ocr_at.tool_ocr_read, _ocr_at.tool_ocr_read_pages):
+        assert "不存在" in tool({"path": "moved.pdf"})
+
+
 def test_ocr_read_accepts_data_relative_path(monkeypatch):
     # 库里存的 source-image 是 data 相对路径（Jim/notes/...），不能按项目根解析
     (_paths.data_root() / "Jim").mkdir(exist_ok=True)

@@ -191,17 +191,24 @@ def resolve_sendable(path: str, member: str) -> str | None:
 
 def data_path_guard(path: str) -> Path | None:
     """LLM 给的路径只允许指向 data_root 内；越界或无效返回 None。
-    相对路径先按 data_root 解析（库里存的 source-image 都是这种），不存在再按项目根（data/...）。"""
+    相对路径先按 data_root 解析（库里存的 source-image 都是这种），不存在且项目根下存在再按项目根（data/...）。"""
     try:
         p = Path(path)
         if p.is_absolute():
             resolved = p.resolve()
         else:
             resolved = _paths.resolve_rel(path).resolve()
-            if not resolved.exists():
+            if not resolved.exists() and (ROOT / p).exists():
                 resolved = (ROOT / p).resolve()
         if not resolved.is_relative_to(_paths.data_root().resolve()):
             return None
         return resolved
     except (OSError, ValueError):
         return None
+
+
+def missing_file(resolved: Path, path: str) -> str | None:
+    """过了 data_path_guard 但文件不在 → 报不存在（别让 LLM 误以为格式不对而放弃）。"""
+    if resolved.is_file():
+        return None
+    return f"[错误] {path} 不存在（可能已被归档移走，用归档后的路径）"
