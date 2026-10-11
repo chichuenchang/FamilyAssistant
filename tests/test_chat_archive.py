@@ -32,6 +32,19 @@ def test_handle_appends_said_and_reply(monkeypatch, archive_file):
         "wechat", "u", "发票多少钱", "42 元")
 
 
+def test_handle_media_archives_paths_for_later_lookup(monkeypatch, archive_file):
+    # 引用旧图只带文字、重启丢上下文：存档须留来件路径（data 相对），chat_history 才找得回
+    import paths as _paths
+    agent = _agent(monkeypatch)
+    img = _paths.data_root() / "Archived" / "inbox" / "x.jpg"
+    agent.handle_media([str(img)], "这是什么", user="u", member="爸爸")
+    row = json.loads(archive_file.read_text(encoding="utf-8").splitlines()[0])
+    assert row["said"] == "这是什么" and row["media"] == ["Archived/inbox/x.jpg"]
+    assert "来件: Archived/inbox/x.jpg" in chat_archive.read("wechat", "u")
+    agent.handle("好的", user="u", member="爸爸")
+    assert "media" not in json.loads(archive_file.read_text(encoding="utf-8").splitlines()[1])
+
+
 def test_llm_failure_after_tool_still_archived(monkeypatch, archive_file):
     agent = _agent(monkeypatch)
     calls = iter([{"content": "", "tool_calls": [{"id": "1", "function": {

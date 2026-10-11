@@ -70,7 +70,7 @@ def test_handle_media_gives_paths_agent_picks_tools(monkeypatch):
     agent = agent_core.Agent()
     cap = {}
     monkeypatch.setattr(agent, "handle",
-                        lambda prompt, user="default", member="", said=None: cap.update(p=prompt, s=said) or "ok")
+                        lambda prompt, user="default", member="", said=None, media=(): cap.update(p=prompt, s=said) or "ok")
     out = agent.handle_media(["data/Alex/inbox/2026-06/x.pdf", "data/Alex/inbox/2026-06/y.jpg"],
                              "签好发给学校", user="u", member="Alex Lee")
     assert out == "ok"

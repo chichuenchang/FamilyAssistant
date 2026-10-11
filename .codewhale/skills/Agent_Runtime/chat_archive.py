@@ -1,7 +1,7 @@
 """对话长期存档：每轮追加一行到 data/.state/chat_history.jsonl，供 chat_history 工具回读。
 
-每行 {ts, channel, user, said, reply}：said = 用户亲手打的字，reply = 最终回复（不含工具
-调用/结果）。只追加不清理，重启照常续写。.state 不入 git、不进云备份（backup_sync）。
+每行 {ts, channel, user, said, reply[, media]}：said = 用户亲手打的字，reply = 最终回复（不含工具
+调用/结果），media = 本轮来件 data 相对路径（引用旧图只带文字、重启丢上下文，靠它找回）。只追加不清理，重启照常续写。.state 不入 git、不进云备份（backup_sync）。
 """
 
 from __future__ import annotations
@@ -53,10 +53,12 @@ def _path() -> Path:
     return _paths.state_file("chat_history.jsonl")
 
 
-def append(channel: str, user, said: str, reply: str) -> None:
+def append(channel: str, user, said: str, reply: str, media=()) -> None:
     """追加一轮；写失败只记日志，不影响回复。"""
     row = {"ts": datetime.now().isoformat(timespec="seconds"), "channel": channel or "",
            "user": str(user), "said": said, "reply": reply}
+    if media:
+        row["media"] = [_paths.to_rel(m) for m in media]
     data = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
     try:
         with _path().open("a+b") as f, _locked(f):
@@ -97,4 +99,5 @@ def read(channel: str, user, query: str = "", limit: int = 20) -> str:
         return EMPTY
     return "\n".join(
         f"[{r.get('ts', '')[:16].replace('T', ' ')}] 用户: {_clip(r.get('said', ''))}\n"
-        f"    助手: {_clip(r.get('reply', '')) or '（无回复）'}" for r in turns)
+        + (f"    来件: {', '.join(r['media'])}\n" if r.get("media") else "")
+        + f"    助手:{_clip(r.get('reply', '')) or '（无回复）'}" for r in turns)
