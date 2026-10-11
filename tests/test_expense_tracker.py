@@ -77,12 +77,12 @@ def test_add_transaction_happy_path(db):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# 3. add_transaction invalid type → AssertionError
+# 3. add_transaction invalid type → ValueError
 # ═══════════════════════════════════════════════════════════════════════
 
 def test_add_transaction_invalid_type(db):
-    """An unknown transaction type raises AssertionError."""
-    with pytest.raises(AssertionError):
+    """An unknown transaction type raises ValueError."""
+    with pytest.raises(ValueError):
         dbm.add_transaction(
             type_="nonexistent_type",
             amount=10,

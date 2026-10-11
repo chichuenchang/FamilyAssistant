@@ -147,7 +147,7 @@ def cmd_add_batch(args):
                 currency=r.get("currency") or get_base_currency(), date_=r.get("date", ""),
                 category=r.get("category") or "", description=r.get("desc") or "",
                 notes=r.get("notes") or "", skip_dup_check=bool(r.get("force")), member=member)
-        except (AssertionError, ValueError, TypeError) as e:
+        except (ValueError, TypeError) as e:
             err += 1
             lines.append(f"{i}) 错误: {e or '字段不合法'}")
             continue
