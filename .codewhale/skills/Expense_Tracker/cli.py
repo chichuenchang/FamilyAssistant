@@ -440,11 +440,12 @@ def main():
     p.add_argument("--member", help="归属成员（须已登记）")
     p.add_argument("--force", action="store_true", help="跳过重复检查，强制写入")
 
-    # list
+    # add-batch
     p = sub.add_parser("add-batch", help="批量添加交易（逐行结果）")
     p.add_argument("--rows", required=True, help="JSON 数组，每项字段同 add")
     p.add_argument("--member", help="归属成员（须已登记）")
 
+    # list
     p = sub.add_parser("list", help="查询交易")
     p.add_argument("--type")
     p.add_argument("--category")
@@ -454,7 +455,7 @@ def main():
     p.add_argument("--limit", type=int)
     p.add_argument("--member", help="按成员过滤")
 
-    # delete
+    # update
     p = sub.add_parser("update", help="修改交易（只改给了的字段）")
     p.add_argument("--id", type=int, required=True)
     p.add_argument("--type", choices=list(TRANSACTION_TYPES))
@@ -465,6 +466,7 @@ def main():
     p.add_argument("--desc")
     p.add_argument("--notes")
 
+    # delete
     p = sub.add_parser("delete", help="删除交易")
     p.add_argument("--id", type=int, required=True)
 
