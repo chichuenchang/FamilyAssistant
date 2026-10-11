@@ -142,9 +142,10 @@ def cmd_add_batch(args):
         try:
             if not isinstance(r, dict):
                 raise ValueError("该行不是对象")
+            cur = r.get("currency") or get_base_currency()
             tid, dupes = add_transaction(
                 type_=r.get("type", ""), amount=float(r.get("amount") or 0),
-                currency=r.get("currency") or get_base_currency(), date_=r.get("date", ""),
+                currency=cur, date_=r.get("date", ""),
                 category=r.get("category") or "", description=r.get("desc") or "",
                 notes=r.get("notes") or "", skip_dup_check=bool(r.get("force")), member=member)
         except (ValueError, TypeError) as e:
@@ -159,7 +160,7 @@ def cmd_add_batch(args):
         else:
             added += 1
             lines.append(f"{i}) 已添加 #{tid}: {r.get('date')} {r.get('amount')} "
-                         f"{r.get('currency') or get_base_currency()} {r.get('category') or '未分类'} "
+                         f"{cur} {r.get('category') or '未分类'} "
                          f"{r.get('desc') or ''}".rstrip())
     print(f"{len(rows)} 行：已添加 {added}，疑似重复未写 {dup}，错误 {err}")
     for line in lines:
