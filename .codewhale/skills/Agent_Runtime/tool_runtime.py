@@ -127,11 +127,11 @@ def ro_query(db_path: str, sql: str, max_rows: int = RO_QUERY_ROWS) -> str:
         return f"[错误] SQL: {msg}"
     finally:
         conn.close()
-    if not rows:
-        return " | ".join(cols) + "\n（0 行）"
     lines = [" | ".join(cols)]
     lines += [" | ".join("" if v is None else str(v) for v in r) for r in rows[:max_rows]]
-    if len(rows) > max_rows:
+    if not rows:
+        lines.append("（0 行）")
+    elif len(rows) > max_rows:
         lines.append(f"…只显示前 {max_rows} 行，更多请加 LIMIT/OFFSET 或聚合")
     return "\n".join(lines)
 
