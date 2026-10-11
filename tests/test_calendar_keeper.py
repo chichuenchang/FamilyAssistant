@@ -1117,6 +1117,19 @@ class TestCli:
         item = cal_db.get_item(1, db_path=cal_db_path)
         assert item["start_at"] == D3 and item["end_at"] == "" and item["all_day"] == 1
 
+    def test_cal_update_start_only_keeps_duration(self, cal_db_path, tmp_path):
+        _cli(["cal-add", "--member", "MemberA", "--kind", "event", "--title", "游泳课",
+              "--date", D1, "--start", "14:00", "--end", "16:00"], cal_db_path, tmp_path)
+        r = _cli(["cal-update", "--member", "MemberA", "--id", "e1", "--start", "09:30"],
+                 cal_db_path, tmp_path)
+        assert r.returncode == 0, r.stderr
+        item = cal_db.get_item(1, db_path=cal_db_path)
+        assert item["start_at"] == f"{D1}T09:30" and item["end_at"] == f"{D1}T11:30"
+        r = _cli(["cal-update", "--member", "MemberA", "--id", "e1",
+                  "--date", D3, "--start", "20:00"], cal_db_path, tmp_path)
+        item = cal_db.get_item(1, db_path=cal_db_path)
+        assert item["start_at"] == f"{D3}T20:00" and item["end_at"] == f"{D3}T22:00"
+
     def test_cal_update_task_due_and_rejects_cancelled(self, cal_db_path, tmp_path):
         _cli(["cal-add", "--member", "MemberA", "--kind", "task", "--title", "买蛋糕"],
              cal_db_path, tmp_path)

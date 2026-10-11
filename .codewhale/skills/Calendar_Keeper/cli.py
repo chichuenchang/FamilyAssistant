@@ -24,7 +24,7 @@ Agent 经白名单子命令调用，输出纯文本。
 import argparse
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # Windows 控制台编码容错
@@ -247,7 +247,7 @@ def _shift(iso: str, days: int) -> str:
 
 def _edited_times(item: dict, args) -> dict:
     """由 --date/--start/--end/--all-day 算出新的 start_at/end_at/all_day（只返回有变的）。
-    只给 --date = 整条平移到该日（保留时刻与跨天时长）；待办的 --date = 截止日。"""
+    只给 --date = 整条平移到该日（保留时刻与跨天时长）；只给 --start = 保留原时长；待办的 --date = 截止日。"""
     if item["kind"] == "task":
         return {"start_at": args.date} if args.date else {}
     start, end = item["start_at"], item["end_at"]
@@ -258,8 +258,15 @@ def _edited_times(item: dict, args) -> dict:
     if args.all_day:
         return {"start_at": day, "end_at": "", "all_day": 1}
     if args.start:
-        start = f"{day}T{args.start}"
-        end = f"{day}T{args.end}" if args.end else ""
+        new_start = f"{day}T{args.start}"
+        if args.end:
+            end = f"{day}T{args.end}"
+        elif len(start) > 10 and len(end) > 10:     # 只改开始：保留原时长
+            dur = datetime.fromisoformat(end) - datetime.fromisoformat(start)
+            end = (datetime.fromisoformat(new_start) + dur).isoformat(timespec="minutes")
+        else:
+            end = ""
+        start = new_start
     elif args.end:
         if len(start) <= 10:
             raise ValueError("全天活动改 --end 前先给 --start")
