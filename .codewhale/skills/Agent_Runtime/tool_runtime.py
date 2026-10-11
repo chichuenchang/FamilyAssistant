@@ -101,9 +101,10 @@ def json_arg(args: dict, key: str) -> dict:
 _RO_ALLOWED = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION,
                getattr(sqlite3, "SQLITE_RECURSIVE", 33)}
 RO_QUERY_SECONDS = 3
+RO_QUERY_ROWS = 200
 
 
-def ro_query(db_path: str, sql: str, max_rows: int = 200) -> str:
+def ro_query(db_path: str, sql: str, max_rows: int = RO_QUERY_ROWS) -> str:
     """单条 SELECT（可 WITH）→ "列 | 列" 表头 + 每行一行；超 max_rows 截断并提示。
     写/ATTACH/PRAGMA 被 authorizer 拒；超 RO_QUERY_SECONDS 秒中断。错误返回 "[错误] …"。"""
     p = Path(db_path)

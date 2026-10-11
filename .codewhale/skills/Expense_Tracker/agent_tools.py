@@ -97,7 +97,7 @@ SCHEMAS = [
                            "required": _TX_REQUIRED}},
     }, ["rows"]),
     fn("query_ledger", "对家庭账本跑一条只读 SQL（SQLite 方言，单条 SELECT/WITH，写操作会被拒）。"
-       "任意统计、对比、趋势、跨表都可自己写；固定视图不够用时用它。最多返回 200 行。"
+       f"任意统计、对比、趋势、跨表都可自己写；固定视图不够用时用它。最多返回 {rt.RO_QUERY_ROWS} 行。"
        "表: " + _table_columns(models.SCHEMA)
        + "。date 为 'YYYY-MM-DD' 文本，金额分币种不要混加", {
         "sql": s("SQL 语句"),
