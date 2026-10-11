@@ -367,6 +367,23 @@ def tool_mail_rules(args):
     return _rules.describe(_rules.load(member))
 
 
+_RULE_ACTIONS = {"mute": tool_mail_mute, "always": tool_mail_always}
+
+
+def tool_mail_rule(args):
+    """播报规则一个入口：mute/always 落规则，list 看，remove 撤销（number=编号）。"""
+    action = args.get("action") or "list"
+    if action in _RULE_ACTIONS:
+        return _RULE_ACTIONS[action](args)
+    if action == "remove":
+        if args.get("number") in (None, ""):
+            return "[错误] remove 要给 number（先 action=list 看编号）。"
+        return tool_mail_rules({**args, "remove": args["number"]})
+    if action == "list":
+        return tool_mail_rules({"member": args.get("member", "")})
+    return "[错误] action 只能是 mute/always/list/remove"
+
+
 FILTER_SLOT = "filter"      # mail_draft 里过滤器草稿的槽位（与邮件草稿互不顶掉）
 
 
@@ -492,9 +509,7 @@ TOOLS = {
     "compose_mail": tool_compose_mail,
     "send_draft": tool_send_draft,
     "mail_last_push": tool_mail_last_push,
-    "mail_mute": tool_mail_mute,
-    "mail_always": tool_mail_always,
-    "mail_rules": tool_mail_rules,
+    "mail_rule": tool_mail_rule,
     "draft_mail_filter": tool_draft_mail_filter,
     "apply_mail_filter": tool_apply_mail_filter,
     "mail_filters": tool_mail_filters,
@@ -551,25 +566,18 @@ SCHEMAS = [
        "同一轮里刚起草就调、或中间隔了别的对话，系统都会拒绝（得重新起草）", {}),
     fn("mail_last_push", "看机器人最近经手的新邮件：播报过的（含理由）+ 没播报的（含原因：mute 规则或 AI 判无需处理）。"
        "用户说\"刚才那封/这种以后别推了\"或\"X 的邮件怎么没推/漏推了\"时**先调本工具**弄清指的是哪封", {}),
-    fn("mail_mute", "记住\"这类新邮件以后别主动播报\"（只关播报，用户自己查邮箱照样看得到）。"
-       "四选一，选最贴用户意思的那个范围", {
-        "sender": s("某个发件地址（用户只嫌这一个发件人时）"),
-        "domain": s("整个域，如 shop.example（用户说\"这家公司的都别推\"）"),
-        "subject_contains": s("主题关键词，不分大小写（用户按话题说，如 newsletter、对账单）"),
+    fn("mail_rule", "新邮件播报规则（只管播不播，用户自己查邮箱照样看得到）。"
+       "mute=这类以后别播报；always=这类一律播报、不经 AI 判断（纠正漏推）；同一范围后设的覆盖先设的。"
+       "list=看现有规则；remove=按编号撤销（该类回到 AI 判断）。mute/always 在 sender/domain/"
+       "subject_contains/label 里选最贴用户意思的一个范围", {
+        "action": s("mute / always / list / remove", enum=["mute", "always", "list", "remove"]),
+        "sender": s("某个发件地址"),
+        "domain": s("整个域，如 shop.example（\"这家公司/学校的都…\"）"),
+        "subject_contains": s("主题关键词，不分大小写（按话题，如 newsletter、对账单）"),
         "label": s("Gmail 分类：promotions（广告/促销）、social、updates、forums"),
-        "note": s("一句话记下用户为什么不要（可选，回头 mail_rules 会显示）"),
-    }),
-    fn("mail_always", "记住\"这类新邮件以后一律播报\"，不经 AI 判断（AI 判错漏推时用）。"
-       "四选一，选最贴用户意思的那个范围", {
-        "sender": s("某个发件地址（用户只要这一个发件人的信都推）"),
-        "domain": s("整个域，如 school.example（用户说\"学校来的都要推\"）"),
-        "subject_contains": s("主题关键词，不分大小写（用户按话题说，如 账单、成绩单）"),
-        "label": s("Gmail 分类：promotions、social、updates、forums"),
-        "note": s("一句话记下用户为什么要（可选，回头 mail_rules 会显示）"),
-    }),
-    fn("mail_rules", "看当前播报规则（不播报的 + 一律播报的）；给 remove=编号 撤销一条（该类回到 AI 判断）", {
-        "remove": int_("要撤销的规则编号（先不带参数调一次看编号）"),
-    }),
+        "note": s("一句话记下用户的理由（可选，list 会显示）"),
+        "number": int_("remove 用：规则编号（见 list）"),
+    }, ["action"]),
     fn("draft_mail_filter", "起草 Gmail 过滤器（**不生效**，只给用户过目）：用户要把某类邮件"
        "自动分到别的文件夹/标签、不进收件箱时用。条件至少一个；预览由系统附给用户，"
        "你不用复述，请用户确认即可", {

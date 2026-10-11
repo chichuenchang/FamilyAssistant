@@ -218,3 +218,31 @@ def test_worksheets_context_row_cap(tmp_path):
     import agent_core
     out = agent_core.REGISTRY.modules["Note_Keeper"].worksheets_context("爸爸", db_path=db)
     assert "还有" in out  # truncation note present (cap default 80)
+
+
+# ── edit_worksheet：一次调用多个 op，逐项结果 ───────────────
+
+def test_edit_worksheet_runs_ops_in_order(db, monkeypatch):
+    monkeypatch.setenv("NOTE_DB_PATH", db)
+    import agent_core
+    tool = agent_core.REGISTRY.tool_map["edit_worksheet"]
+    _cli(db, "sheet-create", "--member", "爸爸", "--title", "血压", "--kind", "table")
+    out = tool({"member": "爸爸", "title": "血压", "ops": [
+        {"op": "add_row", "data": {"date": "06-24", "sys": 120}},
+        {"op": "add_row", "data": {"date": "06-25", "sys": 118}},
+        {"op": "rename", "new_title": "血压记录"},
+        {"op": "pin"},
+        {"op": "edit_row", "row_id": 1, "data": {"date": "06-24", "sys": 121}},
+        {"op": "bogus"},
+    ]})
+    lines = out.splitlines()
+    assert lines[0].startswith("1)") and lines[2].startswith("3) 已重命名")
+    assert "未知 op" in lines[5]
+    sheet = sheet_db.get_sheet("爸爸", "血压记录", db_path=db)
+    assert sheet["pinned"] == 1
+    assert [r["row_data"]["sys"] for r in sheet["rows"]] == [121, 118]
+
+
+def test_edit_worksheet_needs_ops():
+    import agent_core
+    assert agent_core.REGISTRY.tool_map["edit_worksheet"]({"title": "x"}).startswith("[错误]")

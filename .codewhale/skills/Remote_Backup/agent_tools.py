@@ -6,7 +6,8 @@ backup-restore / backup-reorg 仅限本机，不进 AGENT_COMMANDS。
 from __future__ import annotations
 
 
-from tool_runtime import fn
+import tool_runtime as rt
+from tool_runtime import fn, s
 from backup_sync import backup_tick as _backup_tick
 
 ORDER = 40
@@ -14,16 +15,23 @@ ORDER = 40
 COMMANDS = {"backup-now", "backup-status", "backup-verify", "backup-restore", "backup-reorg"}
 AGENT_COMMANDS = {"backup-now", "backup-status", "backup-verify"}
 
-TOOLS = {
-    "backup_now": "backup-now",
-    "backup_status": "backup-status",
-    "backup_verify": "backup-verify",
-}
+_ACTIONS = ("status", "now", "verify")
+
+
+def tool_backup(args):
+    action = args.get("action") or "status"
+    if action not in _ACTIONS:
+        return f"[错误] action 只能是 {'/'.join(_ACTIONS)}"
+    return rt.run_cli(f"backup-{action}")
+
+
+TOOLS = {"backup": tool_backup}
 
 SCHEMAS = [
-    fn("backup_now", "立即把用户数据镜像到云盘（需用户已配置 backup provider）", {}),
-    fn("backup_status", "查看云盘备份状态（是否启用/已配置/待同步/上次同步/错误）", {}),
-    fn("backup_verify", "校验云端镜像与本地清单是否一致", {}),
+    fn("backup", "云盘备份（需用户已配置 backup provider）", {
+        "action": s("status=看状态（启用/配置/待同步/上次同步/错误）；now=立即镜像到云盘；"
+                    "verify=校验云端与本地清单是否一致", enum=list(_ACTIONS)),
+    }, ["action"]),
 ]
 
 PROMPT_SECTIONS = [

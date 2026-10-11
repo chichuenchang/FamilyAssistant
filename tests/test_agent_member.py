@@ -22,7 +22,7 @@ def test_apply_member_covers_all_write_tools():
 
 def test_apply_member_forces_sheet_and_send_tools():
     # 工作表 + 发文档/文件按成员私有：强制注入发送者，剥离 LLM 冒名 member。
-    for tool in ("create_worksheet", "show_worksheet", "add_worksheet_row",
+    for tool in ("create_worksheet", "show_worksheet", "edit_worksheet",
                  "visualize_data", "send_document", "send_file"):
         out = agent_core._apply_member(tool, {"member": "妈妈"}, "爸爸")
         assert out["member"] == "爸爸", tool

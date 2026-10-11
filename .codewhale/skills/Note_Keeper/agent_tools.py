@@ -38,12 +38,42 @@ def tool_save_note(args):
     return rt.run_cli("note-add", args)
 
 
-def tool_add_worksheet_row(args):
-    return rt.run_cli("sheet-row-add", rt.json_arg(args, "data"))
+_SHEET_OPS = {   # op → (CLI 子命令, 透传的参数键)
+    "set": ("sheet-set", ("field", "value")),
+    "unset": ("sheet-unset", ("field",)),
+    "add_row": ("sheet-row-add", ("data",)),
+    "edit_row": ("sheet-row-edit", ("row_id", "data")),
+    "delete_row": ("sheet-row-delete", ("row_id",)),
+    "rename": ("sheet-rename", ("new_title",)),
+    "pin": ("sheet-pin", ()),
+    "unpin": ("sheet-pin", ()),
+}
 
 
-def tool_edit_worksheet_row(args):
-    return rt.run_cli("sheet-row-edit", rt.json_arg(args, "data"))
+def tool_edit_worksheet(args):
+    """一次调用按序执行多个编辑 op，每个 op 独立出结果（一条失败不挡后面的）。"""
+    title = args.get("title") or ""
+    ops = args.get("ops") or []
+    if not isinstance(ops, list) or not ops:
+        return "[错误] ops 至少一项"
+    lines = []
+    for i, op in enumerate(ops, 1):
+        kind = (op or {}).get("op") if isinstance(op, dict) else None
+        if kind not in _SHEET_OPS:
+            lines.append(f"{i}) [错误] 未知 op: {kind}（可选 {'/'.join(_SHEET_OPS)}）")
+            continue
+        cmd, keys = _SHEET_OPS[kind]
+        cli = {"member": args.get("member", ""), "title": title,
+               **{k.replace("_", "-"): op.get(k) for k in keys}}
+        if kind == "unpin":
+            cli["unpin"] = True
+        if "data" in keys:
+            cli = rt.json_arg(cli, "data")
+        out = rt.run_cli(cmd, cli)
+        if kind == "rename" and out.startswith("已重命名"):
+            title = op.get("new_title") or title   # 后续 op 用新名
+        lines.append(f"{i}) {out}")
+    return "\n".join(lines)
 
 
 def tool_visualize_data(args):
@@ -60,22 +90,14 @@ TOOLS = {
     "create_worksheet": "sheet-create",
     "list_worksheets": "sheet-list",
     "show_worksheet": "sheet-show",
-    "set_worksheet_field": "sheet-set",
-    "unset_worksheet_field": "sheet-unset",
-    "add_worksheet_row": tool_add_worksheet_row,
-    "edit_worksheet_row": tool_edit_worksheet_row,
-    "delete_worksheet_row": "sheet-row-delete",
-    "rename_worksheet": "sheet-rename",
-    "pin_worksheet": "sheet-pin",
+    "edit_worksheet": tool_edit_worksheet,
     "delete_worksheet": "sheet-delete",
     "visualize_data": tool_visualize_data,
 }
 
 NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "update_note", "delete_note", "pin_note"}
 SHEET_TOOLS = {"create_worksheet", "list_worksheets", "show_worksheet",
-               "set_worksheet_field", "unset_worksheet_field", "add_worksheet_row",
-               "edit_worksheet_row", "delete_worksheet_row", "rename_worksheet",
-               "pin_worksheet", "delete_worksheet", "visualize_data"}
+               "edit_worksheet", "delete_worksheet", "visualize_data"}
 MEMBER_LOCKED = NOTE_TOOLS | SHEET_TOOLS
 IMAGE_TOOLS = {"visualize_data"}
 
@@ -115,36 +137,21 @@ SCHEMAS = [
     fn("show_worksheet", "显示一张工作表的完整内容", {
         "title": s("工作表名"),
     }, ["title"]),
-    fn("set_worksheet_field", "在 kv 工作表上设置/覆盖一个字段", {
+    fn("edit_worksheet", "编辑一张工作表：ops 按序执行，可一次做多件事（如记三行、改两个字段再置顶），"
+       "每个 op 返回各自结果", {
         "title": s("工作表名"),
-        "field": s("字段名"),
-        "value": s("字段值"),
-    }, ["title", "field", "value"]),
-    fn("unset_worksheet_field", "从 kv 工作表删除一个字段", {
-        "title": s("工作表名"),
-        "field": s("字段名"),
-    }, ["title", "field"]),
-    fn("add_worksheet_row", "向 table 工作表追加一行（列名→值，列可动态新增）", {
-        "title": s("工作表名"),
-        "data": {"type": "object", "description": "一行数据，键=列名 值=单元格值"},
-    }, ["title", "data"]),
-    fn("edit_worksheet_row", "覆盖 table 工作表的某一行（按行 id）", {
-        "title": s("工作表名"),
-        "row-id": int_("行 id（见 show_worksheet 的 #号）"),
-        "data": {"type": "object", "description": "整行新数据（覆盖式）"},
-    }, ["title", "row-id", "data"]),
-    fn("delete_worksheet_row", "删除 table 工作表的某一行（按行 id）", {
-        "title": s("工作表名"),
-        "row-id": int_("行 id"),
-    }, ["title", "row-id"]),
-    fn("rename_worksheet", "重命名一张工作表", {
-        "title": s("当前名"),
-        "new-title": s("新名"),
-    }, ["title", "new-title"]),
-    fn("pin_worksheet", "置顶/取消置顶工作表（置顶=每次对话自动带上全表）", {
-        "title": s("工作表名"),
-        "unpin": boolean("true=取消置顶"),
-    }, ["title"]),
+        "ops": {"type": "array", "description": "编辑操作列表", "items": {
+            "type": "object", "properties": {
+                "op": s("set/unset=kv 字段设值/删字段；add_row/edit_row/delete_row=table 行"
+                        "（edit_row 整行覆盖）；rename=改表名；pin/unpin=置顶（每次对话自动带全表）",
+                        enum=list(_SHEET_OPS)),
+                "field": s("set/unset：字段名"),
+                "value": s("set：字段值"),
+                "data": {"type": "object", "description": "add_row/edit_row：一行数据，键=列名（列可动态新增）"},
+                "row_id": int_("edit_row/delete_row：行 id（show_worksheet 的 #号）"),
+                "new_title": s("rename：新表名"),
+            }, "required": ["op"]}},
+    }, ["title", "ops"]),
     fn("delete_worksheet", "删除整张工作表（含所有行）", {
         "title": s("工作表名"),
     }, ["title"]),
