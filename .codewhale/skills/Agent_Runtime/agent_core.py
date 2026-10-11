@@ -34,6 +34,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 
@@ -351,7 +352,7 @@ class Agent:
         self._llm_overrides: dict[str, dict] = _load_llm_overrides()
 
     def handle(self, text: str, user: str = "default", member: str = "", *,
-               said: str | None = None, media=()) -> str:
+               said: str | None = None, media: Sequence[str] = ()) -> str:
         """said = 用户本人亲手打的字（确认闸门 __text 只认它）。text 可能掺了引用/OCR 等
         外部内容，传输层须另传 said；缺省 = text（本地 CLI 等无掺杂入口）。
         media = 本轮来件路径，只进对话存档（chat_archive）。"""

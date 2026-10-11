@@ -1,7 +1,8 @@
 """对话长期存档：每轮追加一行到 data/.state/chat_history.jsonl，供 chat_history 工具回读。
 
 每行 {ts, channel, user, said, reply[, media]}：said = 用户亲手打的字，reply = 最终回复（不含工具
-调用/结果），media = 本轮来件 data 相对路径（引用旧图只带文字、重启丢上下文，靠它找回）。只追加不清理，重启照常续写。.state 不入 git、不进云备份（backup_sync）。
+调用/结果），media = 本轮来件 data 相对路径（引用旧图只带文字、重启丢上下文，靠它找回）。
+只追加不清理，重启照常续写。.state 不入 git、不进云备份（backup_sync）。
 """
 
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -53,7 +55,7 @@ def _path() -> Path:
     return _paths.state_file("chat_history.jsonl")
 
 
-def append(channel: str, user, said: str, reply: str, media=()) -> None:
+def append(channel: str, user, said: str, reply: str, media: Sequence[str] = ()) -> None:
     """追加一轮；写失败只记日志，不影响回复。"""
     row = {"ts": datetime.now().isoformat(timespec="seconds"), "channel": channel or "",
            "user": str(user), "said": said, "reply": reply}
