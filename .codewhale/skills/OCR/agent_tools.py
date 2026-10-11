@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import sys
 from pathlib import Path
@@ -17,13 +18,23 @@ from tool_runtime import fn, int_, s
 ORDER = 15
 
 
-def _alt(path) -> str:
-    """失败时告诉模型还有什么路（选不选由它定）。"""
-    if path.suffix.lower() == ".pdf":
-        return "；PDF 没有别的读法，告诉用户哪步失败"
-    return "；可改用 view_image 让识图模型逐字照录"
+_FAILED = ("[OCR 未配置]", "[OCR 失败]", "[OCR 错误]", "[未识别到文字]")
 
 
+def _with_alt(tool):
+    """OCR 失败结果末尾告诉模型还有什么路（选不选由它定）。"""
+    @functools.wraps(tool)
+    def wrapped(args):
+        out = tool(args)
+        if not out.startswith(_FAILED):
+            return out
+        if Path(args.get("path", "")).suffix.lower() == ".pdf":
+            return out + "；PDF 没有别的读法，告诉用户哪步失败"
+        return out + "；可改用 view_image 让识图模型逐字照录"
+    return wrapped
+
+
+@_with_alt
 def tool_ocr_image(args):
     resolved = rt.data_file(args.get("path", ""), "只允许识别数据目录内的图片")
     if isinstance(resolved, str):
@@ -32,12 +43,13 @@ def tool_ocr_image(args):
         from ocr import ocr_extract, is_available
         if is_available():
             info = ocr_extract(str(resolved))
-            return json.dumps(info, ensure_ascii=False) if info else "[未识别到文字]" + _alt(resolved)
-        return "[OCR 未配置]" + _alt(resolved)
+            return json.dumps(info, ensure_ascii=False) if info else "[未识别到文字]"
+        return "[OCR 未配置]"
     except Exception as e:
-        return f"[OCR 错误] {e}" + _alt(resolved)
+        return f"[OCR 错误] {e}"
 
 
+@_with_alt
 def tool_ocr_read(args):
     resolved = rt.data_file(args.get("path", ""), "只允许识别数据目录内的文件")
     if isinstance(resolved, str):
@@ -45,20 +57,21 @@ def tool_ocr_read(args):
     try:
         from ocr import MAX_PDF_PAGES, pdf_page_count, ocr_image, is_available
         if not is_available():
-            return "[OCR 未配置]" + _alt(resolved)
+            return "[OCR 未配置]"
         text = ocr_image(str(resolved))
         if text is None:
-            return "[OCR 失败] 文件读不出文字（可能不是图片/PDF，或是加密扫描件）" + _alt(resolved)
-        text = text or "[未识别到文字]" + _alt(resolved)
+            return "[OCR 失败] 文件读不出文字（可能不是图片/PDF，或是加密扫描件）"
+        text = text or "[未识别到文字]"
         total = pdf_page_count(resolved) if resolved.suffix.lower() == ".pdf" else None
         if total and total > MAX_PDF_PAGES:
             text += (f"\n[仅读了前 {MAX_PDF_PAGES} 页，共 {total} 页；"
                      f"要后面内容就带 first_page/last_page 再调 ocr_read]")
         return text
     except Exception as e:
-        return f"[OCR 错误] {e}" + _alt(resolved)
+        return f"[OCR 错误] {e}"
 
 
+@_with_alt
 def tool_ocr_read_pages(args):
     resolved = rt.data_file(args.get("path", ""), "只允许识别数据目录内的文件")
     if isinstance(resolved, str):
@@ -73,11 +86,11 @@ def tool_ocr_read_pages(args):
     try:
         from ocr import ocr_pdf_range, is_available
         if not is_available():
-            return "[OCR 未配置]" + _alt(resolved)
+            return "[OCR 未配置]"
         r = ocr_pdf_range(str(resolved), first, last)
         if r is None:
             return (f"[OCR 失败] 第 {max(1, first)} 页读不出文字"
-                    "（可能是加密扫描件，或该页已超出总页数）" + _alt(resolved))
+                    "（可能是加密扫描件，或该页已超出总页数）")
         total = r["total"]
         of = f"共 {total} 页" if total else "总页数未知"
         if not r["pages"]:
@@ -91,7 +104,7 @@ def tool_ocr_read_pages(args):
                          for n, text in r["pages"])
         return f"{head}\n{body}"
     except Exception as e:
-        return f"[OCR 错误] {e}" + _alt(resolved)
+        return f"[OCR 错误] {e}"
 
 
 def tool_ocr_read_any(args):
