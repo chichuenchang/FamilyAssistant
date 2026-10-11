@@ -100,6 +100,20 @@ def find_duplicates(
     return dupes
 
 
+def _validate(type_: str, amount: float, currency: str, category: str) -> None:
+    """写入前校验（add / update 共用）；不合法抛 ValueError。"""
+    if type_ not in TRANSACTION_TYPES:
+        raise ValueError(f"无效类型 '{type_}'。可选: {', '.join(TRANSACTION_TYPES)}")
+    if not amount or amount <= 0:
+        raise ValueError("金额必须为正数")
+    allowed_cur = get_supported_currencies()
+    if currency not in allowed_cur:
+        raise ValueError(f"不支持的币种 '{currency}'。可选: {', '.join(allowed_cur)}")
+    if category and category not in get_categories(type_):
+        raise ValueError(f"无效分类 '{category}'（类型 {type_}）。"
+                         f"可选: {', '.join(get_categories(type_))}")
+
+
 def add_transaction(
     type_: str,
     amount: float,
@@ -118,16 +132,7 @@ def add_transaction(
     默认检查重复：同日 + 同金额 + 同币种 + 描述相近即报警。
     设 skip_dup_check=True 跳过检查直接写入。
     """
-    assert type_ in TRANSACTION_TYPES, f"Invalid type: {type_}"
-    assert amount > 0, "Amount must be positive"
-    allowed_cur = get_supported_currencies()
-    if currency not in allowed_cur:
-        raise ValueError(f"不支持的币种 '{currency}'。可选: {', '.join(allowed_cur)}")
-    if category:
-        allowed_cat = get_categories(type_)
-        if category not in allowed_cat:
-            raise ValueError(
-                f"无效分类 '{category}'（类型 {type_}）。可选: {', '.join(allowed_cat)}")
+    _validate(type_, amount, currency, category)
 
     dupes = []
     if not skip_dup_check:
@@ -187,6 +192,40 @@ def get_transactions(
     rows = conn.execute(sql, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def update_transaction(
+    txn_id: int,
+    type_: Optional[str] = None,
+    amount: Optional[float] = None,
+    currency: Optional[str] = None,
+    date_: Optional[str] = None,
+    category: Optional[str] = None,
+    description: Optional[str] = None,
+    notes: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> Optional[dict]:
+    """只改给了的字段（None = 不动），按改后的值校验。返回改后整行；id 不存在返回 None。
+    归属 member 不可改（写入归属由代码注入）。"""
+    conn = get_db(db_path)
+    try:
+        row = conn.execute("SELECT * FROM transactions WHERE id = ?", (txn_id,)).fetchone()
+        if row is None:
+            return None
+        new = dict(row)
+        given = {"type": type_, "amount": amount, "currency": currency, "date": date_,
+                 "category": category, "description": description, "notes": notes}
+        new.update({k: v for k, v in given.items() if v is not None})
+        _validate(new["type"], new["amount"], new["currency"], new["category"])
+        conn.execute(
+            """UPDATE transactions SET type=?, amount=?, currency=?, date=?, category=?,
+               description=?, notes=? WHERE id = ?""",
+            (new["type"], new["amount"], new["currency"], new["date"], new["category"],
+             new["description"], new["notes"], txn_id))
+        conn.commit()
+        return new
+    finally:
+        conn.close()
 
 
 def delete_transaction(txn_id: int, db_path: Optional[str] = None) -> bool:

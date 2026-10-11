@@ -6,7 +6,8 @@ backup-restore / backup-reorg 仅限本机，不进 AGENT_COMMANDS。
 from __future__ import annotations
 
 
-from tool_runtime import fn
+import tool_runtime as rt
+from tool_runtime import fn, s
 from backup_sync import backup_tick as _backup_tick
 
 ORDER = 40
@@ -14,26 +15,29 @@ ORDER = 40
 COMMANDS = {"backup-now", "backup-status", "backup-verify", "backup-restore", "backup-reorg"}
 AGENT_COMMANDS = {"backup-now", "backup-status", "backup-verify"}
 
-TOOLS = {
-    "backup_now": "backup-now",
-    "backup_status": "backup-status",
-    "backup_verify": "backup-verify",
-}
+_ACTIONS = ("status", "now", "verify")
+
+
+def tool_backup(args):
+    action = args.get("action") or "status"
+    if action not in _ACTIONS:
+        return f"[错误] action 只能是 {'/'.join(_ACTIONS)}"
+    return rt.run_cli(f"backup-{action}")
+
+
+TOOLS = {"backup": tool_backup}
 
 SCHEMAS = [
-    fn("backup_now", "立即把用户数据镜像到云盘（需用户已配置 backup provider）", {}),
-    fn("backup_status", "查看云盘备份状态（是否启用/已配置/待同步/上次同步/错误）", {}),
-    fn("backup_verify", "校验云端镜像与本地清单是否一致", {}),
+    fn("backup", "云盘备份（需用户已配置 backup provider）", {
+        "action": s("status=看状态（启用/配置/待同步/上次同步/错误）；now=立即镜像到云盘；"
+                    "verify=校验云端与本地清单是否一致", enum=list(_ACTIONS)),
+    }, ["action"]),
 ]
 
 PROMPT_SECTIONS = [
     """## 数据备份（可选功能）
-- 用户问"备份了吗""上次备份什么时候"→ backup_status
-- 用户说"立刻备份""把数据同步到云盘"→ backup_now
-- 用户问"云端和本地一致吗"→ backup_verify
-- backup_status 显示未启用/未配置时：告知备份是可选功能，需要在电脑上按
-  Remote_Backup/SKILL.md 完成 Google Drive 授权并启用；不要反复推销
-- 数据恢复（backup-restore）只能在电脑上手动执行，你调不到""",
+- 未启用/未配置时告知需在电脑上按 Remote_Backup/SKILL.md 授权启用；不要反复推销
+- 数据恢复只能在电脑上手动执行，你调不到""",
 ]
 
 

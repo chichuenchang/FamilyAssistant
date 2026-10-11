@@ -6,7 +6,7 @@ manifest 是普通模块，模块级属性即契约（全部可选，缺省为�
     AGENT_COMMANDS  set   Agent 可调子集；缺省 = COMMANDS
     CLI_TIMEOUTS    dict  子命令 → 秒
     TOOLS           dict  工具名 → callable(args)->str，或 str（纯透传的 cli 子命令）
-    SCHEMAS         list  工具 JSON schema（tool_runtime.fn 构造）
+    SCHEMAS         list  工具 JSON schema（tool_runtime.fn 构造；kebab 参数名对模型显示为 snake_case，派发前换回）
     MEMBER_LOCKED   set   剥离 LLM 给的 member、注入发送者（写入 / 按成员私有）
     CONTEXT_TOOLS   set   注入 __channel/__user（异步回推）
     UNTRUSTED_TOOLS set   结果含非本地来源文本（网页/OCR/远程日历）→ 套 tool_runtime.fence 才进 LLM

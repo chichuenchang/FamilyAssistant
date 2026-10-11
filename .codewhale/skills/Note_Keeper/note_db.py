@@ -118,6 +118,26 @@ def delete_note(
     return ok
 
 
+def update_note(
+    member: str,
+    note_id: int,
+    content: str,
+    db_path: Optional[str] = None,
+) -> bool:
+    """改写 member 名下一条备忘的内容。归属校验同 delete_note。"""
+    if not content or not content.strip():
+        raise ValueError("content 不能为空")
+    conn = _connect(db_path)
+    cur = conn.execute(
+        "UPDATE notes SET content = ? WHERE id = ? AND member = ?",
+        (content.strip(), note_id, member),
+    )
+    conn.commit()
+    ok = cur.rowcount > 0
+    conn.close()
+    return ok
+
+
 def set_pinned(
     member: str,
     note_id: int,

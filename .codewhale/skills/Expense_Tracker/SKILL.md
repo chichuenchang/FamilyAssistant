@@ -150,6 +150,12 @@ python .codewhale/skills/Expense_Tracker/cli.py add --type expense --amount 45.5
 python .codewhale/skills/Expense_Tracker/cli.py list --type expense --start 2026-05-01 --end 2026-05-31
 python .codewhale/skills/Expense_Tracker/cli.py list --category 餐饮 --currency USD
 
+# 批量（账单逐笔；逐行独立，首行汇总 已添加/疑似重复/错误）
+python .codewhale/skills/Expense_Tracker/cli.py add-batch --rows '[{"type":"expense","amount":12,"date":"2026-05-01","desc":"Starbucks 08:10"}]'
+
+# 修改（只改给了的字段；归属不可改）
+python .codewhale/skills/Expense_Tracker/cli.py update --id 3 --amount 7.5 --desc 午餐
+
 # 删除
 python .codewhale/skills/Expense_Tracker/cli.py delete --id 3
 
@@ -206,6 +212,7 @@ python .codewhale/skills/Expense_Tracker/cli.py categories --type expense
 | "现在美元汇率多少" | `fx-get --from USD --to CNY` |
 | "这笔定期存款哪来的" | `transfer-list --to-deposit-id <id>` 或 `--trace <银行/账号>` |
 | "我把X块换成美元转去Y银行存定期" | `transfer-add ...`（自动建定期存款） |
+| 固定视图答不了的统计/对比 | Agent 工具 `query_ledger`（只读 SQL，限制见 `tool_runtime.ro_query`） |
 
 ## 多币种策略
 

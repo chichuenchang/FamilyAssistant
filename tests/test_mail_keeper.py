@@ -1158,7 +1158,7 @@ class TestMuteTools:
 
     def test_tools_are_registered_member_locked(self):
         names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
-        for t in ("mail_last_push", "mail_mute", "mail_rules"):
+        for t in ("mail_last_push", "mail_rule"):
             assert t in names and t in ac._MEMBER_LOCKED
         assert "mail_last_push" in ac._UNTRUSTED_TOOLS
 
@@ -1193,9 +1193,14 @@ class TestMuteTools:
     def test_rules_tool_on_empty_list(self):
         assert "没有" in at.tool_mail_rules({"member": "MemberA"})
 
-    def test_always_tool_is_registered_member_locked(self):
-        names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
-        assert "mail_always" in names and "mail_always" in ac._MEMBER_LOCKED
+    def test_mail_rule_dispatches_actions(self):
+        tool = ac._TOOL_MAP["mail_rule"]
+        out = tool({"member": "MemberA", "action": "always", "domain": "school.example"})
+        assert "school.example" in out and mr.load("MemberA")[0]["push"] == "always"
+        assert "school.example" in tool({"member": "MemberA", "action": "list"})
+        assert tool({"member": "MemberA", "action": "remove"}).startswith("[错误]")
+        tool({"member": "MemberA", "action": "remove", "number": 1})
+        assert mr.load("MemberA") == []
 
     def test_always_persists_always_rule(self):
         out = at.tool_mail_always({"member": "MemberA", "domain": "school.example",

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import sys
 from pathlib import Path
@@ -17,6 +18,23 @@ from tool_runtime import fn, int_, s
 ORDER = 15
 
 
+_FAILED = ("[OCR 未配置]", "[OCR 失败]", "[OCR 错误]", "[未识别到文字]")
+
+
+def _with_alt(tool):
+    """OCR 失败结果末尾告诉模型还有什么路（选不选由它定）。"""
+    @functools.wraps(tool)
+    def wrapped(args):
+        out = tool(args)
+        if not out.startswith(_FAILED):
+            return out
+        if Path(args.get("path", "")).suffix.lower() == ".pdf":
+            return out + "；PDF 没有别的读法，告诉用户哪步失败"
+        return out + "；可改用 view_image 让识图模型逐字照录"
+    return wrapped
+
+
+@_with_alt
 def tool_ocr_image(args):
     resolved = rt.data_file(args.get("path", ""), "只允许识别数据目录内的图片")
     if isinstance(resolved, str):
@@ -31,6 +49,7 @@ def tool_ocr_image(args):
         return f"[OCR 错误] {e}"
 
 
+@_with_alt
 def tool_ocr_read(args):
     resolved = rt.data_file(args.get("path", ""), "只允许识别数据目录内的文件")
     if isinstance(resolved, str):
@@ -46,12 +65,13 @@ def tool_ocr_read(args):
         total = pdf_page_count(resolved) if resolved.suffix.lower() == ".pdf" else None
         if total and total > MAX_PDF_PAGES:
             text += (f"\n[仅读了前 {MAX_PDF_PAGES} 页，共 {total} 页；"
-                     f"用户要后面内容再用 ocr_read_pages]")
+                     f"要后面内容就带 first_page/last_page 再调 ocr_read]")
         return text
     except Exception as e:
         return f"[OCR 错误] {e}"
 
 
+@_with_alt
 def tool_ocr_read_pages(args):
     resolved = rt.data_file(args.get("path", ""), "只允许识别数据目录内的文件")
     if isinstance(resolved, str):
@@ -87,26 +107,27 @@ def tool_ocr_read_pages(args):
         return f"[OCR 错误] {e}"
 
 
-TOOLS = {"ocr_image": tool_ocr_image, "ocr_read": tool_ocr_read,
-         "ocr_read_pages": tool_ocr_read_pages}
+def tool_ocr_read_any(args):
+    """给了页段就按页读 PDF，否则读前 MAX_PDF_PAGES 页 / 整张图。"""
+    if args.get("first_page") or args.get("last_page"):
+        return tool_ocr_read_pages(args)
+    return tool_ocr_read(args)
+
+
+TOOLS = {"ocr_image": tool_ocr_image, "ocr_read": tool_ocr_read_any}
 
 UNTRUSTED_TOOLS = set(TOOLS)
 
 SCHEMAS = [
     fn("ocr_image", "OCR 识别票据/账单图片，逐笔提取交易明细（返回 transactions 数组，"
-       "非账单总额）。拿到后逐笔调 add_transaction 记账", {
+       "非账单总额）。拿到后可用 add_transactions 一次记完", {
         "path": s("图片路径"),
     }, ["path"]),
     fn("ocr_read", "读任意图片/PDF 里的文字，返回原文（邮件附件、扫描件、截图、合同、"
-       "说明书、通知信…）。要的是逐笔交易明细就改用 ocr_image；其余一切\"这文件里写了什么\""
-       "都用本工具，拿到原文再自己判断怎么用。PDF 只读前 20 页", {
+       "说明书、通知信…）。要的是逐笔交易明细就改用 ocr_image。PDF 默认读前 20 页；"
+       "给 first_page/last_page 可读任意页段（每页带页号，单次最多 20 页，每页耗一次 OCR 额度）", {
         "path": s("文件路径（如 download_attachment 返回的那行）"),
+        "first_page": int_("PDF 起始页（1 起），可选"),
+        "last_page": int_("PDF 结束页（含），可选；与起始页相差超 19 页时截到起始页+19"),
     }, ["path"]),
-    fn("ocr_read_pages", "按页段读 PDF 文字（每页带页号），可读第 20 页之后。备用工具："
-       "先用 ocr_read；仅当用户要的内容在前 20 页之外、或点名要某几页时才用。"
-       "单次最多 20 页（每页耗一次 OCR 额度），更多就分段多次调用", {
-        "path": s("PDF 路径"),
-        "first_page": int_("起始页（1 起）"),
-        "last_page": int_("结束页（含）；与起始页相差超 19 页时截到起始页+19"),
-    }, ["path", "first_page", "last_page"]),
 ]

@@ -15,7 +15,7 @@
 ├── calendar_provider.py ← Google Calendar + Tasks 实现（契约见文件头注释，可换）
 ├── providers.py         ← provider 注册表：(domain, name) → 实现（google_calendar/google_tasks）
 ├── image_gc.py          ← 陈旧来图清理：删 N 年前活动/待办的 source_image（节流，传输层调）
-└── cli.py               ← cal-add / cal-list / cal-done / cal-delete / cal-sync / cal-status
+└── cli.py               ← cal-add / cal-list / cal-update / cal-done / cal-delete / cal-sync / cal-status
 ```
 
 活动/待办可带 `source_image`（原始来图，data 相对路径）：从图片建活动/待办时，传输层把来图
@@ -57,10 +57,13 @@
 
 ## CLI
 
+对外 id 带前缀 `e12`（活动）/ `t7`（待办）：两库各自自增，裸号会撞（`cal_db.ref`）。`--id` 收前缀或裸号+`--kind`。
+
 | 命令 | 行为 | Agent 可调 |
 |------|------|-----------|
 | `cal-add --member M --kind event\|task --title T [--date D] [--start HH:MM] [--end HH:MM] [--all-day] [--location L] [--notes N] [--source-image PATH]` | 新增（活动必须有日期；待办 --date=截止日可省；--source-image 关联原始来图） | ✅ |
 | `cal-list --member M [--days N] [--from D] [--to D] [--kind K] [--all]` | 未来 N 天日程 + 开放待办；给 `--from`/`--to` 则查任意窗口**含历史**（先按窗口实拉远端，不跑常驻窗口校验；`--from` 省略=不限过去，`--to` 省略=今天+N）（--member 定位成员分库，无 CAL_DB_PATH 覆盖时必填） | ✅ |
+| `cal-update --member M --id e12\|t7 [--title] [--date D] [--start] [--end] [--all-day] [--location] [--notes]` | 只改给了的字段；活动给 --date = 整条平移（保留时刻）；推远端用 provider 可选 `update_event/update_task`（PATCH），缺省则只改本地 | ✅ |
 | `cal-done --member M --id N` | 完成待办（--member 定位成员分库，无 CAL_DB_PATH 覆盖时必填） | ✅ |
 | `cal-delete --member M --id N` | 取消日程（同步删除远端；--member 同上必填） | ✅ |
 | `cal-sync [--member M]` | 立即强制刷新（忽略节流）+ 校验（--member 刷该成员活动+待办；不给则单库全局视图） | ✅ |

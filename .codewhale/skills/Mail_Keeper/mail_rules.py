@@ -2,9 +2,9 @@
 Mail Keeper — 新邮件播报规则（用户教出来的，纯逻辑）。
 
 无规则 = 每封由 mail_triage 让 LLM 判是否需处理。规则先于 LLM，命中就不问 LLM：
-    mute    别推（"这种以后别推" → mail_mute）
-    always  必推（"这种要推"/漏推了 → mail_always），同一封两类都中 always 胜
-可撤销（mail_rules 删）。
+    mute    别推（"这种以后别推" → mail_rule action=mute）
+    always  必推（"这种要推"/漏推了 → mail_rule action=always），同一封两类都中 always 胜
+可撤销（mail_rule action=remove）。
 
 规则 data/<成员>/mail/rules.json（学来的偏好，入备份，跟人走）：
     [{"kind": sender|domain|subject|label, "value": str, "push": mute|always,

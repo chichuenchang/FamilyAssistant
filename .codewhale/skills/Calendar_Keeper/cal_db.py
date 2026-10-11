@@ -7,7 +7,7 @@ Family Assistant — Calendar Keeper 数据库操作层
 
 日程按成员私有（每成员独立 schedule/tasks 库，只见自己的）；member 记录归属。
 远程日历是日程数据的事实源，本表是缓存 + 离线缓冲：
-    synced=0  本地有改动待推送（新建/完成/取消）
+    synced=0  本地有改动待推送（新建/编辑/完成/取消）
     synced=1  与远端一致；拉取时远端字段直接覆盖（remote wins）
     origin    local=本地创建 / remote=从远端拉取
 同步引擎（calendar_sync.py）是唯一推/拉调用方。
@@ -70,6 +70,24 @@ def _connect(db_path: Optional[str] = None) -> sqlite3.Connection:
         conn.execute("ALTER TABLE schedule_items ADD COLUMN source_image TEXT DEFAULT ''")
         conn.commit()
     return conn
+
+
+_REF_PREFIX = {"event": "e", "task": "t"}
+
+
+def ref(kind: str, item_id: int) -> str:
+    """对外 id：活动/待办分库各自自增，裸号会撞 → 一律带前缀 e12 / t7。"""
+    return f"{_REF_PREFIX[kind]}{item_id}"
+
+
+def parse_ref(raw) -> tuple[Optional[str], int]:
+    """ref 的逆：e12 / t7 / #e12 / 12 → (kind 或 None（裸号）, id)。格式不对抛 ValueError。"""
+    s = str(raw).strip().lstrip("#").lower()
+    kind = next((k for k, p in _REF_PREFIX.items() if s.startswith(p)), None)
+    num = s[1:] if kind else s
+    if not num.isdigit():
+        raise ValueError(f"id 格式不对: {raw}（形如 e12 活动 / t7 待办）")
+    return kind, int(num)
 
 
 def _now() -> str:
@@ -222,6 +240,30 @@ def set_status(
     ok = cur.rowcount > 0
     conn.close()
     return ok
+
+
+_EDITABLE = ("title", "start_at", "end_at", "all_day", "location", "notes")
+
+
+def update_item(item_id: int, fields: dict,
+                db_path: Optional[str] = None) -> Optional[dict]:
+    """本地编辑（只改 fields 里给的远端字段）→ synced=0 待推送。返回改后整行；无此 id 返回 None。
+    归属/状态/uid 不经此改（状态走 set_status）。"""
+    bad = set(fields) - set(_EDITABLE)
+    if bad:
+        raise ValueError(f"不可编辑字段: {', '.join(sorted(bad))}")
+    if "title" in fields and not (fields["title"] or "").strip():
+        raise ValueError("title 不能为空")
+    if not fields:
+        return get_item(item_id, db_path=db_path)
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    conn = _connect(db_path)
+    cur = conn.execute(
+        f"UPDATE schedule_items SET {sets}, synced = 0, updated_at = ? WHERE id = ?",
+        (*fields.values(), _now(), item_id))
+    conn.commit()
+    conn.close()
+    return get_item(item_id, db_path=db_path) if cur.rowcount else None
 
 
 def clear_source_image(item_id: int, db_path: Optional[str] = None) -> bool:

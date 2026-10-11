@@ -258,8 +258,8 @@ DOC_SENTINEL = "\x01DOC:"
 TRUNCATED_REPLY_MARK = "（回复超出长度上限被截断）"
 TRUNCATED_TOOLS_NOTE = ("[系统] 你上一条输出超出长度上限被截断，其中的工具调用参数不完整，"
                         "全部未执行。请减少推理、把工作拆成更小的批次重新调用。")
-# 工具轮数用完仍在调工具：补一次收尾调用，要求只用已有结果作答
-TOOL_ROUNDS = 16
+# 工具轮数用完仍在调工具：补一次收尾调用，要求只用已有结果作答（上限见 config agent.tool_rounds）
+TOOL_ROUNDS = int((_CONFIG.get("agent") or {}).get("tool_rounds") or 30)
 TOOL_LIMIT_NOTE = ("[系统] 本轮工具调用次数已用完，不要再调用任何工具。请直接用已拿到的结果"
                    "回复用户：列出已完成的部分，说明还剩哪些没做，并提示用户回复“继续”接着处理。")
 
@@ -457,6 +457,7 @@ class Agent:
                 except (json.JSONDecodeError, KeyError):
                     targs = {}
                 fn = _TOOL_MAP.get(name)
+                targs = rt.to_manifest_keys(name, targs)
                 targs = _apply_member(name, targs, member)
                 targs = _apply_context(name, targs, self.channel, user, member,
                                        turn_id=turn_id, text=said)

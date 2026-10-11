@@ -47,7 +47,8 @@ def tool_view_image(args):
         parts.append(part)
     models = _llm.vision_models()
     if not models:
-        return "[看图不可用] 没有已配置的识图模型（如 deepseek-flash 需 DEEPSEEK_API_KEY）"
+        return ("[看图不可用] 没有已配置的识图模型（如 deepseek-flash 需 DEEPSEEK_API_KEY）"
+                "；要文字可改用 ocr_read")
     question = (args.get("question") or "").strip() or "详细描述这张图的内容。"
     msgs = [{"role": "system", "content": _SYSTEM},
             {"role": "user", "content": [{"type": "text", "text": question}, *parts]}]
@@ -57,7 +58,7 @@ def tool_view_image(args):
         if answer:
             return answer
         _log.warning("识图模型 %s 无回答，换下一个", model)
-    return f"[看图失败] 识图模型（{'、'.join(models)}）都没回答"
+    return f"[看图失败] 识图模型（{'、'.join(models)}）都没回答；要文字可改用 ocr_read"
 
 
 TOOLS = {"view_image": tool_view_image}
@@ -69,19 +70,13 @@ SCHEMAS = [
        "版面，或 OCR 读不出东西的图。返回文字回答。只收图片（jpeg/png/gif/webp），PDF 用 ocr_read。"
        "多张图一起问（对比、找差异）就放进同一次调用", {
         "paths": {"type": "array", "items": {"type": "string"},
-                  "description": f"图片路径（材料路径或之前存下的 source-image），1–{MAX_IMAGES} 张"},
+                  "description": f"图片路径（材料路径或之前存下的 source_image），1–{MAX_IMAGES} 张"},
         "question": s("要识图模型回答的具体问题，带上用户关心的点（如“这是什么植物，叶子有没有病斑”）；"
                       "留空 = 详细描述"),
     }, ["paths"]),
 ]
 
 PROMPT_RULES = [
-    "看材料（图片/PDF）按需选工具：要精确文字/数字（票据金额、账号、合同条款、表格）→ ocr_read"
-    "（逐笔交易明细用 ocr_image）；要认物体、场景、人物动作、手写、图表、颜色、版面，或 OCR 没读出东西"
-    " → view_image（只收图片）；两样都要就都调（同一轮并发）；指示本身已够用（如只说转发给谁）就都不调。"
-    "用户问起之前存下的图（备忘/日程/文档的 source-image）里有什么，也用 view_image",
-    "看材料的工具不灵（返回 [OCR 未配置]/[OCR 失败]/[OCR 错误]/[未识别到文字]/[看图不可用]/[看图失败]，"
-    "或结果明显不对题）→ 不要直接放弃，换另一个再试：OCR 不行就 view_image 问图上写了什么"
-    "（让它逐字照录；金额/日期/号码这类关键数字回复时提醒用户核对）；看图不行就 ocr_read 拿文字凑合。"
-    "PDF 只有 OCR 一条路。两个都不行才告诉用户哪步失败、可以怎么办（如重拍清晰些、稍后再试）",
+    "看材料：ocr_read 读精确文字/数字，view_image 认物体/手写/图表/版面（只收图片），自行按需选或都调；"
+    "一个不灵就换另一个再试，都不行才告诉用户哪步失败。view_image 读出的金额/日期/号码提醒用户核对",
 ]

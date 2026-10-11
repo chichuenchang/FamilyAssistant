@@ -301,3 +301,24 @@ def test_tool_round_cap_summary_tool_calls_not_run(monkeypatch):
     out = agent.handle("OCR 全部账单", user="u", member="Jim")
     assert len(ran) == agent_core.TOOL_ROUNDS
     assert "生成回复失败" in out
+
+
+def test_model_sees_snake_case_params_and_cli_gets_kebab_flags(monkeypatch):
+    # 模型只见一种命名（snake_case）；派发前换回 manifest 的 kebab 名 → CLI 标志不变
+    import tool_runtime as rt
+    props = {k for t in agent_core.TOOL_SCHEMAS
+             for k in t["function"]["parameters"]["properties"]}
+    assert not [k for k in props if "-" in k]
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    agent = agent_core.Agent(idle_clear_hours=0)
+    replies = iter([
+        {"tool_calls": [{"id": "c1", "function": {
+            "name": "add_deposit",
+            "arguments": '{"amount": 1000, "start_date": "2026-01-01"}'}}]},
+        {"content": "好了"},
+    ])
+    monkeypatch.setattr(agent, "_call_llm", lambda msgs, user="": next(replies))
+    seen = []
+    monkeypatch.setattr(rt, "run_cli", lambda cmd, args=None: seen.append((cmd, args)) or "ok")
+    agent.handle("存了定期", user="u", member="爸爸")
+    assert seen == [("deposit-add", {"amount": 1000, "start-date": "2026-01-01", "member": "爸爸"})]

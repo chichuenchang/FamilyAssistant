@@ -87,6 +87,8 @@ def cmd_note_list(args):
         return
     for r in rows:
         print(_fmt_note(r))
+    if len(rows) == args.limit:
+        print(f"…只列了最近 {args.limit} 条，更早的用 search_notes 或加大 limit")
 
 
 def cmd_note_search(args):
@@ -111,6 +113,21 @@ def cmd_note_delete(args):
     if ok:
         _mark_backup_dirty()
         print(f"已删除备忘 #{args.id}")
+    else:
+        print("[错误] 无此备忘", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_note_edit(args):
+    ok = note_db.update_note(
+        member=args.member,
+        note_id=args.id,
+        content=args.content,
+        db_path=_db_for(args.member),
+    )
+    if ok:
+        _mark_backup_dirty()
+        print(f"已更新备忘 #{args.id}")
     else:
         print("[错误] 无此备忘", file=sys.stderr)
         sys.exit(1)
@@ -315,6 +332,11 @@ def main() -> int:
     p.add_argument("--member", required=True, help="归属成员")
     p.add_argument("--id", type=int, required=True, help="备忘 ID")
 
+    p = sub.add_parser("note-edit", help="改写备忘内容")
+    p.add_argument("--member", required=True, help="归属成员")
+    p.add_argument("--id", type=int, required=True, help="备忘 ID")
+    p.add_argument("--content", required=True, help="新内容（整条覆盖）")
+
     p = sub.add_parser("note-pin", help="置顶/取消置顶备忘")
     p.add_argument("--member", required=True, help="归属成员")
     p.add_argument("--id", type=int, required=True, help="备忘 ID")
@@ -385,6 +407,7 @@ def main() -> int:
         "note-list": cmd_note_list,
         "note-search": cmd_note_search,
         "note-delete": cmd_note_delete,
+        "note-edit": cmd_note_edit,
         "note-pin": cmd_note_pin,
         "sheet-create": cmd_sheet_create,
         "sheet-list": cmd_sheet_list,
