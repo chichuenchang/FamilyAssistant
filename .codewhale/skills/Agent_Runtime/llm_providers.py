@@ -151,7 +151,7 @@ def _public(msg: dict) -> dict:
     return {k: v for k, v in msg.items() if not k.startswith("_")}
 
 
-# DeepSeek 单图上限 32 MiB（base64 前）；按内容判格式，扩展名不可信（微信存图常 .jpg 实为 png）
+# DeepSeek 单图上限 32 MiB（base64 前），取 20 MiB 留余量；按内容判格式，扩展名不可信（微信存图常 .jpg 实为 png）
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 _IMAGE_MAGIC = ((b"\xff\xd8\xff", "jpeg"), (b"\x89PNG", "png"), (b"GIF8", "gif"))
 
