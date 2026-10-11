@@ -85,14 +85,12 @@ def sees_images(model: str) -> bool:
     return bool(spec(model).get("vision"))
 
 
-def vision_model() -> str:
-    """view_image 用的识图模型：config llm.vision_model（须识图且有 key），否则模型表里
-    第一个识图且有 key 的；都没有返回 ""。与用户 /model 无关——主模型不识图也能看图。"""
+def vision_models() -> list[str]:
+    """view_image 依次试的识图模型：config llm.vision_model 在前，其余按模型表顺序；
+    只列识图且有 key 的。与用户 /model 无关——主模型不识图也能看图。"""
     want = canon_model((_rt.CONFIG.get("llm") or {}).get("vision_model"))
-    for name in ([want] if want else []) + list(MODELS):
-        if sees_images(name) and not missing_key(name):
-            return name
-    return ""
+    order = dict.fromkeys(([want] if want else []) + list(MODELS))
+    return [n for n in order if sees_images(n) and not missing_key(n)]
 
 
 def missing_key(model: str) -> str:
