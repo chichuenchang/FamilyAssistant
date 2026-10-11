@@ -6,5 +6,5 @@
 - `fallback=False`：DeepSeek 挂了不顶替 GLM。带图发不识图模型 = 400。
 - 实测：400×300 PNG 一张 + 一句问题 = 237 prompt token。DeepSeek 文档：每图 ≤1024 token；>~1300×1300 缩小，<~544×544 放大。
 - 格式按文件头判（微信存图扩展名不可信）：jpeg/png/gif/webp。HEIC、PDF 拒收，PDF 走 `ocr_read`。
-- 工具互为后备（PROMPT_RULES）：OCR 失败改 `view_image` 照录文字（提醒用户核对数字），看图失败改 `ocr_read`。实测两向都切。PDF 无后备。
+- OCR/看图互为后备（规则见 `PROMPT_RULES`）：实测两向都切。PDF 无后备。
 - 结果在 `UNTRUSTED_TOOLS`：图中文字可藏注入。
