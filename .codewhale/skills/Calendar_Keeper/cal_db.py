@@ -72,6 +72,11 @@ def _connect(db_path: Optional[str] = None) -> sqlite3.Connection:
     return conn
 
 
+def ref(kind: str, item_id: int) -> str:
+    """对外 id：活动/待办分库各自自增，裸号会撞 → 一律带前缀 e12 / t7。"""
+    return f"{'e' if kind == 'event' else 't'}{item_id}"
+
+
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 

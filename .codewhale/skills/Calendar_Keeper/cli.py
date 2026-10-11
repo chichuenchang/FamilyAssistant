@@ -170,11 +170,29 @@ def _fmt_when(item: dict) -> str:
     return f"{day} {st}"
 
 
+_ref = cal_db.ref
+
+
+def _apply_ref(args) -> None:
+    """--id 接受 e12 / t7 / #e12 / 12：前缀定 kind（与 --kind 冲突则报错），args.id 归一成 int。"""
+    raw = str(args.id).strip().lstrip("#").lower()
+    kind = {"e": "event", "t": "task"}.get(raw[:1])
+    if kind:
+        raw = raw[1:]
+    if not raw.isdigit():
+        raise ValueError(f"id 格式不对: {args.id}（形如 e12 活动 / t7 待办）")
+    if kind and getattr(args, "kind", None) and args.kind != kind:
+        raise ValueError(f"id {args.id} 是{'活动' if kind == 'event' else '待办'}，与 --kind {args.kind} 不符")
+    args.id = int(raw)
+    if kind:
+        args.kind = kind
+
+
 def _fmt_item(item: dict) -> str:
     tag = "活动" if item["kind"] == "event" else "待办"
     state = {"done": "[已完成] ", "cancelled": "[已取消] "}.get(item["status"], "")
     when = _fmt_when(item)
-    parts = [f"#{item['id']} [{tag}] {state}{item['title']}"]
+    parts = [f"#{_ref(item['kind'], item['id'])} [{tag}] {state}{item['title']}"]
     if when:
         parts.append(when)
     if item["location"]:
@@ -216,7 +234,7 @@ def cmd_cal_add(args):
     _mark_backup_dirty()
     _push_quietly(db, args.member, args.kind)
     tag = "活动" if args.kind == "event" else "待办"
-    print(f"已添加{tag} #{item_id}（{_sync_suffix(item_id, db)}）")
+    print(f"已添加{tag} #{_ref(args.kind, item_id)}（{_sync_suffix(item_id, db)}）")
     _print_verify(args.member, ["schedule" if args.kind == "event" else "tasks"])
 
 
@@ -254,13 +272,16 @@ def _edited_times(item: dict, args) -> dict:
 
 def cmd_cal_update(args):
     _validate_member(args.member, required=True)
+    _apply_ref(args)
+    if not args.kind:
+        raise ValueError("id 要带前缀（e12 / t7）或给 --kind")
     db = _store_for(args.member, args.kind)
     item = cal_db.get_item(args.id, db_path=db)
     if item is None or item["kind"] != args.kind:
         print("[错误] 无此日程", file=sys.stderr)
         sys.exit(1)
     if item["status"] != "active":
-        print(f"[错误] #{args.id} 已{'完成' if item['status'] == 'done' else '取消'}，不能编辑",
+        print(f"[错误] #{_ref(args.kind, args.id)} 已{'完成' if item['status'] == 'done' else '取消'}，不能编辑",
               file=sys.stderr)
         sys.exit(1)
     fields = {k: v for k, v in (("title", args.title), ("location", args.location),
@@ -358,23 +379,29 @@ def cmd_cal_list(args):
 
 def cmd_cal_done(args):
     _validate_member(args.member, required=True)
+    args.kind = None
+    _apply_ref(args)
+    if args.kind == "event":
+        print(f"[错误] #{_ref('event', args.id)} 是活动，取消请用 cal-delete", file=sys.stderr)
+        sys.exit(1)
     db = _DB_OVERRIDE or str(_paths.member_store(args.member, "tasks"))
     item = cal_db.get_item(args.id, db_path=db)
     if item is None:
         print("[错误] 无此日程", file=sys.stderr)
         sys.exit(1)
     if item["kind"] != "task":
-        print(f"[错误] #{args.id} 是活动，取消请用 cal-delete", file=sys.stderr)
+        print(f"[错误] #{_ref('event', args.id)} 是活动，取消请用 cal-delete", file=sys.stderr)
         sys.exit(1)
     cal_db.set_status(args.id, "done", db_path=db)
     _mark_backup_dirty()
     _push_quietly(db, args.member, "task")
-    print(f"已完成待办 #{args.id}（{_sync_suffix(args.id, db)}）")
+    print(f"已完成待办 #{_ref('task', args.id)}（{_sync_suffix(args.id, db)}）")
     _print_verify(args.member, ["tasks"])
 
 
 def cmd_cal_delete(args):
     _validate_member(args.member, required=True)
+    _apply_ref(args)
     # 活动库/待办库各自自增 → 同一 id 号可能在两库并存。给了 --kind 只查该库；
     # 没给且两库都命中 → 拒绝消歧（旧行为按库序取首个，会把待办删成活动）。
     kind = getattr(args, "kind", None)
@@ -396,7 +423,7 @@ def cmd_cal_delete(args):
     cal_db.set_status(args.id, "cancelled", db_path=db)
     _mark_backup_dirty()
     _push_quietly(db, args.member, item["kind"])
-    print(f"已取消日程 #{args.id}「{item['title']}」（{_sync_suffix(args.id, db)}）")
+    print(f"已取消日程 #{_ref(item['kind'], args.id)}「{item['title']}」（{_sync_suffix(args.id, db)}）")
     _print_verify(args.member,
                   ["schedule" if item["kind"] == "event" else "tasks"])
 
@@ -474,8 +501,8 @@ def main() -> int:
 
     p = sub.add_parser("cal-update", help="编辑一条活动/待办（只改给了的字段，同步到远端）")
     p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
-    p.add_argument("--id", type=int, required=True, help="日程 ID")
-    p.add_argument("--kind", required=True, choices=["event", "task"])
+    p.add_argument("--id", required=True, help="日程 ID（e12 / t7；裸号需配 --kind）")
+    p.add_argument("--kind", choices=["event", "task"])
     p.add_argument("--title")
     p.add_argument("--date", help="新日期 YYYY-MM-DD（活动整条平移；待办=截止日）")
     p.add_argument("--start", help="新开始时间 HH:MM")
@@ -486,11 +513,11 @@ def main() -> int:
 
     p = sub.add_parser("cal-done", help="完成一条待办")
     p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
-    p.add_argument("--id", type=int, required=True, help="日程 ID")
+    p.add_argument("--id", required=True, help="日程 ID（e12 / t7 / 裸号）")
 
     p = sub.add_parser("cal-delete", help="取消一条日程（同步删除远端）")
     p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
-    p.add_argument("--id", type=int, required=True, help="日程 ID")
+    p.add_argument("--id", required=True, help="日程 ID（e12 / t7 / 裸号）")
     p.add_argument("--kind", choices=["event", "task"],
                    help="活动或待办（id 在两库可能撞号，指定以消歧）")
 

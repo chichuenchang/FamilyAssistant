@@ -1087,6 +1087,17 @@ def _cli(args, db, tmp):
 
 
 class TestCli:
+    def test_prefixed_ids_pick_the_right_store(self, cal_db_path, tmp_path):
+        _cli(["cal-add", "--member", "MemberA", "--kind", "task", "--title", "买蛋糕"],
+             cal_db_path, tmp_path)
+        r = _cli(["cal-done", "--member", "MemberA", "--id", "t1"], cal_db_path, tmp_path)
+        assert r.returncode == 0 and "#t1" in r.stdout, r.stderr
+        r = _cli(["cal-update", "--member", "MemberA", "--id", "e1", "--kind", "task",
+                  "--title", "x"], cal_db_path, tmp_path)
+        assert r.returncode != 0 and "不符" in r.stderr
+        r = _cli(["cal-done", "--member", "MemberA", "--id", "abc"], cal_db_path, tmp_path)
+        assert r.returncode != 0 and "格式" in r.stderr
+
     def test_cal_update_shifts_event_and_keeps_times(self, cal_db_path, tmp_path):
         _cli(["cal-add", "--member", "MemberA", "--kind", "event", "--title", "游泳课",
               "--date", D1, "--start", "14:00", "--end", "15:00"], cal_db_path, tmp_path)
@@ -1123,7 +1134,7 @@ class TestCli:
                   "--title", "游泳课", "--date", D1, "--start", "14:00",
                   "--end", "15:00", "--location", "泳馆"], cal_db_path, tmp_path)
         assert r.returncode == 0, r.stderr
-        assert "#1" in r.stdout and "待同步" in r.stdout
+        assert "#e1" in r.stdout and "待同步" in r.stdout
         item = cal_db.get_item(1, db_path=cal_db_path)
         assert item["start_at"] == f"{D1}T14:00"
         assert item["end_at"] == f"{D1}T15:00"

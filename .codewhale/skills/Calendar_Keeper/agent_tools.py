@@ -112,8 +112,7 @@ SCHEMAS = [
     }),
     fn("update_schedule_item", "编辑一条活动/待办，只传要改的字段（同步到远程，远端参会人等不受影响）。"
        "改期、改时间、补地点备注、合并重复时用，别删了重加", {
-        "id": int_("日程 id"),
-        "kind": s("活动(event)或待办(task)，按列表里该条的 [活动]/[待办]", enum=["event", "task"]),
+        "id": s("条目 id，照列表原样传（e12=活动 / t7=待办）"),
         "title": s("新标题"),
         "date": s("新日期 YYYY-MM-DD：活动整条平移到该日（保留时刻）；待办 = 新截止日"),
         "start": s("新开始时间 HH:MM（活动）"),
@@ -121,14 +120,12 @@ SCHEMAS = [
         "all-day": boolean("改成全天活动"),
         "location": s("新地点"),
         "notes": s("新备注（覆盖）"),
-    }, ["id", "kind"]),
+    }, ["id"]),
     fn("complete_task", "标记一条待办完成（同步到远程）", {
-        "id": int_("日程 id"),
+        "id": s("待办 id，如 t7"),
     }, ["id"]),
     fn("remove_schedule_item", "取消一条日程/待办（已上云的同步删除远端）", {
-        "id": int_("日程 id"),
-        "kind": s("活动(event)或待办(task)。活动与待办 id 会撞号，"
-                  "务必按 list_schedule 里该条显示的 [活动]/[待办] 一并传入", enum=["event", "task"]),
+        "id": s("条目 id，照列表原样传（e12=活动 / t7=待办）"),
     }, ["id"]),
     fn("calendar_status", "查看日历同步状态并实时核对本地↔远端一致性（启用/配置/上次刷新/校验结论）", {
         "sync": boolean("true = 先与远程日历强制同步一轮（忽略节流）再报告"),
