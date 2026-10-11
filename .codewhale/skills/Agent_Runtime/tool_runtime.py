@@ -190,10 +190,16 @@ def resolve_sendable(path: str, member: str) -> str | None:
 
 
 def data_path_guard(path: str) -> Path | None:
-    """LLM 给的路径只允许指向 data_root 内；越界或无效返回 None。"""
+    """LLM 给的路径只允许指向 data_root 内；越界或无效返回 None。
+    相对路径先按 data_root 解析（库里存的 source-image 都是这种），不存在再按项目根（data/...）。"""
     try:
         p = Path(path)
-        resolved = (p if p.is_absolute() else ROOT / p).resolve()
+        if p.is_absolute():
+            resolved = p.resolve()
+        else:
+            resolved = _paths.resolve_rel(path).resolve()
+            if not resolved.exists():
+                resolved = (ROOT / p).resolve()
         if not resolved.is_relative_to(_paths.data_root().resolve()):
             return None
         return resolved

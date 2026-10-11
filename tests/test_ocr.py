@@ -151,6 +151,17 @@ def test_ocr_read_returns_plain_text(monkeypatch, tmp_path):
 def test_ocr_read_refuses_path_outside_data_root(tmp_path):
     out = _ocr_at.tool_ocr_read({"path": str(tmp_path / "secret.png")})
     assert out.startswith("[错误]")
+    assert _ocr_at.tool_ocr_read({"path": "../secret.png"}).startswith("[错误]")
+
+
+def test_ocr_read_accepts_data_relative_path(monkeypatch):
+    # 库里存的 source-image 是 data 相对路径（Jim/notes/...），不能按项目根解析
+    (_paths.data_root() / "Jim").mkdir(exist_ok=True)
+    (_paths.data_root() / "Jim" / "scan.jpg").write_bytes(b"jpg")
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda p: p)
+    out = _ocr_at.tool_ocr_read({"path": "Jim/scan.jpg"})
+    assert out == str((_paths.data_root() / "Jim" / "scan.jpg").resolve())
 
 
 def test_ocr_read_registered_and_untrusted():
