@@ -34,6 +34,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 
@@ -351,9 +352,10 @@ class Agent:
         self._llm_overrides: dict[str, dict] = _load_llm_overrides()
 
     def handle(self, text: str, user: str = "default", member: str = "", *,
-               said: str | None = None) -> str:
+               said: str | None = None, media: Sequence[str] = ()) -> str:
         """said = 用户本人亲手打的字（确认闸门 __text 只认它）。text 可能掺了引用/OCR 等
-        外部内容，传输层须另传 said；缺省 = text（本地 CLI 等无掺杂入口）。"""
+        外部内容，传输层须另传 said；缺省 = text（本地 CLI 等无掺杂入口）。
+        media = 本轮来件路径，只进对话存档（chat_archive）。"""
         said = text if said is None else said
         # 防御纵深：传输层闸门漏掉的未注册来源，这里二次拦截，不碰 LLM
         if not member:
@@ -513,7 +515,7 @@ class Agent:
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         turn.append({"role": "assistant", "content": hist_reply})
         self._save_history(user, turn)
-        chat_archive.append(self.channel, user, said, hist_reply)
+        chat_archive.append(self.channel, user, said, hist_reply, media)
         if shown:
             final += "\n\n" + "\n\n".join(shown.values())
         for p in produced_images:
@@ -540,7 +542,7 @@ class Agent:
             f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
         )
         return self.handle(prompt, user=user, member=member,
-                           said=text if said is None else said)
+                           said=text if said is None else said, media=paths)
 
     def _handle_llm_command(self, text: str, user: str) -> str | None:
         """/model /effort 运行时切换（不经 LLM，零 token）。是切换命令返回回复，否则 None。"""
