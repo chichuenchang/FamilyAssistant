@@ -107,19 +107,19 @@ SCHEMAS = [
         "start": s("开始日期 YYYY-MM-DD"),
         "end": s("结束日期 YYYY-MM-DD"),
         "limit": int_("最多返回条数"),
-        "member": s("按成员过滤，如只看某个家庭成员的账"),
+        "member": rt.member_param("按成员过滤，如只看某个家庭成员的账"),
     }),
     fn("get_summary", "按分类汇总金额（分币种）", {
         "type": s("交易类型，默认 expense", enum=TX_TYPES),
         "year": int_("年份"),
         "month": int_("月份 1-12"),
-        "member": s("按成员过滤，如只看某个家庭成员的账"),
+        "member": rt.member_param("按成员过滤，如只看某个家庭成员的账"),
         "by-member": boolean("按成员汇总（谁花了多少）"),
     }),
     fn("get_monthly", "按月汇总金额（分币种）", {
         "type": s("交易类型，默认 expense", enum=TX_TYPES),
         "year": int_("年份"),
-        "member": s("按成员过滤，如只看某个家庭成员的账"),
+        "member": rt.member_param("按成员过滤，如只看某个家庭成员的账"),
     }),
     fn("list_deposits", "查询定期存款", {
         "currency": s("币种", enum=CURRENCIES),

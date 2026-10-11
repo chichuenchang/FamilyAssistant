@@ -60,7 +60,7 @@ SCHEMAS = [
     }, ["type", "title"]),
     fn("list_documents", "查询已归档的家庭文档", {
         "type": s("文档类型", enum=DOC_TYPES),
-        "member": s("按成员过滤"),
+        "member": rt.member_param("按成员过滤"),
         "keyword": s("关键词，匹配标题/OCR全文/备注"),
         "status": s("状态（默认隐藏 archived/superseded）", enum=DOC_STATUSES),
         "limit": int_("最多返回条数"),
@@ -93,12 +93,12 @@ SCHEMAS = [
     }, ["id"]),
     fn("set_profile_field", "写/改一条家庭成员资料（法定名/生日/电话/邮箱/住址/证件卡号等"
        "长期个人事实，全家共享，全家可见可改）。用户提供这类信息时随手存这里，别存备忘。", {
-        "member-name": s("这条事实属于谁：登记成员显示名；家庭层面（住址等）用 Family"),
+        "member-name": rt.member_param("这条事实属于谁；家庭层面（住址等）用 Family", ("Family",)),
         "field": s("字段名，如 生日 / 电话 / LAP卡号"),
         "value": s("值"),
     }, ["member-name", "field", "value"]),
     fn("remove_profile_field", "删一条家庭成员资料。", {
-        "member-name": s("成员显示名或 Family"),
+        "member-name": rt.member_param("成员显示名或 Family", ("Family",)),
         "field": s("字段名"),
     }, ["member-name", "field"]),
 ]

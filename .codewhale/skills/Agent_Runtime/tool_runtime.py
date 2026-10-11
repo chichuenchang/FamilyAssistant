@@ -166,6 +166,14 @@ def s(desc: str, **kw) -> dict:
     return {"type": "string", "description": desc, **kw}
 
 
+def member_param(desc: str, extra: tuple[str, ...] = ()) -> dict:
+    """成员名参数：已登记成员（+extra）做 enum，模型选不错名字；注册表空则退回自由文本。
+    启动时读一次（改 members.json 本就要重启）。"""
+    import members
+    names = [*members.member_names(), *extra]
+    return s(desc, enum=names) if names else s(desc)
+
+
 def num(desc: str) -> dict:
     return {"type": "number", "description": desc}
 
