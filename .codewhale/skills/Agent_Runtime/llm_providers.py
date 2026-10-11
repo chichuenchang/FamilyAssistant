@@ -2,7 +2,7 @@
 
 契约（agent_core 只认这一种格式，历史也按它存）：
     messages: [{"role": system|user|assistant|tool, "content": str | [part]（仅 user：
-                    {"type": "text", "text"} / image_part() 产物；spec 无 vision 时压成文字）,
+                    {"type": "text", "text"} / image_part() 产物；只发给 spec vision 模型）,
                 "tool_calls": [{"id", "type": "function",
                                 "function": {"name", "arguments": <JSON 字符串>}}],
                 "tool_call_id": str}]
@@ -158,7 +158,7 @@ _IMAGE_MAGIC = ((b"\xff\xd8\xff", "jpeg"), (b"\x89PNG", "png"), (b"GIF8", "gif")
 
 def image_part(path: str) -> dict | None:
     """图片文件 → OpenAI image_url 内容块（base64 data URL）。非 jpeg/png/gif/webp、
-    缺失或超限 → None（PDF/HEIC 只走 OCR）。"""
+    缺失或超限 → None。"""
     try:
         with open(path, "rb") as f:
             data = f.read(MAX_IMAGE_BYTES + 1)
@@ -173,15 +173,6 @@ def image_part(path: str) -> dict | None:
         return None
     url = f"data:image/{fmt};base64," + base64.b64encode(data).decode()
     return {"type": "image_url", "image_url": {"url": url}}
-
-
-def _text_only(msg: dict) -> dict:
-    """内容块列表压成纯文字（fallback 到不识图的模型时用，否则 400）。"""
-    content = msg.get("content")
-    if not isinstance(content, list):
-        return msg
-    text = "\n".join(p.get("text", "") for p in content if p.get("type") == "text")
-    return {**msg, "content": text}
 
 
 def _split_system(messages) -> tuple[list[str], list[dict]]:
@@ -209,8 +200,6 @@ def openai_compat(spec: dict, messages, tools, effort: str, *,
                   timeout: int = DEFAULT_TIMEOUT) -> dict | None:
     system, rest = _split_system(messages)
     msgs = [_public(m) for m in rest]
-    if not spec.get("vision"):
-        msgs = [_text_only(m) for m in msgs]
     if system:
         msgs.insert(0, {"role": "system", "content": "\n\n".join(s for s in system if s)})
     payload = {

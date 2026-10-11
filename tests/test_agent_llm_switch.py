@@ -348,36 +348,3 @@ def test_truncated_reply_marked_and_not_saved(tmp_path, monkeypatch):
     assert a.history["u1"][-1] == {"role": "assistant", "content": agent_core.TRUNCATED_REPLY_MARK}
     a._call_llm = lambda msgs, user="": {"content": "", "_finish": "length"}
     assert a.handle("hi", user="u1", member="Jim") == agent_core.TRUNCATED_REPLY_MARK
-
-
-PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
-
-
-def _media_agent(tmp_path, monkeypatch):
-    import ocr
-    monkeypatch.setattr(ocr, "is_available", lambda: False)
-    a = _agent(tmp_path, monkeypatch)
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "dummy")
-    monkeypatch.setenv("ZHIPU_API_KEY", "k")
-    seen = []
-    a._call_llm = lambda msgs, user="": seen.append([dict(m) for m in msgs]) or {"content": "一只猫"}
-    (tmp_path / "cat.png").write_bytes(PNG)
-    (tmp_path / "form.pdf").write_bytes(b"%PDF-1.7")
-    return a, seen, [str(tmp_path / "cat.png"), str(tmp_path / "form.pdf")]
-
-
-def test_media_images_reach_vision_model_history_keeps_text(tmp_path, monkeypatch):
-    a, seen, paths = _media_agent(tmp_path, monkeypatch)
-    assert a.handle_media(paths, "图里是啥", user="u1", member="Jim") == "一只猫"
-    content = seen[0][-1]["content"]
-    assert content[0]["type"] == "text" and "已附图 1 张" in content[0]["text"]
-    assert [p["type"] for p in content[1:]] == ["image_url"]          # PDF 不当图发
-    assert isinstance(a.history["u1"][0]["content"], str)             # 历史不存图（每图至多 1024 token）
-
-
-def test_media_without_vision_model_sends_text_only(tmp_path, monkeypatch):
-    a, seen, paths = _media_agent(tmp_path, monkeypatch)
-    a.handle("/model glm", user="u1", member="Jim")
-    a.handle_media(paths, "图里是啥", user="u1", member="Jim")
-    content = seen[0][-1]["content"]
-    assert isinstance(content, str) and "已附图" not in content

@@ -90,17 +90,6 @@ def test_image_part_sniffs_content_not_extension(tmp_path, monkeypatch):
     assert prov.image_part(str(tmp_path / "a.jpg")) is None
 
 
-def test_openai_compat_flattens_image_parts_unless_vision(capture):
-    capture["reply"] = sse(delta("ok", finish="stop"))
-    parts = [{"type": "text", "text": "这是啥"},
-             {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}]
-    prov.openai_compat(DS, [{"role": "user", "content": parts}], None, "high")
-    assert capture["body"]["messages"][0]["content"] == parts
-    blind = {**DS, "vision": False}                       # fallback 到不识图的模型：只留文字
-    prov.openai_compat(blind, [{"role": "user", "content": parts}], None, "high")
-    assert capture["body"]["messages"][0]["content"] == "这是啥"
-
-
 def test_sees_images_only_registered_vision_models():
     assert llm_client.sees_images("deepseek-flash")
     assert not llm_client.sees_images("glm-5.3-flash")
@@ -353,6 +342,12 @@ def test_chat_falls_back_when_primary_returns_none(two_models, caplog):
     assert two_models["fb"] == [("fb", [{"role": "user", "content": "q"}], [{"t": 1}], "low",
                                  {"timeout": 5})]
     assert "改用 fb" in caplog.text
+
+
+def test_chat_fallback_false_never_substitutes(two_models):
+    assert llm_client.chat([{"role": "user", "content": "q"}], None, "m", "low",
+                           fallback=False) is None
+    assert two_models["fb"] == []
 
 
 def test_chat_no_fallback_when_request_rejected(two_models):

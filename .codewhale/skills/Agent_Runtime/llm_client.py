@@ -85,6 +85,16 @@ def sees_images(model: str) -> bool:
     return bool(spec(model).get("vision"))
 
 
+def vision_model() -> str:
+    """view_image 用的识图模型：config llm.vision_model（须识图且有 key），否则模型表里
+    第一个识图且有 key 的；都没有返回 ""。与用户 /model 无关——主模型不识图也能看图。"""
+    want = canon_model((_rt.CONFIG.get("llm") or {}).get("vision_model"))
+    for name in ([want] if want else []) + list(MODELS):
+        if sees_images(name) and not missing_key(name):
+            return name
+    return ""
+
+
 def missing_key(model: str) -> str:
     """该模型缺的 API key 环境变量名；已配置返回 ""。"""
     env = spec(model)["api_key_env"]
@@ -262,11 +272,13 @@ def fallback_of(model: str) -> str:
     return fb if fb in MODELS and fb != model and not missing_key(fb) else ""
 
 
-def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
+def chat(messages, tools, model: str, effort: str, *, fallback: bool = True,
+         **opts) -> dict | None:
     """按模型表分发到提供商。返回 OpenAI 风格 message dict（可能含 tool_calls）；失败 None。
     附私有键 "_usage"/"_finish"（顶替时 "_fallback"=顶替模型键）：
     再次发给 API 前调用方须 pop 掉 _usage/_finish/_fallback。
-    opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次；
+    opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次
+    （fallback=False 不顶替：带图的消息顶替给不识图的模型只会 400）；
     请求本身被拒（4xx，见 llm_providers.RequestRejected）直接 None，不顶替。"""
     def call(name):
         s = spec(name)
@@ -274,7 +286,7 @@ def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
 
     try:
         out = call(model)
-        if out is None and (fb := fallback_of(model)):
+        if out is None and fallback and (fb := fallback_of(model)):
             _log.warning("模型 %s 无响应，改用 %s", model, fb)   # logger 已挂 stderr handler，不再 print
             out = call(fb)
             if out is not None:
