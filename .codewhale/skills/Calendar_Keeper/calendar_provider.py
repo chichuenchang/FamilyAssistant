@@ -1,7 +1,7 @@
 """
 Calendar Keeper — Google Calendar + Google Tasks Provider（用户私有实现）
 
-实现 calendar_sync 调用契约（下方 8 个必需 + 2 个可选函数），零外部依赖（仅标准库 urllib，
+实现 remote_schedule 调用契约（下方函数），零外部依赖（仅标准库 urllib，
 Calendar REST API v3 + Tasks REST API v1 + OAuth refresh token）。
 
 认证（全部走环境变量，不进代码、不进日志、不进 git）：
@@ -19,23 +19,24 @@ Calendar REST API v3 + Tasks REST API v1 + OAuth refresh token）。
     calendar.events  只能读写日历上的活动，不能管理/删除日历本身
     tasks            读写 Google Tasks 待办（@default 清单）
 
-契约（其他用户换日历服务时，按此重写本文件即可，引擎零改动）：
-    is_configured() -> bool          三个环境变量未配齐 → False（引擎优雅跳过）
+契约（其他用户换日历服务时，按此重写本文件即可，remote_schedule 零改动）：
+    is_configured() -> bool          三个环境变量未配齐 → False
     list_events(time_min_iso, time_max_iso) -> list[dict]
         窗口内的活动（重复活动已展开为实例）。dict:
         {uid, title, start, end, all_day, location, notes}
         start/end：定时活动 'YYYY-MM-DDTHH:MM'；全天 'YYYY-MM-DD'（end 独占）。
-    create_event(item) -> uid        item 取 cal_db 行字段
-                                     （title/start_at/end_at/all_day/location/notes）
+    create_event(item) -> uid        item 字段 title/start_at/end_at/all_day/location/notes
     delete_event(uid)                远端不存在视为成功
-    update_event(uid, item)          可选；缺省时本地编辑只留本地（引擎 getattr 探测）
+    get_event(uid) -> dict | None    单条，形同 list_events 项；不存在/已取消 → None
+    update_event(uid, item)          PATCH 整体覆盖标题/时间/地点/备注
     list_tasks() -> list[dict]       @default 清单全部待办（含已完成）。dict:
                                      {uid, title, due('YYYY-MM-DD'或''), notes, done}
-    create_task(item) -> uid         item 取 cal_db 行字段（title/start_at=截止日/notes）
-    update_task(uid, item)           可选，同 update_event
+    create_task(item) -> uid         item 字段 title/start_at=截止日/notes
+    get_task(uid) -> dict | None     单条，形同 list_tasks 项；不存在/已删除 → None
+    update_task(uid, item)           PATCH 整体覆盖标题/备注/截止日
     complete_task(uid)               远端不存在视为成功
     delete_task(uid)                 远端不存在视为成功
-    网络/API 错误抛 RuntimeError（引擎记录并在下一轮重试）。
+    网络/API 错误抛 RuntimeError（直达用户，不重试）。
 
 提交 provider 前自查：代码里不得出现任何字面 token/key，凭据只能 os.environ 读取。
 """
@@ -144,6 +145,20 @@ def _api(method: str, url: str, payload: dict | None = None,
 # ── 活动（Google Calendar） ─────────────────────────────────────
 
 
+def _event_dict(e: dict) -> dict:
+    start = e.get("start") or {}
+    end = e.get("end") or {}
+    return {
+        "uid": e.get("id", ""),
+        "title": e.get("summary") or "(无标题)",
+        "start": start.get("date") or (start.get("dateTime") or "")[:16],
+        "end": end.get("date") or (end.get("dateTime") or "")[:16],
+        "all_day": "date" in start,
+        "location": e.get("location") or "",
+        "notes": e.get("description") or "",
+    }
+
+
 def list_events(time_min_iso: str, time_max_iso: str) -> list[dict]:
     """窗口内活动，重复活动展开为实例，分页拉全。"""
     cal = urllib.parse.quote(_calendar_id())
@@ -157,29 +172,24 @@ def list_events(time_min_iso: str, time_max_iso: str) -> list[dict]:
             params["pageToken"] = page_token
         r = _api("GET", f"{CAL_API}/calendars/{cal}/events?"
                  + urllib.parse.urlencode(params))
-        for e in r.get("items", []):
-            if e.get("status") == "cancelled":
-                continue
-            start = e.get("start") or {}
-            end = e.get("end") or {}
-            all_day = "date" in start
-            out.append({
-                "uid": e.get("id", ""),
-                "title": e.get("summary") or "(无标题)",
-                "start": start.get("date") or (start.get("dateTime") or "")[:16],
-                "end": end.get("date") or (end.get("dateTime") or "")[:16],
-                "all_day": all_day,
-                "location": e.get("location") or "",
-                "notes": e.get("description") or "",
-            })
+        out.extend(_event_dict(e) for e in r.get("items", [])
+                   if e.get("status") != "cancelled")
         page_token = r.get("nextPageToken")
         if not page_token:
             break
     return out
 
 
+def get_event(uid: str) -> dict | None:
+    """单条活动；不存在/已取消 → None。"""
+    cal = urllib.parse.quote(_calendar_id())
+    e = _api("GET", f"{CAL_API}/calendars/{cal}/events/{urllib.parse.quote(uid)}",
+             ok_missing=True)
+    return _event_dict(e) if e and e.get("status") != "cancelled" else None
+
+
 def _event_body(item: dict) -> dict:
-    """cal_db 行 → Calendar API 活动体。start/end 显式把另一种时间键置 null：
+    """条目 → Calendar API 活动体。start/end 显式把另一种时间键置 null：
     PATCH 是合并语义，全天↔定时互转时不清掉旧键会两者并存被拒。"""
     start_at = item.get("start_at") or ""
     body: dict = {"summary": item.get("title") or "(无标题)",
@@ -203,7 +213,7 @@ def _event_body(item: dict) -> dict:
 
 
 def create_event(item: dict) -> str:
-    """新建活动，返回远端 uid。item 字段同 cal_db 行。"""
+    """新建活动，返回远端 uid。"""
     cal = urllib.parse.quote(_calendar_id())
     body = {k: v for k, v in _event_body(item).items() if v != ""}
     for k in ("start", "end"):
@@ -213,7 +223,7 @@ def create_event(item: dict) -> str:
 
 
 def update_event(uid: str, item: dict) -> None:
-    """按本地行覆盖远端活动的标题/时间/地点/备注（PATCH，参会人等其他字段不动）。"""
+    """整体覆盖远端活动的标题/时间/地点/备注（PATCH，参会人等其他字段不动）。"""
     cal = urllib.parse.quote(_calendar_id())
     _api("PATCH", f"{CAL_API}/calendars/{cal}/events/{urllib.parse.quote(uid)}",
          _event_body(item))
@@ -234,6 +244,16 @@ def _tasks_url(suffix: str = "") -> str:
             + (f"/{urllib.parse.quote(suffix)}" if suffix else ""))
 
 
+def _task_dict(t: dict) -> dict:
+    return {
+        "uid": t.get("id", ""),
+        "title": t.get("title") or "(无标题)",
+        "due": (t.get("due") or "")[:10],
+        "notes": t.get("notes") or "",
+        "done": t.get("status") == "completed",
+    }
+
+
 def list_tasks() -> list[dict]:
     """@default 清单全部待办（含已完成/隐藏，便于对账），分页拉全。"""
     out: list[dict] = []
@@ -243,20 +263,17 @@ def list_tasks() -> list[dict]:
         if page_token:
             params["pageToken"] = page_token
         r = _api("GET", _tasks_url() + "?" + urllib.parse.urlencode(params))
-        for t in r.get("items", []):
-            if t.get("deleted"):
-                continue
-            out.append({
-                "uid": t.get("id", ""),
-                "title": t.get("title") or "(无标题)",
-                "due": (t.get("due") or "")[:10],
-                "notes": t.get("notes") or "",
-                "done": t.get("status") == "completed",
-            })
+        out.extend(_task_dict(t) for t in r.get("items", []) if not t.get("deleted"))
         page_token = r.get("nextPageToken")
         if not page_token:
             break
     return out
+
+
+def get_task(uid: str) -> dict | None:
+    """单条待办；不存在/已删除 → None。"""
+    t = _api("GET", _tasks_url(uid), ok_missing=True)
+    return _task_dict(t) if t and not t.get("deleted") else None
 
 
 def create_task(item: dict) -> str:
@@ -272,7 +289,7 @@ def create_task(item: dict) -> str:
 
 
 def update_task(uid: str, item: dict) -> None:
-    """按本地行覆盖远端待办的标题/备注/截止日（截止日空 = 清除）。"""
+    """整体覆盖远端待办的标题/备注/截止日（截止日空 = 清除）。"""
     due = (item.get("start_at") or "")[:10]
     _api("PATCH", _tasks_url(uid), {
         "title": item.get("title") or "(无标题)", "notes": item.get("notes") or "",

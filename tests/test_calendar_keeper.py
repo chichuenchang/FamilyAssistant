@@ -465,6 +465,38 @@ class TestGoogleProvider:
         fake.responses = [(404, b"gone")]
         calendar_provider.complete_task("vanished")  # must not raise
 
+    def test_get_event_maps_like_list(self, gcal):
+        fake, calls = gcal
+        fake.responses = [(200, json.dumps(
+            {"id": "ev1", "summary": "游泳课", "location": "泳馆",
+             "start": {"dateTime": "2026-06-13T14:00:00+00:00"},
+             "end": {"dateTime": "2026-06-13T15:00:00+00:00"}}).encode())]
+        assert calendar_provider.get_event("ev1") == {
+            "uid": "ev1", "title": "游泳课", "start": "2026-06-13T14:00",
+            "end": "2026-06-13T15:00", "all_day": False, "location": "泳馆", "notes": ""}
+        assert calls[0]["method"] == "GET" and calls[0]["url"].endswith("/events/ev1")
+
+    def test_get_event_missing_or_cancelled_is_none(self, gcal):
+        fake, _ = gcal
+        fake.responses = [(404, b"gone"), (200, json.dumps(
+            {"id": "ev2", "status": "cancelled", "start": {"date": "2026-06-15"},
+             "end": {"date": "2026-06-16"}}).encode())]
+        assert calendar_provider.get_event("gone") is None
+        assert calendar_provider.get_event("ev2") is None
+
+    def test_get_task_maps_and_missing(self, gcal):
+        fake, calls = gcal
+        fake.responses = [
+            (200, json.dumps({"id": "t1", "title": "买蛋糕", "due": "2026-06-15T00:00:00.000Z",
+                              "status": "completed"}).encode()),
+            (410, b"gone"),
+            (200, json.dumps({"id": "t3", "title": "x", "deleted": True}).encode())]
+        assert calendar_provider.get_task("t1") == {
+            "uid": "t1", "title": "买蛋糕", "due": "2026-06-15", "notes": "", "done": True}
+        assert calls[0]["method"] == "GET" and calls[0]["url"].endswith("/tasks/t1")
+        assert calendar_provider.get_task("t2") is None
+        assert calendar_provider.get_task("t3") is None
+
     def test_api_error_raises_runtimeerror(self, gcal):
         fake, calls = gcal
         fake.responses = [(500, b"boom")]
