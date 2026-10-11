@@ -1159,8 +1159,13 @@ class TestForMemberRouting:
 
 _TOOLS = ("add_event", "add_task", "list_schedule", "complete_task",
           "remove_schedule_item", "update_schedule_item", "calendar_status")
-_COMMANDS = {"cal-add", "cal-list", "cal-update", "cal-done", "cal-delete",
-             "cal-sync", "cal-status"}
+_COMMANDS = {"cal-add", "cal-list", "cal-update", "cal-done", "cal-delete", "cal-status"}
+
+
+def _desc(name):
+    import agent_core
+    return next(t["function"] for t in agent_core.TOOL_SCHEMAS
+                if t["function"]["name"] == name)
 
 
 class TestAgentWiring:
@@ -1176,6 +1181,7 @@ class TestAgentWiring:
         path = agent_core._cli_path("cal-add")
         assert path.parts[-2:] == ("Calendar_Keeper", "cli.py")
         assert _COMMANDS <= agent_core.ALLOWED_COMMANDS
+        assert "cal-sync" not in agent_core.ALLOWED_COMMANDS
 
     def test_member_injected_on_schedule_writes(self):
         import agent_core
@@ -1186,26 +1192,22 @@ class TestAgentWiring:
         assert out2["member"] == "MemberA"
 
     def test_member_forced_on_read_and_mutate_tools(self):
-        # 回归：这五个工具历史上不在任何强制集 → member="" → cal-done 命中空库、
-        # cal-delete/cal-list 抛 "需要 --member"，每次都失效。必须强制注入发送者。
+        # 回归：这五个工具历史上不在任何强制集 → member="" → CLI 报 "需要 --member"。必须强制注入发送者。
         import agent_core
         for tool in ("complete_task", "remove_schedule_item", "list_schedule",
                      "update_schedule_item", "calendar_status"):
-            out = agent_core._apply_member(tool, {"member": "假冒", "id": 1}, "MemberA")
+            out = agent_core._apply_member(tool, {"member": "假冒", "id": "t:1"}, "MemberA")
             assert out.get("member") == "MemberA", tool
 
     def test_prompt_forces_tool_on_schedule_query(self):
         import agent_core
         p = agent_core._build_system_prompt()
-        assert "必须调 list_schedule" in p          # 查询必须过工具（远端核对）
-        assert "校验" in p                          # verdict 转告规则
-        assert "calendar_status 不是凭据" not in p   # 旧拐杖已退役
+        assert "必须调 list_schedule" in p
+        assert "本地↔远端" not in p and "日程快照" not in p   # 缓存时代的话术已退役
 
     def test_list_schedule_exposes_history_window(self):
         # 回归：schema 只有 days（未来窗口）→ LLM 无从查历史，直接答"我只能看到未来日程"
-        import agent_core
-        fn = next(t["function"] for t in agent_core.TOOL_SCHEMAS
-                  if t["function"]["name"] == "list_schedule")
+        fn = _desc("list_schedule")
         props = fn["parameters"]["properties"]
         assert "from" in props and "to" in props
         assert "历史" in fn["description"] or "过去" in props["from"]["description"]
@@ -1216,32 +1218,23 @@ class TestAgentWiring:
         assert "历史日程一样能查" in p
         assert "查不到历史" in p          # 明令禁止那句错话
 
-    def test_calendar_tool_descs_mention_verify(self):
+    def test_ids_described_with_remote_prefix(self):
+        for name in ("update_schedule_item", "complete_task", "remove_schedule_item"):
+            assert "e:" in _desc(name)["parameters"]["properties"]["id"]["description"] \
+                or "t:" in _desc(name)["parameters"]["properties"]["id"]["description"], name
+
+    def test_no_schedule_snapshot_injection_or_sync_tick(self):
         import agent_core
-        descs = {t["function"]["name"]: t["function"]["description"]
-                 for t in agent_core.TOOL_SCHEMAS}
-        assert "核对" in descs["calendar_status"]
-        assert "核对" in descs["list_schedule"]
+        cal = agent_core.REGISTRY.modules["Calendar_Keeper"]
+        assert not getattr(cal, "CONTEXT_FNS", [])
+        ticks = {getattr(f, "__name__", "") for f in cal.MESSAGE_TICKS}
+        assert ticks == {"image_gc_tick"}
 
-    def test_schedule_context_formats_and_empty(self, cal_db_path):
+    def test_calendar_status_is_plain_status(self, monkeypatch):
         import agent_core
-        assert agent_core.REGISTRY.modules["Calendar_Keeper"].schedule_context(db_path=cal_db_path) == ""
-        _add_event(cal_db_path, title="游泳课",
-                   start=f"{D1}T14:00", end=f"{D1}T15:00", location="泳馆")
-        _add_task(cal_db_path, title="买蛋糕", due=D3)
-        block = agent_core.REGISTRY.modules["Calendar_Keeper"].schedule_context(db_path=cal_db_path)
-        assert "游泳课" in block and "@泳馆" in block
-        assert "☐ 买蛋糕" in block
-        assert "不要主动播报" in block      # 防刷屏规则随块注入
-
-
-def test_calendar_status_sync_flag_picks_command(monkeypatch):
-    import agent_core
-    import tool_runtime as rt
-    seen = []
-    monkeypatch.setattr(rt, "run_cli", lambda cmd, args=None: seen.append((cmd, args)) or "ok")
-    tool = agent_core._TOOL_MAP["calendar_status"]
-    tool({"member": "MemberA"})
-    tool({"member": "MemberA", "sync": True})
-    assert [c for c, _ in seen] == ["cal-status", "cal-sync"]
-    assert "sync" not in seen[1][1]
+        import tool_runtime as rt
+        seen = []
+        monkeypatch.setattr(rt, "run_cli", lambda cmd, args=None: seen.append((cmd, args)) or "ok")
+        agent_core._TOOL_MAP["calendar_status"]({"member": "MemberA"})
+        assert seen == [("cal-status", {"member": "MemberA"})]
+        assert "sync" not in _desc("calendar_status")["parameters"]["properties"]

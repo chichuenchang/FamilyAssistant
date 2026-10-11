@@ -136,7 +136,6 @@
       "cal-list",
       "cal-done",
       "cal-delete",
-      "cal-sync",
       "cal-status"
     ]
   }

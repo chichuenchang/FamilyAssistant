@@ -226,7 +226,8 @@ def test_background_tick_isolates_failures(monkeypatch):
 
 def test_real_manifests_register_ticks():
     names = lambda fns: {getattr(f, "__name__", "") for f in fns}
-    assert {"calendar_tick", "image_gc_tick"} <= names(tb.REGISTRY.message_ticks)
+    assert "image_gc_tick" in names(tb.REGISTRY.message_ticks)
+    assert "calendar_tick" not in names(tb.REGISTRY.message_ticks)
     assert {"check_and_push", "backup_tick"} <= names(tb.REGISTRY.slow_ticks)
     assert "poll_and_deliver" in names(tb.REGISTRY.fast_ticks)
 
