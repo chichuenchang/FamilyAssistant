@@ -1,7 +1,8 @@
 """LLM 提供商适配：把统一的 OpenAI 风格消息翻译成各家 API，再把回复翻译回来。
 
 契约（agent_core 只认这一种格式，历史也按它存）：
-    messages: [{"role": system|user|assistant|tool, "content": str,
+    messages: [{"role": system|user|assistant|tool, "content": str | [part]（仅 user：
+                    {"type": "text", "text"} / image_part() 产物；spec 无 vision 时压成文字）,
                 "tool_calls": [{"id", "type": "function",
                                 "function": {"name", "arguments": <JSON 字符串>}}],
                 "tool_call_id": str}]
@@ -16,7 +17,7 @@
 
 新增提供商：写一个 chat(spec, messages, tools, effort, **opts) 函数，登记进 PROVIDERS。
 spec 是 llm_client 模型表里的一条（provider / api_model / api_key_env / base_url /
-base_url_env / effort / chat_path / effort_map / stream_usage / timeout）。
+base_url_env / effort / chat_path / effort_map / stream_usage / timeout / vision）。
 
 openai_compat 一律流式（SSE）收，两个超时：
     调用方 timeout = 建连 + 首块到达上限（大 prompt 排队时首字节可达数十秒，不能按静默算）；
@@ -26,6 +27,7 @@ openai_compat 一律流式（SSE）收，两个超时：
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -149,6 +151,39 @@ def _public(msg: dict) -> dict:
     return {k: v for k, v in msg.items() if not k.startswith("_")}
 
 
+# DeepSeek 单图上限 32 MiB（base64 前）；按内容判格式，扩展名不可信（微信存图常 .jpg 实为 png）
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+_IMAGE_MAGIC = ((b"\xff\xd8\xff", "jpeg"), (b"\x89PNG", "png"), (b"GIF8", "gif"))
+
+
+def image_part(path: str) -> dict | None:
+    """图片文件 → OpenAI image_url 内容块（base64 data URL）。非 jpeg/png/gif/webp、
+    缺失或超限 → None（PDF/HEIC 只走 OCR）。"""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(MAX_IMAGE_BYTES + 1)
+    except OSError:
+        return None
+    if len(data) > MAX_IMAGE_BYTES:
+        return None
+    fmt = next((f for magic, f in _IMAGE_MAGIC if data.startswith(magic)), None)
+    if fmt is None and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        fmt = "webp"
+    if fmt is None:
+        return None
+    url = f"data:image/{fmt};base64," + base64.b64encode(data).decode()
+    return {"type": "image_url", "image_url": {"url": url}}
+
+
+def _text_only(msg: dict) -> dict:
+    """内容块列表压成纯文字（fallback 到不识图的模型时用，否则 400）。"""
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return msg
+    text = "\n".join(p.get("text", "") for p in content if p.get("type") == "text")
+    return {**msg, "content": text}
+
+
 def _split_system(messages) -> tuple[list[str], list[dict]]:
     """开头连续 system 消息的正文列表 + 其余消息。"""
     n = 0
@@ -174,6 +209,8 @@ def openai_compat(spec: dict, messages, tools, effort: str, *,
                   timeout: int = DEFAULT_TIMEOUT) -> dict | None:
     system, rest = _split_system(messages)
     msgs = [_public(m) for m in rest]
+    if not spec.get("vision"):
+        msgs = [_text_only(m) for m in msgs]
     if system:
         msgs.insert(0, {"role": "system", "content": "\n\n".join(s for s in system if s)})
     payload = {

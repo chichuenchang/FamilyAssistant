@@ -30,7 +30,8 @@ DEFAULT_EFFORT = "high"
 _BUILTIN_MODELS = {
     DEFAULT_MODEL: {"provider": "openai_compat", "api_model": "deepseek-flash",
                     "api_key_env": "DEEPSEEK_API_KEY", "base_url_env": "DEEPSEEK_BASE_URL",
-                    "base_url": "https://api.deepseek.com", "aliases": ["deepseek", "flash"]},
+                    "base_url": "https://api.deepseek.com", "aliases": ["deepseek", "flash"],
+                    "vision": True},   # V4.1-Flash 起原生识图（deepseek-v4-pro 不识）
 }
 # 启动默认的环境变量（旧名保留兼容）
 _ENV = {"model": ("LLM_MODEL", "DEEPSEEK_MODEL"),
@@ -75,8 +76,13 @@ def canon_model(name) -> str | None:
 
 
 def spec(model: str) -> dict:
-    """模型表条目；未登记的名字按 DeepSeek 原始模型 id 直发（LLM_MODEL=deepseek-v4-pro 之类）。"""
-    return MODELS.get(model) or {**MODELS[DEFAULT_MODEL], "api_model": model}
+    """模型表条目；未登记的名字按 DeepSeek 原始模型 id 直发（LLM_MODEL=deepseek-v4-pro 之类），
+    不继承默认模型的 vision。"""
+    return MODELS.get(model) or {**MODELS[DEFAULT_MODEL], "api_model": model, "vision": False}
+
+
+def sees_images(model: str) -> bool:
+    return bool(spec(model).get("vision"))
 
 
 def missing_key(model: str) -> str:

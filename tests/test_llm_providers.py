@@ -73,6 +73,40 @@ def test_openai_compat_payload_and_private_key_stripping(capture, monkeypatch):
     assert b["stream"] is True and b["stream_options"] == {"include_usage": True}
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 16
+
+
+def test_image_part_sniffs_content_not_extension(tmp_path, monkeypatch):
+    (tmp_path / "a.jpg").write_bytes(PNG)                 # 扩展名说谎：按内容判 png
+    (tmp_path / "b.pdf").write_bytes(b"%PDF-1.7")
+    (tmp_path / "c.webp").write_bytes(b"RIFF\0\0\0\0WEBPVP8 ")
+    part = prov.image_part(str(tmp_path / "a.jpg"))
+    assert part["type"] == "image_url"
+    assert part["image_url"]["url"].startswith("data:image/png;base64,iVBOR")
+    assert prov.image_part(str(tmp_path / "c.webp"))["image_url"]["url"].startswith("data:image/webp;")
+    assert prov.image_part(str(tmp_path / "b.pdf")) is None
+    assert prov.image_part(str(tmp_path / "missing.png")) is None
+    monkeypatch.setattr(prov, "MAX_IMAGE_BYTES", 8)
+    assert prov.image_part(str(tmp_path / "a.jpg")) is None
+
+
+def test_openai_compat_flattens_image_parts_unless_vision(capture):
+    capture["reply"] = sse(delta("ok", finish="stop"))
+    parts = [{"type": "text", "text": "这是啥"},
+             {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}}]
+    prov.openai_compat(DS, [{"role": "user", "content": parts}], None, "high")
+    assert capture["body"]["messages"][0]["content"] == parts
+    blind = {**DS, "vision": False}                       # fallback 到不识图的模型：只留文字
+    prov.openai_compat(blind, [{"role": "user", "content": parts}], None, "high")
+    assert capture["body"]["messages"][0]["content"] == "这是啥"
+
+
+def test_sees_images_only_registered_vision_models():
+    assert llm_client.sees_images("deepseek-flash")
+    assert not llm_client.sees_images("glm-5.3-flash")
+    assert not llm_client.sees_images("deepseek-v4-pro")   # 未登记原始 id 不继承默认模型的 vision
+
+
 def test_sse_merges_tool_call_deltas_by_index(capture):
     capture["reply"] = sse(
         delta(tool_calls=[{"index": 0, "id": "c1", "function": {"name": "add", "arguments": '{"a"'}}]),

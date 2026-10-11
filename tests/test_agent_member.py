@@ -71,7 +71,7 @@ def test_handle_media_ocr_and_instruction_drive_handle(monkeypatch):
     agent = agent_core.Agent()
     cap = {}
     monkeypatch.setattr(agent, "handle",
-                        lambda prompt, user="default", member="", said=None: cap.update(p=prompt, s=said) or "ok")
+                        lambda prompt, user="default", member="", said=None, **kw: cap.update(p=prompt, s=said) or "ok")
     out = agent.handle_media(["data/Alex/inbox/2026-06/x.pdf", "data/Alex/inbox/2026-06/y.jpg"],
                              "签好发给学校", user="u", member="Alex Lee")
     assert out == "ok"
@@ -94,6 +94,6 @@ def test_handle_media_without_ocr_still_follows_instruction(monkeypatch):
     agent = agent_core.Agent()
     cap = {}
     monkeypatch.setattr(agent, "handle",
-                        lambda prompt, user="default", member="", said=None: cap.update(p=prompt) or "ok")
+                        lambda prompt, user="default", member="", said=None, **kw: cap.update(p=prompt) or "ok")
     assert agent.handle_media(["x.pdf"], "午餐45块", member="Alex Lee") == "ok"
     assert "x.pdf" in cap["p"] and "无 OCR 文字" in cap["p"] and "午餐45块" in cap["p"]
