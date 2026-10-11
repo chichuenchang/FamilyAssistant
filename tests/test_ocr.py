@@ -338,10 +338,12 @@ def test_ocr_read_flags_pdf_over_20_pages(monkeypatch):
     monkeypatch.setattr(ocr, "is_available", lambda: True)
     monkeypatch.setattr(ocr, "ocr_image", lambda p: "前文")
     out = _ocr_at.tool_ocr_read({"path": str(f)})
-    assert out == "前文\n[仅读了前 20 页，共 25 页；用户要后面内容再用 ocr_read_pages]"
+    assert out == "前文\n[仅读了前 20 页，共 25 页；要后面内容就带 first_page/last_page 再调 ocr_read]"
 
 
-def test_ocr_read_pages_registered_and_untrusted():
-    names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
-    assert "ocr_read_pages" in names and "ocr_read_pages" in ac._TOOL_MAP
-    assert "ocr_read_pages" in ac._UNTRUSTED_TOOLS
+def test_ocr_read_with_pages_routes_to_page_reader(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(_ocr_at, "tool_ocr_read_pages", lambda a: seen.setdefault("p", a) and "页段")
+    assert ac._TOOL_MAP["ocr_read"]({"path": "x.pdf", "first_page": 21}) == "页段"
+    assert "ocr_read_pages" not in ac._TOOL_MAP
+    assert "ocr_read" in ac._UNTRUSTED_TOOLS

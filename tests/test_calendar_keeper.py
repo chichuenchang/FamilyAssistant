@@ -1568,8 +1568,8 @@ class TestCliVerify:
 # ── Agent 接线（agent_core） ────────────────────────────────────
 
 _TOOLS = ("add_event", "add_task", "list_schedule", "complete_task",
-          "remove_schedule_item", "sync_calendar", "calendar_status")
-_COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete",
+          "remove_schedule_item", "update_schedule_item", "calendar_status")
+_COMMANDS = {"cal-add", "cal-list", "cal-update", "cal-done", "cal-delete",
              "cal-sync", "cal-status"}
 
 
@@ -1600,7 +1600,7 @@ class TestAgentWiring:
         # cal-delete/cal-list 抛 "需要 --member"，每次都失效。必须强制注入发送者。
         import agent_core
         for tool in ("complete_task", "remove_schedule_item", "list_schedule",
-                     "sync_calendar", "calendar_status"):
+                     "update_schedule_item", "calendar_status"):
             out = agent_core._apply_member(tool, {"member": "假冒", "id": 1}, "MemberA")
             assert out.get("member") == "MemberA", tool
 
@@ -1643,3 +1643,15 @@ class TestAgentWiring:
         assert "游泳课" in block and "@泳馆" in block
         assert "☐ 买蛋糕" in block
         assert "不要主动播报" in block      # 防刷屏规则随块注入
+
+
+def test_calendar_status_sync_flag_picks_command(monkeypatch):
+    import agent_core
+    import tool_runtime as rt
+    seen = []
+    monkeypatch.setattr(rt, "run_cli", lambda cmd, args=None: seen.append((cmd, args)) or "ok")
+    tool = agent_core._TOOL_MAP["calendar_status"]
+    tool({"member": "MemberA"})
+    tool({"member": "MemberA", "sync": True})
+    assert [c for c, _ in seen] == ["cal-status", "cal-sync"]
+    assert "sync" not in seen[1][1]

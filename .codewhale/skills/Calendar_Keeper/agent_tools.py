@@ -60,6 +60,11 @@ def tool_add_task(args):
     return rt.run_cli("cal-add", {**args, "kind": "task"})
 
 
+def tool_calendar_status(args):
+    args = dict(args)
+    return rt.run_cli("cal-sync" if args.pop("sync", False) else "cal-status", args)
+
+
 TOOLS = {
     "add_event": tool_add_event,
     "add_task": tool_add_task,
@@ -67,8 +72,7 @@ TOOLS = {
     "update_schedule_item": "cal-update",
     "complete_task": "cal-done",
     "remove_schedule_item": "cal-delete",
-    "sync_calendar": "cal-sync",
-    "calendar_status": "cal-status",
+    "calendar_status": tool_calendar_status,
 }
 
 MEMBER_LOCKED = set(TOOLS)
@@ -126,8 +130,9 @@ SCHEMAS = [
         "kind": s("活动(event)或待办(task)。活动与待办 id 会撞号，"
                   "务必按 list_schedule 里该条显示的 [活动]/[待办] 一并传入", enum=["event", "task"]),
     }, ["id"]),
-    fn("sync_calendar", "立即与远程日历强制同步一轮（用户说\"刷新/同步日历\"）", {}),
-    fn("calendar_status", "查看日历同步状态并实时核对本地↔远端一致性（启用/配置/上次刷新/校验结论）", {}),
+    fn("calendar_status", "查看日历同步状态并实时核对本地↔远端一致性（启用/配置/上次刷新/校验结论）", {
+        "sync": boolean("true = 先与远程日历强制同步一轮（忽略节流）再报告"),
+    }),
 ]
 
 PROMPT_SECTIONS = [
