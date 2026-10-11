@@ -73,11 +73,11 @@ def tool_ocr_read_pages(args):
     try:
         from ocr import ocr_pdf_range, is_available
         if not is_available():
-            return "[OCR 未配置]"
+            return "[OCR 未配置]" + _alt(resolved)
         r = ocr_pdf_range(str(resolved), first, last)
         if r is None:
             return (f"[OCR 失败] 第 {max(1, first)} 页读不出文字"
-                    "（可能是加密扫描件，或该页已超出总页数）")
+                    "（可能是加密扫描件，或该页已超出总页数）" + _alt(resolved))
         total = r["total"]
         of = f"共 {total} 页" if total else "总页数未知"
         if not r["pages"]:
@@ -91,7 +91,7 @@ def tool_ocr_read_pages(args):
                          for n, text in r["pages"])
         return f"{head}\n{body}"
     except Exception as e:
-        return f"[OCR 错误] {e}"
+        return f"[OCR 错误] {e}" + _alt(resolved)
 
 
 def tool_ocr_read_any(args):
