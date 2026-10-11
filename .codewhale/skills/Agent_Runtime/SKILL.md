@@ -51,6 +51,7 @@ reply = agent.handle_media(paths, text, user="<频道内唯一id>", member="<成
 ```
 
 - 来件（图片/PDF）不回复：`Transport.on_media` 按 `user` 静默攒着，下条文字到了才连同全部来件调 `handle_media`，交出即不再攒，出错放回；攒超 `idle_clear_hours` 作废。Telegram 附言只配自带来件（相册按 `media_group_id` 收齐，可跨两批轮询），不领攒着的；下载失败/不支持的文件附言丢弃；文字明显与来件无关时 LLM 按提示让来件作废。命令（`agent_core.is_command`）不带来件：`/clear` 连来件一起清，`/model` `/effort` 时来件继续等。下载失败仍提示重发。攒件在内存，进程重启即丢。
+- `handle_media` 不预先 OCR/看图：只给路径，LLM 自选 `ocr_read`/`ocr_image`/`view_image`（[Vision](../Vision/SKILL.md)）或都不调。代价：问图内容多一轮工具调用。
 
 - `user` = 该频道内用户/会话的唯一标识（微信 `from_user`、Telegram `chat_id`）。Agent 按 `user` 隔离对话历史，互不串台。
 - `member` = `members.resolve(频道, 频道id)` 解析出的成员名。**必传**：为空时 Agent 直接返回空串（防御纵深，未注册来源不碰 LLM）。

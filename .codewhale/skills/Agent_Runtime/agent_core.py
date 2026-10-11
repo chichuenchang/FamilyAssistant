@@ -525,23 +525,18 @@ class Agent:
     def handle_media(self, paths: list[str], text: str, user: str = "default",
                      member: str = "", *, said: str | None = None) -> str:
         """图片/PDF + 随后文字指令 一并处理。传输层攒下来件，等用户发文字才调（来件本身不回复）。
-        ocr_image 对图片/PDF 一视同仁（PDF 走腾讯 IsPdf 逐页）；OCR 不可用或没识别到文字时
-        只给路径，靠用户文字指令。said 同 handle（缺省 = text）。"""
+        只给路径，工具 LLM 自选（见 Agent_Runtime/SKILL.md）。said 同 handle（缺省 = text）。"""
         if not member:
             return ""
-        from ocr import ocr_image, is_available
-        ocr_on = is_available()
-        parts = []
-        for i, path in enumerate(paths, 1):
-            ocr_text = ocr_image(path) if ocr_on else ""
-            body = rt.fence(ocr_text, "ocr") if ocr_text else "（无 OCR 文字）"
-            parts.append(f"材料{i}: {path}\nOCR结果:\n{body}")
+        parts = [f"材料{i}（{'PDF' if Path(p).suffix.lower() == '.pdf' else '图片'}）: {p}"
+                 for i, p in enumerate(paths, 1)]
         routes = "\n".join(f"{i}) {r}" for i, r in enumerate(REGISTRY.image_routes, 1))
         prompt = (
-            f"用户发来 {len(paths)} 份材料（图片或 PDF），已保存：\n" + "\n\n".join(parts)
+            f"用户发来 {len(paths)} 份材料，已保存：\n" + "\n".join(parts)
             + f"\n\n用户随后的指示:\n{text}\n\n"
             f"指示明显与这些材料无关（如另起话题）→ 材料作废：不处理、不提及，只回应指示。\n"
-            f"否则按用户指示处理这些材料。指示没说清归类时，按以下情况判断（取最匹配的一条）：\n{routes}\n"
+            f"否则按用户指示处理这些材料：先按需调工具看内容（选法见行为准则“看材料”），"
+            f"下文“OCR”指 ocr_read 读出的文字。指示没说清归类时，按以下情况判断（取最匹配的一条）：\n{routes}\n"
             f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
         )
         return self.handle(prompt, user=user, member=member,

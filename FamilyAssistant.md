@@ -9,6 +9,7 @@
 |-------|------|------|---------|
 | **Expense Tracker** | 记账、查账、汇总、存款、报税、汇率 | [SKILL.md](.codewhale/skills/Expense_Tracker/SKILL.md) | 记账、查账、汇总、存款、报税、汇率、票据 |
 | **OCR** | 图片文字识别、票据结构化提取 | [SKILL.md](.codewhale/skills/OCR/SKILL.md) | 图片文字识别、票据结构化提取 |
+| **Vision** | 识图模型看图答问（物体/场景/手写/图表），与主模型解耦 | [SKILL.md](.codewhale/skills/Vision/SKILL.md) | 看图、图里是什么、识别物体 |
 | **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒、家庭成员资料（profiles，家庭共享） | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
 | **PDF Editor** | 一句指令改 PDF：填表单（原生字段）、任意位置写字/打勾、白底覆盖改写、贴签名、画线、删页/旋转/重排/合并；会话落盘可续改（pypdf / reportlab / pypdfium2 可选依赖，缺席优雅降级） | [SKILL.md](.codewhale/skills/PDF_Editor/SKILL.md) | 填表、改 PDF、签名、删页、合并 PDF、移民表格 |
 | **Note Keeper** | 个人备忘（杂项信息长期记忆，按成员私有，支持图片 OCR 入忘、置顶常驻上下文） | [SKILL.md](.codewhale/skills/Note_Keeper/SKILL.md) | 记一下、帮我记住、备忘、我记过什么 |
@@ -84,6 +85,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `.codewhale/skills/Expense_Tracker/` — 记账 skill（cli.py 入口 + db.py 数据层 + models.py 读 config）
 - `config.json` — 全局配置（分类/币种/路径/命令白名单的单一事实来源）
 - `.codewhale/skills/OCR/ocr.py` — OCR 文字识别模块（腾讯云，1000次/月免费）
+- `.codewhale/skills/Vision/` — 看图 skill（仅 agent_tools.py：`view_image` 调识图模型）
 - `.codewhale/skills/Document_Keeper/` — 文档管理 skill（cli.py 入口 + doc_db.py 数据层 + reminder.py 每日提醒；documents.db 独立家庭文档库，含 documents + profiles 表）
 - `.codewhale/skills/PDF_Editor/` — PDF 编辑 skill（cli.py 入口 + pdf_layout.py 版面 + pdf_boxes.py 表格空格/勾选框 + pdf_plan.py 会话与排版 + pdf_apply.py 应用；按成员私有）
 - `.codewhale/skills/Note_Keeper/` — 个人备忘 skill（cli.py 入口 + note_db.py 数据层；按成员私有）

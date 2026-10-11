@@ -30,7 +30,8 @@ DEFAULT_EFFORT = "high"
 _BUILTIN_MODELS = {
     DEFAULT_MODEL: {"provider": "openai_compat", "api_model": "deepseek-flash",
                     "api_key_env": "DEEPSEEK_API_KEY", "base_url_env": "DEEPSEEK_BASE_URL",
-                    "base_url": "https://api.deepseek.com", "aliases": ["deepseek", "flash"]},
+                    "base_url": "https://api.deepseek.com", "aliases": ["deepseek", "flash"],
+                    "vision": True},   # V4.1-Flash 起原生识图（deepseek-v4-pro 不识）
 }
 # 启动默认的环境变量（旧名保留兼容）
 _ENV = {"model": ("LLM_MODEL", "DEEPSEEK_MODEL"),
@@ -75,8 +76,21 @@ def canon_model(name) -> str | None:
 
 
 def spec(model: str) -> dict:
-    """模型表条目；未登记的名字按 DeepSeek 原始模型 id 直发（LLM_MODEL=deepseek-v4-pro 之类）。"""
-    return MODELS.get(model) or {**MODELS[DEFAULT_MODEL], "api_model": model}
+    """模型表条目；未登记的名字按 DeepSeek 原始模型 id 直发（LLM_MODEL=deepseek-v4-pro 之类），
+    不继承默认模型的 vision。"""
+    return MODELS.get(model) or {**MODELS[DEFAULT_MODEL], "api_model": model, "vision": False}
+
+
+def sees_images(model: str) -> bool:
+    return bool(spec(model).get("vision"))
+
+
+def vision_models() -> list[str]:
+    """view_image 依次试的识图模型：config llm.vision_model 在前，其余按模型表顺序；
+    只列识图且有 key 的。与用户 /model 无关——主模型不识图也能看图。"""
+    want = canon_model((_rt.CONFIG.get("llm") or {}).get("vision_model"))
+    order = dict.fromkeys(([want] if want else []) + list(MODELS))
+    return [n for n in order if sees_images(n) and not missing_key(n)]
 
 
 def missing_key(model: str) -> str:
@@ -256,11 +270,13 @@ def fallback_of(model: str) -> str:
     return fb if fb in MODELS and fb != model and not missing_key(fb) else ""
 
 
-def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
+def chat(messages, tools, model: str, effort: str, *, fallback: bool = True,
+         **opts) -> dict | None:
     """按模型表分发到提供商。返回 OpenAI 风格 message dict（可能含 tool_calls）；失败 None。
     附私有键 "_usage"/"_finish"（顶替时 "_fallback"=顶替模型键）：
     再次发给 API 前调用方须 pop 掉 _usage/_finish/_fallback。
-    opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次；
+    opts 透传：temperature / max_tokens / timeout。主模型返回 None 且有 fallback 则同参重发一次
+    （fallback=False 不顶替：带图的消息顶替给不识图的模型只会 400）；
     请求本身被拒（4xx，见 llm_providers.RequestRejected）直接 None，不顶替。"""
     def call(name):
         s = spec(name)
@@ -268,7 +284,7 @@ def chat(messages, tools, model: str, effort: str, **opts) -> dict | None:
 
     try:
         out = call(model)
-        if out is None and (fb := fallback_of(model)):
+        if out is None and fallback and (fb := fallback_of(model)):
             _log.warning("模型 %s 无响应，改用 %s", model, fb)   # logger 已挂 stderr handler，不再 print
             out = call(fb)
             if out is not None:
