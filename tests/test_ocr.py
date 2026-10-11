@@ -160,10 +160,11 @@ def test_ocr_tools_report_moved_file_as_missing():
         assert "不存在" in tool({"path": "moved.pdf"})
 
 
-def test_ocr_read_accepts_data_relative_path(monkeypatch):
+def test_ocr_read_accepts_data_relative_path(monkeypatch, tmp_path):
     # 库里存的 source-image 是 data 相对路径（Jim/notes/...），不能按项目根解析
-    (_paths.data_root() / "Jim").mkdir(exist_ok=True)
-    (_paths.data_root() / "Jim" / "scan.jpg").write_bytes(b"jpg")
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    (tmp_path / "Jim").mkdir()
+    (tmp_path / "Jim" / "scan.jpg").write_bytes(b"jpg")
     monkeypatch.setattr(ocr, "is_available", lambda: True)
     monkeypatch.setattr(ocr, "ocr_image", lambda p: p)
     out = _ocr_at.tool_ocr_read({"path": "Jim/scan.jpg"})
