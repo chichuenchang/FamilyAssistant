@@ -52,6 +52,8 @@ def test_view_image_rejects_pdf_outside_and_empty(vision, tmp_path_factory):
     outside.write_bytes(PNG)
     assert tool({"paths": [str(outside)]}).startswith("[错误] 只允许")
     assert tool({}).startswith("[错误]")
+    # 文件被归档移走：报不存在，不能说"不是可看的图片"误导 LLM 放弃
+    assert "不存在" in tool({"paths": [str(vision["dir"] / "moved.png")]})
     assert "msgs" not in vision                           # 都没发请求
 
 

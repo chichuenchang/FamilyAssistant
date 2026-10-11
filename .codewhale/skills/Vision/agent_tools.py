@@ -41,6 +41,8 @@ def tool_view_image(args):
         resolved = rt.data_path_guard(str(p))
         if resolved is None:
             return f"[错误] 只允许看数据目录内的图片: {_paths.data_root().resolve()}"
+        if not resolved.is_file():
+            return f"[错误] {p} 不存在（可能已被归档移走，用归档后的路径）"
         part = _providers.image_part(str(resolved))
         if part is None:
             return (f"[错误] {p} 不是可看的图片（只收 jpeg/png/gif/webp，≤20 MiB）；"
