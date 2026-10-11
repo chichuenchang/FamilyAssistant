@@ -288,10 +288,10 @@ def cmd_cal_update(args):
     fields.update(_edited_times(item, args))
     if not fields:
         raise ValueError("没给要改的字段")
-    cal_db.update_item(args.id, fields, db_path=db)
+    item = cal_db.update_item(args.id, fields, db_path=db)
     _mark_backup_dirty()
     _push_quietly(db, args.member, args.kind)
-    print(f"已更新 {_fmt_item(cal_db.get_item(args.id, db_path=db))}（{_sync_suffix(args.id, db)}）")
+    print(f"已更新 {_fmt_item(item)}（{_sync_suffix(args.id, db)}）")
     _print_verify(args.member, ["schedule" if args.kind == "event" else "tasks"])
 
 
