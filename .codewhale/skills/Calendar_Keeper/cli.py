@@ -137,7 +137,7 @@ def cmd_cal_update(args):
     fields.update(_edited_times(item, args))
     if not fields:
         raise ValueError("没给要改的字段")
-    print(f"已更新 {_fmt_item(rs.update(args.member, args.id, fields))}")
+    print(f"已更新 {_fmt_item(rs.update(args.member, item, fields))}")
 
 
 def _parse_day(value: str, flag: str) -> str:

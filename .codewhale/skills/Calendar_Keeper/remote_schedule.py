@@ -157,9 +157,8 @@ def add(member: str, kind: str, title: str, start_at: str = "", end_at: str = ""
     return {"id": ref(kind, uid), **item}
 
 
-def update(member: str, item_ref, fields: dict) -> dict:
-    """只改给了的字段：先取远端当前值合并，再整体 PATCH。"""
-    it = _must_get(member, item_ref)
+def update(member: str, it: dict, fields: dict) -> dict:
+    """只改给了的字段：合并到 it（调用方 get() 取的远端当前值），再整体 PATCH。"""
     if it["status"] == "done":
         raise ValueError(f"{it['id']} 已完成，不能编辑")
     merged = {**it, **fields}

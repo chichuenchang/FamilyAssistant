@@ -18,6 +18,7 @@ class FakeProvider:
         self.tasks: dict[str, dict] = {}
         self.windows = []
         self.updated = []
+        self.gets = 0
         self.configured = True
         self.fail = False
         self._seq = 0
@@ -40,6 +41,7 @@ class FakeProvider:
 
     def get_event(self, uid):
         self._check()
+        self.gets += 1
         return self.events.get(uid)
 
     def create_event(self, item):
@@ -62,6 +64,7 @@ class FakeProvider:
 
     def get_task(self, uid):
         self._check()
+        self.gets += 1
         return self.tasks.get(uid)
 
     def create_task(self, item):
@@ -208,7 +211,7 @@ class TestMutations:
     def test_update_merges_untouched_fields(self, fake):
         it = rs.add("MemberA", "event", "牙医", start_at=f"{D1}T09:00",
                     end_at=f"{D1}T10:00", location="诊所", notes="带卡")
-        out = rs.update("MemberA", it["id"], {"title": "看牙"})
+        out = rs.update("MemberA", rs.get("MemberA", it["id"]), {"title": "看牙"})
         kind, uid, sent = fake.updated[-1]
         assert (kind, uid) == ("event", it["id"][2:])
         assert sent["title"] == "看牙" and sent["location"] == "诊所" and sent["notes"] == "带卡"
@@ -218,7 +221,7 @@ class TestMutations:
         it = rs.add("MemberA", "task", "T")
         rs.complete("MemberA", it["id"])
         with pytest.raises(ValueError, match="已完成"):
-            rs.update("MemberA", it["id"], {"title": "改"})
+            rs.update("MemberA", rs.get("MemberA", it["id"]), {"title": "改"})
 
     def test_complete_event_refused(self, fake):
         it = rs.add("MemberA", "event", "E", start_at=D1)
@@ -232,8 +235,7 @@ class TestMutations:
 
     def test_unknown_ref_not_found(self, fake):
         assert rs.get("MemberA", "t:nope") is None
-        for op in (lambda: rs.update("MemberA", "t:nope", {"title": "x"}),
-                   lambda: rs.complete("MemberA", "t:nope"),
+        for op in (lambda: rs.complete("MemberA", "t:nope"),
                    lambda: rs.delete("MemberA", "e:nope")):
             with pytest.raises(rs.NotFound):
                 op()
@@ -294,6 +296,7 @@ class TestCli:
         assert code == 0 and "已更新" in out
         sent = fake.updated[-1][2]
         assert sent["start_at"] == f"{D3}T09:00" and sent["end_at"] == f"{D3}T10:00"
+        assert fake.gets == 1                      # 一次编辑只取一次远端
 
     def test_done_and_delete(self, cli, fake):
         cli("cal-add", "--member", "MemberA", "--kind", "task", "--title", "T")
