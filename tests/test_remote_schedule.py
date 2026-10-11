@@ -201,6 +201,14 @@ class TestAddAndList:
         rows = rs.list_items("MemberA", start=date.today().isoformat(), end=D3, undated=True)
         assert [r["title"] for r in rows] == ["早", "晚", "无期限"]
 
+    def test_unconfigured_domain_skipped_when_kind_open(self, fake, monkeypatch):
+        rs.add("MemberA", "event", "E", start_at=D1)
+        monkeypatch.setattr(rs, "provider_for", lambda m, d: fake if d == "schedule" else None)
+        rows = rs.list_items("MemberA", start=date.today().isoformat(), end=D3, undated=True)
+        assert [r["title"] for r in rows] == ["E"]
+        with pytest.raises(rs.NotConfigured):
+            rs.list_items("MemberA", "task")
+
     def test_provider_error_propagates(self, fake):
         fake.fail = True
         with pytest.raises(RuntimeError, match="network down"):

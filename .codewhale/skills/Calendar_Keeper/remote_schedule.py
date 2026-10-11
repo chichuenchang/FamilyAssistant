@@ -114,9 +114,15 @@ def _in_window(it: dict, start: str, end: str) -> bool:
 
 def list_items(member: str, kind: str | None = None, start: str = "", end: str = "",
                closed: bool = False, undated: bool = False) -> list[dict]:
-    """窗口内条目，start/end 'YYYY-MM-DD'，空 = 不限。undated 加无截止日待办；closed 加已完成。"""
+    """窗口内条目，start/end 'YYYY-MM-DD'，空 = 不限。undated 加无截止日待办；closed 加已完成。
+    kind 不给 = 已配的域都列（只配一域照列），两域都未配才 NotConfigured。"""
+    if kind:
+        kinds = [kind]
+    else:
+        ok = status(member)
+        kinds = [k for k, d in _DOMAIN.items() if ok[d]] or ["event"]
     out: list[dict] = []
-    for k in ([kind] if kind else ["event", "task"]):
+    for k in kinds:
         p = _prov(member, k)
         if k == "event":
             hi = (date.fromisoformat(end) if end
