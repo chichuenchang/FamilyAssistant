@@ -149,6 +149,16 @@ class TestGoogleProvider:
         assert body["start"] == {"date": "2026-06-15"}
         assert body["end"] == {"date": "2026-06-16"}  # 全天 end 独占
 
+    def test_update_multiday_allday_keeps_span(self, gcal):
+        fake, calls = gcal
+        fake.responses = [(200, b"{}")]
+        calendar_provider.update_event("ev1", {"title": "露营", "start_at": "2026-06-15",
+                                               "end_at": "2026-06-17", "all_day": 1,
+                                               "location": "", "notes": ""})
+        body = json.loads(calls[0]["data"])
+        assert body["start"]["date"] == "2026-06-15"
+        assert body["end"]["date"] == "2026-06-18"   # end_at 含当日 → Google 独占
+
     def test_delete_event_missing_is_noop(self, gcal):
         fake, calls = gcal
         fake.responses = [(404, b"not found")]

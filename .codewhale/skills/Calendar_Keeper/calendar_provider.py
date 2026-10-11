@@ -190,14 +190,16 @@ def get_event(uid: str) -> dict | None:
 
 def _event_body(item: dict) -> dict:
     """条目 → Calendar API 活动体。start/end 显式把另一种时间键置 null：
-    PATCH 是合并语义，全天↔定时互转时不清掉旧键会两者并存被拒。"""
+    PATCH 是合并语义，全天↔定时互转时不清掉旧键会两者并存被拒。
+    全天 end_at = 含当日的末日（空 = 单日），转 Google 独占 end。"""
     start_at = item.get("start_at") or ""
     body: dict = {"summary": item.get("title") or "(无标题)",
                   "location": item.get("location") or "",
                   "description": item.get("notes") or ""}
     if item.get("all_day") or len(start_at) == 10:
         day = start_at[:10]
-        next_day = (datetime.strptime(day, "%Y-%m-%d")
+        last = max(day, (item.get("end_at") or "")[:10])
+        next_day = (datetime.strptime(last, "%Y-%m-%d")
                     + timedelta(days=1)).strftime("%Y-%m-%d")
         body["start"] = {"date": day, "dateTime": None}
         body["end"] = {"date": next_day, "dateTime": None}  # 全天活动 end 独占
