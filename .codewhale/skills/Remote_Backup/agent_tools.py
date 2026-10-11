@@ -28,12 +28,8 @@ SCHEMAS = [
 
 PROMPT_SECTIONS = [
     """## 数据备份（可选功能）
-- 用户问"备份了吗""上次备份什么时候"→ backup_status
-- 用户说"立刻备份""把数据同步到云盘"→ backup_now
-- 用户问"云端和本地一致吗"→ backup_verify
-- backup_status 显示未启用/未配置时：告知备份是可选功能，需要在电脑上按
-  Remote_Backup/SKILL.md 完成 Google Drive 授权并启用；不要反复推销
-- 数据恢复（backup-restore）只能在电脑上手动执行，你调不到""",
+- 未启用/未配置时告知需在电脑上按 Remote_Backup/SKILL.md 授权启用；不要反复推销
+- 数据恢复只能在电脑上手动执行，你调不到""",
 ]
 
 

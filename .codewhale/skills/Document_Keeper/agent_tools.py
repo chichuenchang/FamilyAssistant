@@ -104,19 +104,9 @@ SCHEMAS = [
 ]
 
 PROMPT_SECTIONS = [
-    f"""## 文档管理（家庭重要文档归档与到期提醒）
-- 文档类型: {"/".join(DOC_TYPES)}
-- 用户发来 合同/保单/证件 等重要文档，或说"存一下这个文件"→ add_document（尽量带 expiry 到期日和 action-note 到期动作）
-- 用户问"租约什么时候到期""我们有哪些保险""找一下XX保单"→ list_documents / show_document
-- 用户问"有什么要到期的""最近有什么要办的"→ due_documents
-- 用户说"续约了""换新证了"→ update_document 改到期日；旧文档另存时把旧的 status 改 superseded
-- 用户说"知道了""别再提醒"→ ack_document""",
-]
-
-PROMPT_RULES = [
-    "用户提供长期个人事实（法定名/生日/电话/邮箱/住址/证件卡号等）→ set_profile_field 存到家庭成员资料（member-name 填事实属于谁，家庭层面如住址用 Family），不要存成备忘；这类信息全家共享",
-    '填 PDF 表格时建议值优先取自"家庭成员资料"块（仍然逐字段问用户确认）',
-    '用户说"把我的租约/保单发给我""发我那个文件/那张图"→ send_document（先 list/show 拿 id）或 send_file（data 内相对路径）；文件会自动发给用户',
+    """## 文档与成员资料（家庭共享）
+- 文档：合同/保单/证件等原件归档，带到期日则每日提醒；续约/换新证另存新文档时，旧的 status 改 superseded
+- 成员资料：法定名/生日/电话/住址/证件卡号等长期个人事实存 set_profile_field（家庭层面用 Family），不存备忘；填表时优先从这里取建议值（仍向用户确认）""",
 ]
 
 
@@ -147,7 +137,5 @@ from reminder import check_and_push as doc_reminder_check  # noqa: E402
 SLOW_TICKS = [doc_reminder_check]
 
 IMAGE_ROUTES = [
-    "重要文档（合同/保单/证件/健康卡/政府或移民表格，PDF 多属此类）：用 add_document 归档，"
-    "file 传上面的保存路径，ocr-text 传 OCR 全文，type 选最合适的；"
-    "有到期日带 expiry，到期要办的事带 action-note。用户若说要**填写**这份表格则不归档（见填表条目）。",
+    "重要文档（合同/保单/证件/健康卡/政府或移民表格，PDF 多属此类）→ 归档（带原件路径与 OCR 全文）；用户要填写这份表格则不归档",
 ]

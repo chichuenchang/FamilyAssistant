@@ -156,11 +156,7 @@ SCHEMAS = [
 ]
 
 PROMPT_RULES = [
-    '用户说"记一下""帮我记住""备忘"（非记账类杂项信息）→ save_note；重要长期信息建议 pinned',
-    '用户问"我记过什么""XX是什么来着""车位/wifi密码是多少"→ search_notes 或 list_notes；删某条→delete_note；置顶/取消置顶→pin_note',
-    '工作表（长期结构化跟踪）：仅当用户明确说"建个表/做个 worksheet/长期记录这些字段/这些流水"时才用 create_worksheet；普通"记一下"仍用 save_note，不要升级成工作表。kv=事实清单（房贷利率/保单号），table=流水（血压/体重/读数打卡）。更新已存表用 set_worksheet_field（kv）或 add_worksheet_row/edit_worksheet_row（table）；查全表用 show_worksheet；列我所有表→list_worksheets；删字段→unset_worksheet_field、删行→delete_worksheet_row、改表名→rename_worksheet、置顶表→pin_worksheet、删整表→delete_worksheet',
-    '用户要"图/可视化/趋势/图表/show me the chart"→ 先确认数据在哪张工作表（必要时 show_worksheet 取全），抽出对应数字，调 visualize_data 画图；图会自动发给用户，你只需简短说明',
-    "备忘按成员私有：只能看到当前用户自己的备忘，这是系统强制的，无需向用户解释",
+    "备忘 = 非记账类杂项信息（按成员私有）；工作表 = 用户要长期结构化跟踪的字段或流水；要画图就从工作表取数调 visualize_data（图自动发出）",
 ]
 
 
@@ -232,7 +228,5 @@ def worksheets_context(member: str, db_path: str | None = None) -> str:
 CONTEXT_FNS = [notes_context, worksheets_context]
 
 IMAGE_ROUTES = [
-    "其他有信息价值的杂项材料（路由器标签/课表/名片/告示等，不属于本清单其他条目的）：用 save_note 记备忘，"
-    "content 传 OCR 出的关键信息（整理成一两句话，别原样塞全文），"
-    "source-image 传上面的保存路径。看起来需要长期记住的（如 wifi 密码）加 pinned=true。",
+    "其他有信息价值的杂项（路由器标签/课表/名片/告示等）→ 备忘：整理成一两句关键信息，带 source-image",
 ]

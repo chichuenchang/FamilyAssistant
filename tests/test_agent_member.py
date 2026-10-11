@@ -80,6 +80,6 @@ def test_handle_media_gives_paths_agent_picks_tools(monkeypatch):
     assert "明显与这些材料无关" in p                    # 无关指令 → LLM 让材料作废
     assert cap["s"] == "签好发给学校"
     # 分流条目来自各 skill 的 IMAGE_ROUTES，按 ORDER 编号
-    for tool in ("add_transaction", "add_document", "save_note", "add_event", "edit_pdf"):
-        assert tool in p, tool
-    assert "1) 单张消费票据" in p and "6) 用户此前" in p
+    for kind in ("记账", "归档", "备忘", "日程", "编辑"):
+        assert kind in p, kind
+    assert "1) 消费票据" in p and "5) 用户要填写" in p

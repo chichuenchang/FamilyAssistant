@@ -54,7 +54,7 @@ SCHEMAS = [
         "category": s(f"分类，必须从合法分类中选: {CATS_DESC}"),
         "desc": s("描述，如 午餐"),
         "notes": s("备注"),
-        "force": boolean("跳过重复检查强制写入（仅在用户确认非重复后用）"),
+        "force": boolean("跳过重复检查强制写入（确认是另一笔独立交易、非重复时用）"),
     }, ["type", "amount", "date"]),
     fn("list_transactions", "查询交易流水", {
         "type": s("交易类型", enum=TX_TYPES),
@@ -148,31 +148,12 @@ SCHEMAS = [
 ]
 
 PROMPT_SECTIONS = [
-    f"""## 记账合法值（来自配置，必须从中选）
-- 交易类型: {"/".join(TX_TYPES)}
-- 币种: {"/".join(CURRENCIES)}（默认基准 {BASE_CUR}）
-- 各类型分类: {CATS_DESC}""",
-]
-
-PROMPT_RULES = [
-    '用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction',
-    '用户说"查账""这个月花了多少"→ list_transactions 或 get_summary（可给 year+month 看某一个月）；要全年逐月对比→get_monthly（只按年，无月参数）；记错要删→delete_transaction',
-    '用户说"存了定期""买了理财"→ add_deposit；"我有哪些定期"→ list_deposits',
-    '用户说"报税""今年报了多少税"→ add_tax / list_tax',
-    '用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）',
-    '用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）',
-    '用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate',
+    f"""## 记账（家庭共享账本）
+- 交易类型: {"/".join(TX_TYPES)}；币种: {"/".join(CURRENCIES)}（默认基准 {BASE_CUR}）；分类见 add_transaction
+- 开出去的发票/报价单/未付账单没有现金流，不是收支（要跟进收款可建待办）
+- 账单/流水记的是每笔明细；总额、应还款额、最低还款额、已还款额是汇总数字，不记""",
 ]
 
 IMAGE_ROUTES = [
-    "单张消费票据：提取金额/日期/类别，调 add_transaction 记一笔。"
-    "注意：开出去的发票/报价单/还没付的账单 = 没有实际现金流，绝不要直接记成收入或支出；"
-    "可建 add_task 跟进收款（带 source-image），别记成 income/expense。",
-    "银行/信用卡/支付App流水或账单（多行消费，PDF 多页账单常见）：逐笔记账，每条明细调一次"
-    " add_transaction（可在一条回复里并发多次调用）。**重点：记的是每一笔交易明细，绝不要把账单总额、"
-    "应还款额、最低还款额、已还款额当成一笔记账**——那些是汇总数字，不是消费。"
-    "每笔的 desc 带上能区分该行的信息（商家+时间，OCR 里有就带），这样同日同额的不同消费"
-    "不会被误判为重复，而重复发同一张截图会被正确拦截。某行确属独立消费却被重复检查拦下时，"
-    "对该行加 force=true 重记。行数多一条回复记不完就分多条继续记。"
-    "无法确定金额/日期的行先列出来问用户，不要瞎记。",
+    "消费票据、银行/信用卡/支付App流水或账单 → 记账（逐笔明细，desc 带商家+时间以免同日同额被误判重复）",
 ]
