@@ -40,7 +40,7 @@ def test_handle_media_archives_paths_for_later_lookup(monkeypatch, archive_file)
     agent.handle_media([str(img)], "这是什么", user="u", member="爸爸")
     row = json.loads(archive_file.read_text(encoding="utf-8").splitlines()[0])
     assert row["said"] == "这是什么" and row["media"] == ["Archived/inbox/x.jpg"]
-    assert "来件: Archived/inbox/x.jpg" in chat_archive.read("wechat", "u")
+    assert "来件: Archived/inbox/x.jpg\n    助手: 42 元" in chat_archive.read("wechat", "u")
     agent.handle("好的", user="u", member="爸爸")
     assert "media" not in json.loads(archive_file.read_text(encoding="utf-8").splitlines()[1])
 

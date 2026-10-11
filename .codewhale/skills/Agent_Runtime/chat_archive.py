@@ -100,4 +100,4 @@ def read(channel: str, user, query: str = "", limit: int = 20) -> str:
     return "\n".join(
         f"[{r.get('ts', '')[:16].replace('T', ' ')}] 用户: {_clip(r.get('said', ''))}\n"
         + (f"    来件: {', '.join(r['media'])}\n" if r.get("media") else "")
-        + f"    助手:{_clip(r.get('reply', '')) or '（无回复）'}" for r in turns)
+        + f"    助手: {_clip(r.get('reply', '')) or '（无回复）'}" for r in turns)
