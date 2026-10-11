@@ -525,8 +525,7 @@ class Agent:
     def handle_media(self, paths: list[str], text: str, user: str = "default",
                      member: str = "", *, said: str | None = None) -> str:
         """图片/PDF + 随后文字指令 一并处理。传输层攒下来件，等用户发文字才调（来件本身不回复）。
-        不预先 OCR/看图：只给路径，LLM 按指示自选 ocr_read / ocr_image / view_image（或都不调）。
-        said 同 handle（缺省 = text）。"""
+        只给路径，工具 LLM 自选（见 Agent_Runtime/SKILL.md）。said 同 handle（缺省 = text）。"""
         if not member:
             return ""
         parts = [f"材料{i}（{'PDF' if Path(p).suffix.lower() == '.pdf' else '图片'}）: {p}"

@@ -15,7 +15,7 @@
 
 ### 🧾 票据 OCR
 - 发票/小票照片或 PDF 账单 → 腾讯云 OCR 文字识别（1000 次/月免费，PDF 逐页各计一次，上限 20 页）→ DeepSeek 结构化提取（金额/日期/分类/描述）→ 自动记账
-- 照片里没字的东西（物体/场景/手写/图表）→ 识图模型看图（`view_image`，DeepSeek V4.1-Flash）；OCR 还是看图由 Agent 按指示自选
+- 照片里没字的东西（物体/场景/手写/图表）→ 识图模型看图（`view_image`，DeepSeek V4.1-Flash）
 - 原始票据按月存档 `data/Family/receipts/YYYY-MM/`，与账目记录关联（行内 `receipt_path` 记 data 相对路径）
 
 ### 📁 家庭文档管理（Document Keeper）

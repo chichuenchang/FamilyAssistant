@@ -8,4 +8,3 @@
 - 格式按文件头判（微信存图扩展名不可信）：jpeg/png/gif/webp。HEIC、PDF 拒收，PDF 走 `ocr_read`。
 - 工具互为后备（PROMPT_RULES）：OCR 失败改 `view_image` 照录文字（提醒用户核对数字），看图失败改 `ocr_read`。实测两向都切。PDF 无后备。
 - 结果在 `UNTRUSTED_TOOLS`：图中文字可藏注入。
-- 来件不预先 OCR/看图（`agent_core.handle_media`）：Agent 自选工具。代价：问图内容多一轮工具调用。
