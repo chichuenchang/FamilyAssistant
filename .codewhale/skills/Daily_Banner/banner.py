@@ -98,7 +98,7 @@ class Digest:
     events: list[str]
     tasks: list[str]
     mails: list[str] | None      # None = 没配邮箱 / 取信失败（不提邮件）
-    stale: bool                  # 远端刷新失败，用的本地缓存
+    stale: bool                  # 远程日历读取失败，日程/待办缺失
     days: int = 3
     task_total: int = 0          # 截断前待办数（tasks 含「…还有」行）
 
@@ -129,19 +129,26 @@ def _task_line(r: dict, today: str) -> str:
     return f"{r['title']}（{'逾期' if due < today else '截止'} {_md(due)}）"
 
 
-def _refresh(member: str, start: date, end: date) -> bool:
-    """远端拉最新；返回是否失败。日历总开关关 = 纯本地，不算失败。"""
-    import calendar_sync
-    if not calendar_sync.CFG.get("enabled"):
-        return False
+def _calendar(member: str, day: date, end: date) -> tuple[list[dict], list[dict], bool]:
+    """远程日历取 (窗口内活动, 全部开放待办, 是否失败)。两域各自取：未配 = 空不算失败；
+    失败 = 空并标失败，另一域照用。"""
+    import remote_schedule as rs
     failed = False
-    for domain in ("schedule", "tasks"):
+
+    def fetch(kind: str, **kw) -> list[dict]:
+        nonlocal failed
         try:
-            failed |= bool(calendar_sync.refresh_range(member, domain, start, end)["errors"])
+            return rs.list_items(member, kind, **kw)
+        except rs.NotConfigured:
+            return []
         except Exception:
-            _log.exception("早报远端刷新失败: %s/%s", member, domain)
+            _log.exception("早报取远程日历失败: %s/%s", member, kind)
             failed = True
-    return failed
+            return []
+
+    events = fetch("event", start=day.isoformat(), end=end.isoformat())
+    tasks = fetch("task", undated=True)
+    return events, tasks, failed
 
 
 def _mail(member: str) -> list[str] | None:
@@ -169,14 +176,9 @@ def _cap(lines: list[str], cap: int) -> list[str]:
 
 
 def gather(member: str, day: date, cfg: dict) -> Digest:
-    import cal_db
     days = int(cfg.get("lookahead_days") or 3)
     end = day + timedelta(days=days - 1)
-    stale = _refresh(member, day, end)
-    events = cal_db.list_range(day.isoformat(), end.isoformat(), kind="event",
-                               db_path=str(_paths.member_store(member, "schedule")))
-    tasks = cal_db.list_range(kind="task", include_undated=True,
-                              db_path=str(_paths.member_store(member, "tasks")))
+    events, tasks, stale = _calendar(member, day, end)
     today = day.isoformat()
     return Digest(day=day,
                   events=_cap([_event_line(r) for r in events], EVENT_CAP),
@@ -192,7 +194,7 @@ SYSTEM = (
     "中文纯文本，可用 emoji 分段，不超过 15 行。顺序：今天的安排与时间冲突 → 逾期和临近截止的待办 → "
     "未来几天要提前准备的事 → 需要回复或处理的邮件（广告/通知类只报条数）。"
     "没数据的板块整段省略，不解释缺了什么、不评论数据本身（如'未标注截止日期'）。"
-    "数据注明远端同步失败时，保留一行提醒数据可能旧。末行写「👉 今天最该做：」加一件事。"
+    "数据注明远程日历读取失败时，保留一行提醒日程/待办没取到。末行写「👉 今天最该做：」加一件事。"
 )
 
 
@@ -202,18 +204,20 @@ def _head(d: Digest) -> str:
 
 def template(d: Digest) -> str:
     """确定性兜底（LLM 失败 / 没东西可说）。"""
-    stale = ["⚠️ 远端同步失败，数据可能旧"] if d.stale else []
+    stale = ["⚠️ 远程日历读取失败，日程/待办没取到"] if d.stale else []
     if d.empty:
         mail = "，无未读邮件" if d.mails is not None else ""
-        return "\n".join([f"{_head(d)}：未来{d.days}天无日程，无待办{mail}。", *stale])
+        if d.stale:
+            return "\n".join([f"{_head(d)}{mail}。", *stale])
+        return f"{_head(d)}：未来{d.days}天无日程，无待办{mail}。"
     lines = [_head(d)]
     if d.events:
         lines += [f"📅 未来{d.days}天日程："] + [f"- {e}" for e in d.events]
-    else:
+    elif not d.stale:
         lines += [f"📅 未来{d.days}天无日程"]
     if d.tasks:
         lines += [f"☐ 待办 {d.task_total or len(d.tasks)} 项："] + [f"- {t}" for t in d.tasks]
-    else:
+    elif not d.stale:
         lines += ["☐ 无待办"]
     if d.mails is not None:
         lines += [f"📬 未读邮件 {len(d.mails)} 封" + ("：" if d.mails else "")]
@@ -231,7 +235,7 @@ def llm_input(d: Digest) -> str:
     if d.mails is not None:
         parts.append(block("昨天以来未读邮件（发件人｜主题）", d.mails, "mail"))
     if d.stale:
-        parts.append("注意：远端同步失败，以上为本地缓存，可能旧。")
+        parts.append("注意：远程日历读取失败，日程/待办没取到（不是没有）。")
     return "\n\n".join(parts)
 
 

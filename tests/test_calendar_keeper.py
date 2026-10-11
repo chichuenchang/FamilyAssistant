@@ -1,16 +1,12 @@
-# tests/test_calendar_keeper.py — Calendar Keeper skill tests.
-# No real family names, channel ids, or credentials in test data.
+# tests/test_calendar_keeper.py — Calendar Keeper：Google provider、注册表、Agent 接线。
+# remote_schedule 与 CLI 见 tests/test_remote_schedule.py。无真实姓名/凭据。
 import json
 import os
 from datetime import date, timedelta
 
 import pytest
 
-import cal_db
 import calendar_provider
-
-
-TODAY = date(2026, 6, 12)
 
 
 @pytest.fixture(autouse=True)
@@ -19,280 +15,10 @@ def _no_real_gcal(monkeypatch):
 
     Strips inherited GCAL_* before every test. Provider tests set their own fake
     creds via the ``gcal`` fixture, which depends on this one so it runs after.
-    Without this guard, in-process tests that delete CAL_DB_PATH
-    (TestForMemberRouting, TestSourceImageRelocate) push to the real primary
-    calendar when GCAL_* happen to be set in the shell.
     """
     for k in list(os.environ):
         if k.startswith("GCAL_"):
             monkeypatch.delenv(k, raising=False)
-
-
-def _add_event(db, title="游泳课", start="2026-06-13T14:00", end="2026-06-13T15:00",
-               member="MemberA", **kw):
-    return cal_db.add_item(kind="event", title=title, start_at=start, end_at=end,
-                           member=member, db_path=db, **kw)
-
-
-def _add_task(db, title="买蛋糕", due="2026-06-15", member="MemberA", **kw):
-    return cal_db.add_item(kind="task", title=title, start_at=due,
-                           member=member, db_path=db, **kw)
-
-
-def _age(db, item_id, minutes=5):
-    """把行的 updated_at 拨旧，绕过 60s 新鲜保护（校验/对账测试用）。"""
-    import sqlite3
-    from datetime import datetime
-    old = (datetime.now() - timedelta(minutes=minutes)).isoformat(timespec="seconds")
-    c = sqlite3.connect(db)
-    c.execute("UPDATE schedule_items SET updated_at = ? WHERE id = ?", (old, item_id))
-    c.commit()
-    c.close()
-
-
-class TestCalDb:
-    def test_parse_ref_inverts_ref(self):
-        for kind in ("event", "task"):
-            assert cal_db.parse_ref(cal_db.ref(kind, 12)) == (kind, 12)
-        assert cal_db.parse_ref("#E3") == ("event", 3)
-        assert cal_db.parse_ref("7") == (None, 7)
-        with pytest.raises(ValueError, match="格式"):
-            cal_db.parse_ref("x9")
-
-    def test_update_item_marks_pending(self, cal_db_path):
-        iid = _add_event(cal_db_path)
-        cal_db.mark_synced(iid, uid="ev-1", db_path=cal_db_path)
-        row = cal_db.update_item(iid, {"title": "新标题", "location": "泳馆"},
-                                 db_path=cal_db_path)
-        assert row["title"] == "新标题" and row["location"] == "泳馆"
-        assert row["synced"] == 0 and row["uid"] == "ev-1"
-        assert cal_db.update_item(999, {"title": "x"}, db_path=cal_db_path) is None
-        with pytest.raises(ValueError):
-            cal_db.update_item(iid, {"member": "别人"}, db_path=cal_db_path)
-
-    def test_add_and_get_roundtrip(self, cal_db_path):
-        iid = _add_event(cal_db_path, location="泳馆", notes="带泳镜")
-        item = cal_db.get_item(iid, db_path=cal_db_path)
-        assert item["kind"] == "event"
-        assert item["title"] == "游泳课"
-        assert item["start_at"] == "2026-06-13T14:00"
-        assert item["end_at"] == "2026-06-13T15:00"
-        assert item["location"] == "泳馆"
-        assert item["member"] == "MemberA"
-        assert item["status"] == "active"
-        assert item["origin"] == "local"
-        assert item["synced"] == 0
-        assert item["uid"] == ""
-
-    def test_add_requires_title(self, cal_db_path):
-        with pytest.raises(ValueError):
-            cal_db.add_item(kind="event", title="  ", db_path=cal_db_path)
-
-    def test_add_rejects_unknown_kind(self, cal_db_path):
-        with pytest.raises(ValueError):
-            cal_db.add_item(kind="meeting", title="x", db_path=cal_db_path)
-
-    def test_list_upcoming_window_and_order(self, cal_db_path):
-        _add_event(cal_db_path, title="窗口外", start="2026-06-30T09:00", end="")
-        late = _add_event(cal_db_path, title="后", start="2026-06-20T09:00", end="")
-        early = _add_event(cal_db_path, title="先", start="2026-06-13T08:00", end="")
-        rows = cal_db.list_upcoming(days=10, today=TODAY, db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [early, late]
-
-    def test_list_upcoming_keeps_spanning_and_drops_past(self, cal_db_path):
-        spanning = _add_event(cal_db_path, title="跨今天",
-                              start="2026-06-10T09:00", end="2026-06-13T18:00")
-        _add_event(cal_db_path, title="已过去",
-                   start="2026-06-01T09:00", end="2026-06-02T10:00")
-        rows = cal_db.list_upcoming(days=10, today=TODAY, db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [spanning]
-
-    def test_list_upcoming_includes_undated_open_tasks(self, cal_db_path):
-        dated = _add_task(cal_db_path, title="有期限", due="2026-06-14")
-        undated = _add_task(cal_db_path, title="无期限", due="")
-        rows = cal_db.list_upcoming(days=10, today=TODAY, db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [dated, undated]  # undated tasks last
-
-    def test_list_upcoming_excludes_closed_by_default(self, cal_db_path):
-        open_id = _add_task(cal_db_path, title="open", due="2026-06-14")
-        done_id = _add_task(cal_db_path, title="done", due="2026-06-14")
-        cal_db.set_status(done_id, "done", db_path=cal_db_path)
-        rows = cal_db.list_upcoming(days=10, today=TODAY, db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [open_id]
-        all_rows = cal_db.list_upcoming(days=10, today=TODAY,
-                                        include_closed=True, db_path=cal_db_path)
-        assert {r["id"] for r in all_rows} == {open_id, done_id}
-
-    def test_list_upcoming_filters_kind_and_member(self, cal_db_path):
-        ev = _add_event(cal_db_path, member="MemberA")
-        _add_task(cal_db_path, member="MemberB", due="2026-06-14")
-        only_events = cal_db.list_upcoming(days=10, today=TODAY, kind="event",
-                                           db_path=cal_db_path)
-        assert [r["id"] for r in only_events] == [ev]
-        only_a = cal_db.list_upcoming(days=10, today=TODAY, member="MemberA",
-                                      db_path=cal_db_path)
-        assert [r["id"] for r in only_a] == [ev]
-
-    def test_list_range_covers_past(self, cal_db_path):
-        past = _add_event(cal_db_path, title="7月游泳课", start="2026-07-05T14:00",
-                          end="2026-07-05T15:00")
-        _add_event(cal_db_path, title="6月的", start="2026-06-05T14:00", end="")
-        _add_event(cal_db_path, title="未来的", start="2026-08-05T14:00", end="")
-        rows = cal_db.list_range(start="2026-07-01", end="2026-07-31",
-                                 db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [past]
-
-    def test_list_range_open_bounds(self, cal_db_path):
-        old = _add_event(cal_db_path, title="很久以前", start="2019-01-01T09:00", end="")
-        new = _add_event(cal_db_path, title="很久以后", start="2099-01-01T09:00", end="")
-        assert [r["id"] for r in cal_db.list_range(end="2020-01-01",
-                                                   db_path=cal_db_path)] == [old]
-        assert [r["id"] for r in cal_db.list_range(start="2098-01-01",
-                                                   db_path=cal_db_path)] == [new]
-        assert {r["id"] for r in cal_db.list_range(db_path=cal_db_path)} == {old, new}
-
-    def test_list_range_keeps_spanning_event(self, cal_db_path):
-        span = cal_db.add_item(kind="event", title="跨月", start_at="2026-06-28",
-                               end_at="2026-07-03", db_path=cal_db_path)
-        rows = cal_db.list_range(start="2026-07-01", end="2026-07-31",
-                                 db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [span]
-
-    def test_list_range_closed_undated_and_kind_filters(self, cal_db_path):
-        done = _add_task(cal_db_path, title="已完成", due="2026-07-10")
-        cal_db.set_status(done, "done", db_path=cal_db_path)
-        undated = _add_task(cal_db_path, title="无期限", due="")
-        ev = _add_event(cal_db_path, title="7月活动", start="2026-07-11T09:00", end="")
-        assert cal_db.list_range(start="2026-07-01", end="2026-07-31",
-                                 kind="task", db_path=cal_db_path) == []
-        rows = cal_db.list_range(start="2026-07-01", end="2026-07-31", kind="task",
-                                 include_closed=True, db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [done]        # 数历史次数要带 include_closed
-        rows = cal_db.list_range(start="2026-07-01", end="2026-07-31",
-                                 include_closed=True, include_undated=True,
-                                 db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [done, ev, undated]   # 无日期的排最后
-
-    def test_set_status_marks_unsynced(self, cal_db_path):
-        iid = _add_task(cal_db_path)
-        cal_db.mark_synced(iid, uid="remote-1", db_path=cal_db_path)
-        assert cal_db.get_item(iid, db_path=cal_db_path)["synced"] == 1
-        assert cal_db.set_status(iid, "done", db_path=cal_db_path) is True
-        item = cal_db.get_item(iid, db_path=cal_db_path)
-        assert item["status"] == "done"
-        assert item["synced"] == 0          # local change → pending push
-        assert item["uid"] == "remote-1"    # uid preserved
-
-    def test_set_status_from_remote_keeps_synced(self, cal_db_path):
-        iid = _add_task(cal_db_path)
-        cal_db.mark_synced(iid, uid="remote-1", db_path=cal_db_path)
-        cal_db.set_status(iid, "cancelled", from_remote=True, db_path=cal_db_path)
-        item = cal_db.get_item(iid, db_path=cal_db_path)
-        assert item["status"] == "cancelled"
-        assert item["synced"] == 1          # remote-origin change, nothing to push
-
-    def test_set_status_unknown_id(self, cal_db_path):
-        assert cal_db.set_status(999, "done", db_path=cal_db_path) is False
-
-    def test_pending_and_mark_synced(self, cal_db_path):
-        iid = _add_event(cal_db_path)
-        assert [r["id"] for r in cal_db.pending(db_path=cal_db_path)] == [iid]
-        cal_db.mark_synced(iid, uid="gcal-42", db_path=cal_db_path)
-        assert cal_db.pending(db_path=cal_db_path) == []
-        item = cal_db.get_item(iid, db_path=cal_db_path)
-        assert item["uid"] == "gcal-42" and item["synced"] == 1
-
-    def test_upsert_remote_insert_then_overwrite(self, cal_db_path):
-        fields = {"title": "远程活动", "start_at": "2026-06-14T10:00",
-                  "end_at": "2026-06-14T11:00", "all_day": 0,
-                  "location": "公园", "notes": "", "status": "active"}
-        iid = cal_db.upsert_remote("event", "uid-7", fields, db_path=cal_db_path)
-        item = cal_db.get_item(iid, db_path=cal_db_path)
-        assert item["origin"] == "remote" and item["synced"] == 1
-        assert item["member"] == ""
-        # remote edit wins over synced local copy
-        again = cal_db.upsert_remote("event", "uid-7",
-                                     {**fields, "title": "改名了"}, db_path=cal_db_path)
-        assert again == iid
-        assert cal_db.get_item(iid, db_path=cal_db_path)["title"] == "改名了"
-
-    def test_upsert_remote_skips_pending_local(self, cal_db_path):
-        iid = _add_task(cal_db_path, title="本地待办")
-        cal_db.mark_synced(iid, uid="t-1", db_path=cal_db_path)
-        cal_db.set_status(iid, "done", db_path=cal_db_path)  # pending local change
-        cal_db.upsert_remote("task", "t-1",
-                             {"title": "远程覆盖", "start_at": "", "end_at": "",
-                              "all_day": 0, "location": "", "notes": "",
-                              "status": "active"}, db_path=cal_db_path)
-        item = cal_db.get_item(iid, db_path=cal_db_path)
-        assert item["title"] == "本地待办"      # pending row untouched
-        assert item["status"] == "done"
-
-    def test_add_with_source_image(self, cal_db_path):
-        iid = _add_event(cal_db_path, source_image="Alex/schedule/2026-06/x.jpg")
-        assert cal_db.get_item(iid, db_path=cal_db_path)["source_image"] == \
-            "Alex/schedule/2026-06/x.jpg"
-
-    def test_source_image_defaults_empty(self, cal_db_path):
-        iid = _add_event(cal_db_path)
-        assert cal_db.get_item(iid, db_path=cal_db_path)["source_image"] == ""
-
-    def test_clear_source_image_keeps_row_and_sync(self, cal_db_path):
-        iid = _add_event(cal_db_path, source_image="Alex/schedule/2026-06/x.jpg")
-        cal_db.mark_synced(iid, uid="ev-1", db_path=cal_db_path)
-        assert cal_db.clear_source_image(iid, db_path=cal_db_path) is True
-        item = cal_db.get_item(iid, db_path=cal_db_path)
-        assert item["source_image"] == ""        # 图片链接清空
-        assert item["status"] == "active"         # 行还在
-        assert item["synced"] == 1                # 图片非远端字段，不触发重推
-
-    def test_items_with_image(self, cal_db_path):
-        a = _add_event(cal_db_path, source_image="a.jpg")
-        _add_event(cal_db_path, title="无图")            # 无 source_image
-        b = _add_task(cal_db_path, source_image="b.jpg")
-        ids = {r["id"] for r in cal_db.items_with_image(db_path=cal_db_path)}
-        assert ids == {a, b}
-
-    def test_schema_migrates_source_image_column(self, tmp_path):
-        # 老库无 source_image 列 → _connect 自动补列
-        old = str(tmp_path / "old.db")
-        import sqlite3
-        c = sqlite3.connect(old)
-        c.executescript(
-            "CREATE TABLE schedule_items (id INTEGER PRIMARY KEY AUTOINCREMENT, "
-            "kind TEXT NOT NULL, uid TEXT DEFAULT '', title TEXT NOT NULL, "
-            "start_at TEXT DEFAULT '', end_at TEXT DEFAULT '', all_day INTEGER DEFAULT 0, "
-            "location TEXT DEFAULT '', notes TEXT DEFAULT '', member TEXT DEFAULT '', "
-            "status TEXT DEFAULT 'active', origin TEXT DEFAULT 'local', "
-            "synced INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);")
-        c.execute("INSERT INTO schedule_items (kind,title,created_at,updated_at) "
-                  "VALUES ('event','旧行','t','t')")
-        c.commit()
-        c.close()
-        conn = cal_db._connect(db_path=old)        # 应补列且不报错
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(schedule_items)")]
-        conn.close()
-        assert "source_image" in cols
-        assert cal_db.get_item(1, db_path=old)["source_image"] == ""
-
-    def test_synced_active(self, cal_db_path):
-        a = _add_event(cal_db_path)
-        cal_db.mark_synced(a, uid="e-1", db_path=cal_db_path)
-        _add_event(cal_db_path, title="未同步")            # synced=0 → excluded
-        b = _add_task(cal_db_path)
-        cal_db.mark_synced(b, uid="t-1", db_path=cal_db_path)
-        rows = cal_db.synced_active("event", db_path=cal_db_path)
-        assert [r["id"] for r in rows] == [a]
-
-    def test_uids_returns_all_statuses_any_synced(self, cal_db_path):
-        a = _add_event(cal_db_path)                      # synced=0, active
-        cal_db.mark_synced(a, uid="e-1", db_path=cal_db_path)
-        b = _add_task(cal_db_path)
-        cal_db.mark_synced(b, uid="t-1", db_path=cal_db_path)
-        cal_db.set_status(b, "done", db_path=cal_db_path)   # done + pending push
-        _add_event(cal_db_path, title="无uid")               # uid='' → excluded
-        assert cal_db.uids("event", db_path=cal_db_path) == {"e-1"}
-        assert cal_db.uids("task", db_path=cal_db_path) == {"t-1"}
 
 
 # ── Google provider（HTTP 全部打桩，零网络） ─────────────────────
@@ -423,6 +149,16 @@ class TestGoogleProvider:
         assert body["start"] == {"date": "2026-06-15"}
         assert body["end"] == {"date": "2026-06-16"}  # 全天 end 独占
 
+    def test_update_multiday_allday_keeps_span(self, gcal):
+        fake, calls = gcal
+        fake.responses = [(200, b"{}")]
+        calendar_provider.update_event("ev1", {"title": "露营", "start_at": "2026-06-15",
+                                               "end_at": "2026-06-17", "all_day": 1,
+                                               "location": "", "notes": ""})
+        body = json.loads(calls[0]["data"])
+        assert body["start"]["date"] == "2026-06-15"
+        assert body["end"]["date"] == "2026-06-18"   # end_at 含当日 → Google 独占
+
     def test_delete_event_missing_is_noop(self, gcal):
         fake, calls = gcal
         fake.responses = [(404, b"not found")]
@@ -465,6 +201,38 @@ class TestGoogleProvider:
         fake.responses = [(404, b"gone")]
         calendar_provider.complete_task("vanished")  # must not raise
 
+    def test_get_event_maps_like_list(self, gcal):
+        fake, calls = gcal
+        fake.responses = [(200, json.dumps(
+            {"id": "ev1", "summary": "游泳课", "location": "泳馆",
+             "start": {"dateTime": "2026-06-13T14:00:00+00:00"},
+             "end": {"dateTime": "2026-06-13T15:00:00+00:00"}}).encode())]
+        assert calendar_provider.get_event("ev1") == {
+            "uid": "ev1", "title": "游泳课", "start": "2026-06-13T14:00",
+            "end": "2026-06-13T15:00", "all_day": False, "location": "泳馆", "notes": ""}
+        assert calls[0]["method"] == "GET" and calls[0]["url"].endswith("/events/ev1")
+
+    def test_get_event_missing_or_cancelled_is_none(self, gcal):
+        fake, _ = gcal
+        fake.responses = [(404, b"gone"), (200, json.dumps(
+            {"id": "ev2", "status": "cancelled", "start": {"date": "2026-06-15"},
+             "end": {"date": "2026-06-16"}}).encode())]
+        assert calendar_provider.get_event("gone") is None
+        assert calendar_provider.get_event("ev2") is None
+
+    def test_get_task_maps_and_missing(self, gcal):
+        fake, calls = gcal
+        fake.responses = [
+            (200, json.dumps({"id": "t1", "title": "买蛋糕", "due": "2026-06-15T00:00:00.000Z",
+                              "status": "completed"}).encode()),
+            (410, b"gone"),
+            (200, json.dumps({"id": "t3", "title": "x", "deleted": True}).encode())]
+        assert calendar_provider.get_task("t1") == {
+            "uid": "t1", "title": "买蛋糕", "due": "2026-06-15", "notes": "", "done": True}
+        assert calls[0]["method"] == "GET" and calls[0]["url"].endswith("/tasks/t1")
+        assert calendar_provider.get_task("t2") is None
+        assert calendar_provider.get_task("t3") is None
+
     def test_api_error_raises_runtimeerror(self, gcal):
         fake, calls = gcal
         fake.responses = [(500, b"boom")]
@@ -497,1112 +265,71 @@ class TestProviderRegistry:
         assert providers.get("tasks", "nope") is None
 
 
-# ── 同步引擎（provider 全部打桩） ───────────────────────────────
-
-import calendar_sync
-
-
-class FakeProvider:
-    """契约形状的假 provider，记录调用。"""
-
-    def __init__(self):
-        self.configured = True
-        self.events = []          # list_events 返回值
-        self.event_windows = []   # 每次 list_events 收到的 (time_min, time_max)
-        self.tasks = []           # list_tasks 返回值
-        self.created = []         # (kind, item)
-        self.completed = []       # task uids
-        self.deleted = []         # (kind, uid)
-        self.updated = []         # (kind, uid, item)
-        self.fail_create = False
-        self.fail_list = False
-        self._uid_seq = 0
-
-    def is_configured(self):
-        return self.configured
-
-    def list_events(self, time_min, time_max):
-        self.event_windows.append((time_min, time_max))
-        if self.fail_list:
-            raise RuntimeError("network down")
-        return list(self.events)
-
-    def create_event(self, item):
-        if self.fail_create:
-            raise RuntimeError("create failed")
-        self._uid_seq += 1
-        self.created.append(("event", dict(item)))
-        return f"ev-{self._uid_seq}"
-
-    def delete_event(self, uid):
-        self.deleted.append(("event", uid))
-
-    def list_tasks(self):
-        if self.fail_list:
-            raise RuntimeError("network down")
-        return list(self.tasks)
-
-    def create_task(self, item):
-        if self.fail_create:
-            raise RuntimeError("create failed")
-        self._uid_seq += 1
-        self.created.append(("task", dict(item)))
-        return f"t-{self._uid_seq}"
-
-    def complete_task(self, uid):
-        self.completed.append(uid)
-
-    def delete_task(self, uid):
-        self.deleted.append(("task", uid))
-
-    def update_event(self, uid, item):
-        self.updated.append(("event", uid, dict(item)))
-
-    def update_task(self, uid, item):
-        self.updated.append(("task", uid, dict(item)))
-
-
-@pytest.fixture
-def engine(monkeypatch, tmp_path, cal_db_path):
-    """calendar_sync with fake provider, tmp state dir, enabled config."""
-    fake = FakeProvider()
-    monkeypatch.setattr(calendar_sync, "provider", fake)
-    monkeypatch.setenv("CALENDAR_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setattr(calendar_sync, "CFG", {
-        "enabled": True, "lookahead_days": 10, "refresh_minutes": 15})
-    return fake, cal_db_path
-
-
-class TestSyncEngine:
-    def test_push_pending_creates_remote(self, engine):
-        fake, db = engine
-        ev = _add_event(db)
-        tk = _add_task(db)
-        pushed, errors = calendar_sync.push_pending(db_path=db)
-        assert pushed == 2 and errors == []
-        assert [k for k, _ in fake.created] == ["event", "task"]
-        assert cal_db.get_item(ev, db_path=db)["uid"] == "ev-1"
-        assert cal_db.get_item(tk, db_path=db)["uid"] == "t-2"
-        assert cal_db.pending(db_path=db) == []
-
-    def test_push_pending_done_and_cancelled(self, engine):
-        fake, db = engine
-        tk = _add_task(db)
-        cal_db.mark_synced(tk, uid="t-9", db_path=db)
-        cal_db.set_status(tk, "done", db_path=db)
-        ev = _add_event(db)
-        cal_db.mark_synced(ev, uid="ev-9", db_path=db)
-        cal_db.set_status(ev, "cancelled", db_path=db)
-        never_pushed = _add_task(db, title="本地即取消")
-        cal_db.set_status(never_pushed, "cancelled", db_path=db)
-        pushed, errors = calendar_sync.push_pending(db_path=db)
-        assert errors == []
-        assert fake.completed == ["t-9"]
-        assert ("event", "ev-9") in fake.deleted
-        assert fake.created == []           # 从未上云的取消项不会先创建再删除
-        assert cal_db.pending(db_path=db) == []
-
-    def test_push_pending_edit_patches_remote(self, engine):
-        fake, db = engine
-        ev = _add_event(db)
-        cal_db.mark_synced(ev, uid="ev-9", db_path=db)
-        cal_db.update_item(ev, {"title": "改名了"}, db_path=db)
-        pushed, errors = calendar_sync.push_pending(db_path=db)
-        assert errors == [] and pushed == 1
-        assert fake.updated[0][:2] == ("event", "ev-9")
-        assert fake.updated[0][2]["title"] == "改名了"
-        assert fake.created == [] and cal_db.pending(db_path=db) == []
-
-    def test_push_pending_edit_without_update_support(self, engine):
-        fake, db = engine
-        del FakeProvider.update_event        # 旧契约 provider：只标已同步，不炸
-        try:
-            ev = _add_event(db)
-            cal_db.mark_synced(ev, uid="ev-9", db_path=db)
-            cal_db.update_item(ev, {"title": "改名了"}, db_path=db)
-            pushed, errors = calendar_sync.push_pending(db_path=db)
-            assert errors == [] and cal_db.pending(db_path=db) == []
-        finally:
-            FakeProvider.update_event = lambda self, uid, item: self.updated.append(
-                ("event", uid, dict(item)))
-
-    def test_push_failure_isolated_per_row(self, engine):
-        fake, db = engine
-        a = _add_event(db)
-        b = _add_task(db)
-        cal_db.mark_synced(b, uid="t-1", db_path=db)
-        cal_db.set_status(b, "done", db_path=db)
-        fake.fail_create = True             # 只让 create 失败，complete 正常
-        pushed, errors = calendar_sync.push_pending(db_path=db)
-        assert pushed == 1 and len(errors) == 1
-        assert cal_db.get_item(a, db_path=db)["synced"] == 0   # 留待下轮重试
-        assert cal_db.get_item(b, db_path=db)["synced"] == 1
-
-    def test_refresh_pulls_and_reconciles(self, engine):
-        fake, db = engine
-        # 本地已同步：ev-keep 仍在远端，ev-gone 已被远端删除（窗口内）
-        keep = _add_event(db, title="保留", start="2026-06-14T10:00", end="")
-        cal_db.mark_synced(keep, uid="ev-keep", db_path=db)
-        gone = _add_event(db, title="远端已删", start="2026-06-15T10:00", end="")
-        cal_db.mark_synced(gone, uid="ev-gone", db_path=db)
-        # 窗口外（sync_horizon_days=90 默认 → 2026-09-10 之外）不参与对账，不动
-        future = _add_event(db, title="窗口外不动", start="2026-12-20T10:00", end="")
-        cal_db.mark_synced(future, uid="ev-future", db_path=db)
-        tk = _add_task(db, title="远端已完成")
-        cal_db.mark_synced(tk, uid="t-done", db_path=db)
-        _age(db, gone)      # 新鲜保护豁免对账 → 拨旧，让远端删除生效
-        _age(db, tk)
-        fake.events = [
-            {"uid": "ev-keep", "title": "保留(改名)", "start": "2026-06-14T10:00",
-             "end": "2026-06-14T11:00", "all_day": False, "location": "", "notes": ""},
-            {"uid": "ev-new", "title": "远端新活动", "start": "2026-06-16",
-             "end": "2026-06-17", "all_day": True, "location": "", "notes": ""},
-        ]
-        fake.tasks = [
-            {"uid": "t-done", "title": "远端已完成", "due": "2026-06-15",
-             "notes": "", "done": True},
-        ]
-        result = calendar_sync.refresh(db_path=db, today=TODAY)
-        assert result["errors"] == []
-        assert cal_db.get_item(keep, db_path=db)["title"] == "保留(改名)"
-        assert cal_db.get_item(gone, db_path=db)["status"] == "cancelled"
-        assert cal_db.get_item(gone, db_path=db)["synced"] == 1
-        assert cal_db.get_item(future, db_path=db)["status"] == "active"
-        assert cal_db.get_item(tk, db_path=db)["status"] == "done"
-        new_rows = [r for r in cal_db.list_upcoming(days=10, today=TODAY, db_path=db)
-                    if r["uid"] == "ev-new"]
-        assert len(new_rows) == 1 and new_rows[0]["origin"] == "remote"
-
-    def test_refresh_pulls_far_future_event(self, engine):
-        # 远端事件在 lookahead_days(10) 之外但 sync_horizon_days(90) 之内 → 必须拉到
-        fake, db = engine
-        far = (TODAY + timedelta(days=45)).isoformat()
-        fake.events = [{"uid": "ev-far", "title": "远期事件",
-                        "start": f"{far}T10:00", "end": f"{far}T11:00",
-                        "all_day": False, "location": "", "notes": ""}]
-        result = calendar_sync.refresh(db_path=db, today=TODAY)
-        assert result["errors"] == []
-        rows = [r for r in cal_db.list_upcoming(days=60, today=TODAY, db_path=db)
-                if r["uid"] == "ev-far"]
-        assert len(rows) == 1 and rows[0]["origin"] == "remote"
-
-    def test_refresh_pulls_past_events(self, engine):
-        # 回归：拉取窗口曾从"今天"起 → 历史活动永远进不了本地，agent 只能答"查不到历史"
-        fake, db = engine
-        past = (TODAY - timedelta(days=40)).isoformat()
-        fake.events = [{"uid": "ev-past", "title": "7月游泳课",
-                        "start": f"{past}T14:00", "end": f"{past}T15:00",
-                        "all_day": False, "location": "", "notes": ""}]
-        result = calendar_sync.refresh(db_path=db, today=TODAY)
-        assert result["errors"] == []
-        time_min = fake.event_windows[-1][0]
-        assert time_min[:10] == (TODAY - timedelta(days=365)).isoformat()
-        rows = cal_db.list_range(start=past, end=past, db_path=db)
-        assert [r["title"] for r in rows] == ["7月游泳课"]
-        assert rows[0]["origin"] == "remote"
-
-    def test_refresh_reconciles_inside_past_window_only(self, engine):
-        fake, db = engine
-        recent = _add_event(db, title="上月已删",
-                            start=f"{(TODAY - timedelta(days=30)).isoformat()}T10:00",
-                            end="")
-        cal_db.mark_synced(recent, uid="ev-recent", db_path=db)
-        ancient = _add_event(db, title="窗口外不动",
-                             start=f"{(TODAY - timedelta(days=800)).isoformat()}T10:00",
-                             end="")
-        cal_db.mark_synced(ancient, uid="ev-ancient", db_path=db)
-        _age(db, recent)
-        _age(db, ancient)
-        fake.events = []
-        calendar_sync.refresh(db_path=db, today=TODAY)
-        assert cal_db.get_item(recent, db_path=db)["status"] == "cancelled"
-        assert cal_db.get_item(ancient, db_path=db)["status"] == "active"
-
-    def test_refresh_range_pulls_arbitrary_old_window(self, engine, monkeypatch):
-        fake, db = engine
-        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: fake)
-        fake.events = [{"uid": "ev-2019", "title": "很久以前的课",
-                        "start": "2019-03-02T14:00", "end": "2019-03-02T15:00",
-                        "all_day": False, "location": "", "notes": ""}]
-        r = calendar_sync.refresh_range("MemberA", "schedule",
-                                        date(2019, 1, 1), date(2019, 12, 31),
-                                        db_path=db)
-        assert r["mode"] == "remote" and r["errors"] == []
-        assert fake.event_windows[-1][0][:10] == "2019-01-01"
-        assert fake.event_windows[-1][1][:10] == "2019-12-31"
-        rows = cal_db.list_range(start="2019-01-01", end="2019-12-31", db_path=db)
-        assert [r["title"] for r in rows] == ["很久以前的课"]
-
-    def test_refresh_range_local_mode_and_errors(self, engine, monkeypatch):
-        fake, db = engine
-        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
-        assert calendar_sync.refresh_range(
-            "MemberA", "schedule", date(2019, 1, 1), date(2019, 12, 31),
-            db_path=db)["mode"] == "local"
-        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: fake)
-        fake.fail_list = True
-        r = calendar_sync.refresh_range("MemberA", "schedule", date(2019, 1, 1),
-                                        date(2019, 12, 31), db_path=db)
-        assert r["mode"] == "remote" and r["errors"]
-
-    def test_window_iso_handles_pre_epoch(self):
-        # 回归：naive.astimezone() 在 Windows 上对 1970 前的本地时刻抛 OSError
-        # [Errno 22]，"不限过去"的历史拉取会静默变成一条 error，一条都拉不到。
-        s = calendar_sync._window_iso(date(1970, 1, 1))
-        e = calendar_sync._window_iso(date(1970, 1, 1), end_of_day=True)
-        assert s.startswith("1970-01-01T00:00:00") and len(s) > 19   # 带时区偏移
-        assert e.startswith("1970-01-01T23:59:59")
-
-    def test_refresh_range_rejects_bad_domain(self, engine):
-        _, db = engine
-        with pytest.raises(ValueError):
-            calendar_sync.refresh_range("MemberA", "nope", date(2019, 1, 1),
-                                        date(2019, 12, 31), db_path=db)
-
-    def test_refresh_records_error_and_continues(self, engine):
-        fake, db = engine
-        fake.fail_list = True
-        result = calendar_sync.refresh(db_path=db, today=TODAY)
-        assert result["errors"]
-        st = calendar_sync.status(db_path=db)
-        assert st["last_error"]
-        assert st["last_refresh"]           # 失败也记尝试时间（节流按尝试算）
-
-    def test_status_counts_pending(self, engine):
-        fake, db = engine
-        _add_event(db)
-        st = calendar_sync.status(db_path=db)
-        assert st["enabled"] is True and st["configured"] is True
-        assert st["pending"] == 1
-
-    def test_reconcile_spares_fresh_rows(self, engine):
-        # Google list 读写有延迟：刚推送成功(updated_at 新鲜)的行在远端列表里
-        # 暂时缺席时，绝不能被对账环节误取消。拨旧后才参与对账。
-        fake, db = engine
-        ev = _add_event(db, title="刚推送", start="2026-06-14T10:00", end="")
-        cal_db.mark_synced(ev, uid="ev-lag", db_path=db)          # fresh
-        tk = _add_task(db, title="刚推送待办")
-        cal_db.mark_synced(tk, uid="t-lag", db_path=db)           # fresh
-        fake.events = []                                          # 远端列表滞后
-        fake.tasks = []
-        result = calendar_sync.refresh(db_path=db, today=TODAY)
-        assert result["errors"] == []
-        assert cal_db.get_item(ev, db_path=db)["status"] == "active"   # 幸存
-        assert cal_db.get_item(tk, db_path=db)["status"] == "active"
-        _age(db, ev)
-        _age(db, tk)
-        calendar_sync.refresh(db_path=db, today=TODAY)
-        assert cal_db.get_item(ev, db_path=db)["status"] == "cancelled"  # 拨旧后正常对账
-        assert cal_db.get_item(tk, db_path=db)["status"] == "cancelled"
-
-
-# ── 按成员 + 域同步（tick 遍历成员） ────────────────────────────
-
-
-@pytest.fixture
-def member_engine(monkeypatch, tmp_path):
-    """tick 测试：MemberA 两域都接 fake provider，数据根指向 tmp。"""
-    fake = FakeProvider()
-    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-    monkeypatch.setattr(calendar_sync, "_registered_members", lambda: ["MemberA"])
-    monkeypatch.setattr(calendar_sync, "provider_for",
-                        lambda m, d: fake if m == "MemberA" else None)
-    monkeypatch.setattr(calendar_sync, "CFG",
-                        {"enabled": True, "lookahead_days": 10, "refresh_minutes": 15})
-    return fake, tmp_path
-
-
-class TestPerMemberTick:
-    def test_tick_pushes_member_store_and_throttles(self, member_engine):
-        import paths
-        from datetime import datetime as dt
-        fake, tmp = member_engine
-        sdb = str(paths.member_store("MemberA", "schedule"))
-        ev = cal_db.add_item(kind="event", title="X", start_at="2026-06-13T10:00",
-                             member="MemberA", db_path=sdb)
-        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is True
-        assert cal_db.get_item(ev, db_path=sdb)["uid"]            # pushed to remote
-        assert ("event", ) and any(k == "event" for k, _ in fake.created)
-        # 节流窗口内 → 不跑
-        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 10)) is False
-        # 超过节流 → 再跑
-        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 16)) is True
-
-    def test_tick_local_member_skipped(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-        monkeypatch.setattr(calendar_sync, "_registered_members", lambda: ["LocalOnly"])
-        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
-        monkeypatch.setattr(calendar_sync, "CFG",
-                            {"enabled": True, "lookahead_days": 10, "refresh_minutes": 15})
-        from datetime import datetime as dt
-        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
-
-    def test_tick_disabled_returns_false(self, member_engine, monkeypatch):
-        from datetime import datetime as dt
-        monkeypatch.setattr(calendar_sync, "CFG", {**calendar_sync.CFG, "enabled": False})
-        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
-
-    def test_tick_unconfigured_provider_skipped(self, member_engine):
-        from datetime import datetime as dt
-        fake, tmp = member_engine
-        fake.configured = False
-        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
-
-    def test_tick_never_raises(self, member_engine, monkeypatch):
-        import paths
-        from datetime import datetime as dt
-        fake, tmp = member_engine
-        monkeypatch.setattr(calendar_sync, "refresh_domain",
-                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-        assert calendar_sync.calendar_tick(now=dt(2026, 6, 12, 9, 0)) is False
-        st = calendar_sync._load_state(paths.member_sync_state("MemberA", "schedule"))
-        assert st.get("last_error")
-
-
-class TestSyncForQuery:
-    """查询日程前主动拉远端：捕获 Google 端新加事件（如 Gmail 自动建日程）。"""
-
-    def test_query_pulls_remote_event_then_throttles(self, member_engine):
-        import paths
-        from datetime import datetime as dt
-        fake, tmp = member_engine
-        sdb = str(paths.member_store("MemberA", "schedule"))
-        # 远端有一条本地没有的事件（模拟 Gmail 自动建日程）
-        fake.events = [{"uid": "ev-gmail", "title": "航班 AC123",
-                        "start": "2026-06-13T08:00", "end": "2026-06-13T10:00",
-                        "all_day": False, "location": "", "notes": ""}]
-        assert calendar_sync.sync_for_query(
-            "MemberA", "schedule", now=dt(2026, 6, 12, 9, 0)) is True
-        rows = cal_db.list_upcoming(days=10, today=date(2026, 6, 12), db_path=sdb)
-        assert [r["uid"] for r in rows] == ["ev-gmail"]
-        # 节流窗口内（默认 60s）→ 不再打远端
-        assert calendar_sync.sync_for_query(
-            "MemberA", "schedule", now=dt(2026, 6, 12, 9, 0, 30)) is False
-        # 超过节流 → 再拉
-        assert calendar_sync.sync_for_query(
-            "MemberA", "schedule", now=dt(2026, 6, 12, 9, 2)) is True
-
-    def test_query_local_member_skipped(self, monkeypatch, tmp_path):
-        from datetime import datetime as dt
-        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
-        monkeypatch.setattr(calendar_sync, "CFG",
-                            {"enabled": True, "lookahead_days": 10,
-                             "refresh_minutes": 15, "query_refresh_seconds": 60})
-        assert calendar_sync.sync_for_query(
-            "LocalOnly", now=dt(2026, 6, 12, 9, 0)) is False
-
-    def test_query_disabled_returns_false(self, member_engine, monkeypatch):
-        from datetime import datetime as dt
-        monkeypatch.setattr(calendar_sync, "CFG", {**calendar_sync.CFG, "enabled": False})
-        assert calendar_sync.sync_for_query(
-            "MemberA", now=dt(2026, 6, 12, 9, 0)) is False
-
-    def test_query_never_raises(self, member_engine, monkeypatch):
-        import paths
-        from datetime import datetime as dt
-        monkeypatch.setattr(calendar_sync, "refresh_domain",
-                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-        assert calendar_sync.sync_for_query(
-            "MemberA", "schedule", now=dt(2026, 6, 12, 9, 0)) is False
-        st = calendar_sync._load_state(paths.member_sync_state("MemberA", "schedule"))
-        assert st.get("last_error")
-
-
-class TestVerifyDomain:
-    """只读校验：查本地+远端，分桶报告差异。永不抛。"""
-
-    def _v(self, fake, db, domain="schedule", **kw):
-        return calendar_sync.verify_domain("MemberA", domain,
-                                           db_path=db, prov=fake, **kw)
-
-    def test_in_sync_event(self, engine):
-        # 日期用 D1（明天）：verify 窗口按真实 now 计算，死日期会滑出窗口
-        fake, db = engine
-        ev = _add_event(db, title="游泳课", start=f"{D1}T10:00",
-                        end=f"{D1}T11:00")
-        cal_db.mark_synced(ev, uid="ev-1", db_path=db)
-        _age(db, ev)
-        fake.events = [{"uid": "ev-1", "title": "游泳课",
-                        "start": f"{D1}T10:00", "end": f"{D1}T11:00",
-                        "all_day": False, "location": "", "notes": ""}]
-        r = self._v(fake, db)
-        assert r["mode"] == "remote" and r["in_sync"] is True
-        assert r["local_total"] == 1 and r["remote_total"] == 1
-
-    def test_pending_bucket(self, engine):
-        fake, db = engine
-        _add_event(db, title="没推出去")            # synced=0
-        r = self._v(fake, db)
-        assert r["in_sync"] is False
-        assert len(r["pending"]) == 1 and "没推出去" in r["pending"][0]
-
-    def test_local_only_aged_vs_fresh(self, engine):
-        fake, db = engine
-        ev = _add_event(db, title="远端缺失", start=f"{D1}T10:00", end="")
-        cal_db.mark_synced(ev, uid="ev-x", db_path=db)
-        fake.events = []
-        assert self._v(fake, db)["in_sync"] is True       # fresh → 豁免
-        _age(db, ev)
-        r = self._v(fake, db)
-        assert r["in_sync"] is False
-        assert len(r["local_only"]) == 1 and "远端缺失" in r["local_only"][0]
-
-    def test_remote_only_bucket(self, engine):
-        fake, db = engine
-        fake.events = [{"uid": "ev-gmail", "title": "航班 AC123",
-                        "start": "2026-06-14T08:00", "end": "2026-06-14T10:00",
-                        "all_day": False, "location": "", "notes": ""}]
-        r = self._v(fake, db)
-        assert r["in_sync"] is False
-        assert len(r["remote_only"]) == 1 and "航班" in r["remote_only"][0]
-
-    def test_drift_event_title(self, engine):
-        fake, db = engine
-        ev = _add_event(db, title="旧名", start=f"{D1}T10:00",
-                        end=f"{D1}T11:00")
-        cal_db.mark_synced(ev, uid="ev-1", db_path=db)
-        _age(db, ev)
-        fake.events = [{"uid": "ev-1", "title": "新名",
-                        "start": f"{D1}T10:00", "end": f"{D1}T11:00",
-                        "all_day": False, "location": "", "notes": ""}]
-        r = self._v(fake, db)
-        assert r["in_sync"] is False and len(r["drift"]) == 1
-
-    def test_drift_task_done_on_phone(self, engine):
-        # 手机上直接划掉待办：本地 active + 远端 done → drift
-        fake, db = engine
-        tk = _add_task(db, title="买蛋糕", due="2026-06-15")
-        cal_db.mark_synced(tk, uid="t-1", db_path=db)
-        _age(db, tk)
-        fake.tasks = [{"uid": "t-1", "title": "买蛋糕", "due": "2026-06-15",
-                       "notes": "", "done": True}]
-        r = self._v(fake, db, domain="tasks")
-        assert r["in_sync"] is False and len(r["drift"]) == 1
-
-    def test_event_outside_window_ignored(self, engine):
-        fake, db = engine
-        far = _add_event(db, title="远期", start="2099-01-01T10:00", end="")
-        cal_db.mark_synced(far, uid="ev-far", db_path=db)
-        _age(db, far)
-        fake.events = []
-        assert self._v(fake, db)["in_sync"] is True   # 窗口外不参与校验
-
-    def test_provider_error_mode(self, engine):
-        fake, db = engine
-        fake.fail_list = True
-        r = self._v(fake, db)
-        assert r["mode"] == "error" and "network down" in r["error"]
-
-    def test_local_mode_and_unconfigured(self, engine, monkeypatch):
-        fake, db = engine
-        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
-        assert calendar_sync.verify_domain("MemberA", "schedule",
-                                           db_path=db)["mode"] == "local"
-        fake.configured = False
-        assert self._v(fake, db)["mode"] == "local"
-
-
-class TestVerifyAndHeal:
-    """不一致 → refresh_domain 修复 → 复检。"""
-
-    def test_heals_remote_only_event(self, member_engine):
-        import paths
-        fake, tmp = member_engine
-        sdb = str(paths.member_store("MemberA", "schedule"))
-        cal_db._connect(db_path=sdb).close()          # 建库
-        fake.events = [{"uid": "ev-gmail", "title": "航班 AC123",
-                        "start": f"{D1}T08:00", "end": f"{D1}T10:00",
-                        "all_day": False, "location": "", "notes": ""}]
-        r = calendar_sync.verify_and_heal("MemberA", "schedule", db_path=sdb)
-        assert r["mode"] == "remote"
-        assert r["healed"] is True and r["in_sync"] is True
-        assert r["heal_synced"] == 1
-        rows = cal_db.list_upcoming(days=3650, today=date.today(), db_path=sdb)
-        assert [x["uid"] for x in rows] == ["ev-gmail"]   # 修复=拉平到本地
-
-    def test_heals_task_done_on_phone(self, member_engine):
-        import paths
-        fake, tmp = member_engine
-        tdb = str(paths.member_store("MemberA", "tasks"))
-        tk = cal_db.add_item(kind="task", title="买蛋糕", start_at=D3,
-                             member="MemberA", db_path=tdb)
-        cal_db.mark_synced(tk, uid="t-1", db_path=tdb)
-        _age(tdb, tk)
-        fake.tasks = [{"uid": "t-1", "title": "买蛋糕", "due": D3,
-                       "notes": "", "done": True}]
-        r = calendar_sync.verify_and_heal("MemberA", "tasks", db_path=tdb)
-        assert r["healed"] is True and r["in_sync"] is True
-        assert cal_db.get_item(tk, db_path=tdb)["status"] == "done"   # 划掉生效
-
-    def test_still_divergent_when_push_keeps_failing(self, member_engine):
-        import paths
-        fake, tmp = member_engine
-        sdb = str(paths.member_store("MemberA", "schedule"))
-        cal_db.add_item(kind="event", title="推不动", start_at=f"{D1}T10:00",
-                        member="MemberA", db_path=sdb)
-        fake.fail_create = True
-        r = calendar_sync.verify_and_heal("MemberA", "schedule", db_path=sdb)
-        assert r["mode"] == "remote"
-        assert r["healed"] is False and r["in_sync"] is False
-        assert len(r["pending"]) == 1
-
-    def test_in_sync_short_circuits_no_heal(self, member_engine, monkeypatch):
-        import paths
-        fake, tmp = member_engine
-        sdb = str(paths.member_store("MemberA", "schedule"))
-        cal_db._connect(db_path=sdb).close()
-        called = []
-        monkeypatch.setattr(calendar_sync, "refresh_domain",
-                            lambda *a, **k: called.append(1) or {"pushed": 0,
-                                                                 "synced": 0,
-                                                                 "errors": []})
-        r = calendar_sync.verify_and_heal("MemberA", "schedule", db_path=sdb)
-        assert r["in_sync"] is True and r["healed"] is False
-        assert called == []                        # 一致 → 不跑修复
-
-    def test_local_mode_passthrough(self, member_engine, monkeypatch):
-        monkeypatch.setattr(calendar_sync, "provider_for", lambda m, d: None)
-        r = calendar_sync.verify_and_heal("MemberA", "schedule")
-        assert r["mode"] == "local" and r["healed"] is False
-
-
-# ── CLI（subprocess，环境变量全隔离） ───────────────────────────
-
-import os
-import subprocess
-import sys as _sys
-from datetime import timedelta
-from pathlib import Path
-
-_ROOT = Path(__file__).resolve().parent.parent
-_CLI = _ROOT / ".codewhale" / "skills" / "Calendar_Keeper" / "cli.py"
+# ── Agent 工具路由（run_cli 打桩，不起子进程） ─────────────────
 
 D1 = (date.today() + timedelta(days=1)).isoformat()   # 明天（窗口内，不依赖死日期）
 D3 = (date.today() + timedelta(days=3)).isoformat()
 
 
-def _cli(args, db, tmp):
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GCAL_")}
-    env["CAL_DB_PATH"] = db
-    env["CALENDAR_STATE_DIR"] = str(tmp)
-    env["CALENDAR_CONFIG"] = str(tmp / "no-such-config.json")
-    env["BACKUP_STATE_DIR"] = str(tmp)      # mark_dirty 状态文件隔离
-    env["PYTHONIOENCODING"] = "utf-8"
-    return subprocess.run([_sys.executable, str(_CLI)] + args,
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=env, cwd=str(_ROOT))
-
-
-class TestCli:
-    def test_prefixed_ids_pick_the_right_store(self, cal_db_path, tmp_path):
-        _cli(["cal-add", "--member", "MemberA", "--kind", "task", "--title", "买蛋糕"],
-             cal_db_path, tmp_path)
-        r = _cli(["cal-done", "--member", "MemberA", "--id", "t1"], cal_db_path, tmp_path)
-        assert r.returncode == 0 and "#t1" in r.stdout, r.stderr
-        r = _cli(["cal-update", "--member", "MemberA", "--id", "e1", "--kind", "task",
-                  "--title", "x"], cal_db_path, tmp_path)
-        assert r.returncode != 0 and "不符" in r.stderr
-        r = _cli(["cal-done", "--member", "MemberA", "--id", "abc"], cal_db_path, tmp_path)
-        assert r.returncode != 0 and "格式" in r.stderr
-
-    def test_cal_update_shifts_event_and_keeps_times(self, cal_db_path, tmp_path):
-        _cli(["cal-add", "--member", "MemberA", "--kind", "event", "--title", "游泳课",
-              "--date", D1, "--start", "14:00", "--end", "15:00"], cal_db_path, tmp_path)
-        r = _cli(["cal-update", "--member", "MemberA", "--kind", "event", "--id", "1",
-                  "--date", D3, "--location", "新泳馆"], cal_db_path, tmp_path)
-        assert r.returncode == 0, r.stderr
-        assert "已更新" in r.stdout
-        item = cal_db.get_item(1, db_path=cal_db_path)
-        assert item["start_at"] == f"{D3}T14:00" and item["end_at"] == f"{D3}T15:00"
-        assert item["location"] == "新泳馆" and item["title"] == "游泳课"
-        r = _cli(["cal-update", "--member", "MemberA", "--kind", "event", "--id", "1",
-                  "--start", "09:00", "--end", "10:30"], cal_db_path, tmp_path)
-        item = cal_db.get_item(1, db_path=cal_db_path)
-        assert item["start_at"] == f"{D3}T09:00" and item["end_at"] == f"{D3}T10:30"
-        r = _cli(["cal-update", "--member", "MemberA", "--kind", "event", "--id", "1",
-                  "--all-day"], cal_db_path, tmp_path)
-        item = cal_db.get_item(1, db_path=cal_db_path)
-        assert item["start_at"] == D3 and item["end_at"] == "" and item["all_day"] == 1
-
-    def test_cal_update_start_only_keeps_duration(self, cal_db_path, tmp_path):
-        _cli(["cal-add", "--member", "MemberA", "--kind", "event", "--title", "游泳课",
-              "--date", D1, "--start", "14:00", "--end", "16:00"], cal_db_path, tmp_path)
-        r = _cli(["cal-update", "--member", "MemberA", "--id", "e1", "--start", "09:30"],
-                 cal_db_path, tmp_path)
-        assert r.returncode == 0, r.stderr
-        item = cal_db.get_item(1, db_path=cal_db_path)
-        assert item["start_at"] == f"{D1}T09:30" and item["end_at"] == f"{D1}T11:30"
-        r = _cli(["cal-update", "--member", "MemberA", "--id", "e1",
-                  "--date", D3, "--start", "20:00"], cal_db_path, tmp_path)
-        item = cal_db.get_item(1, db_path=cal_db_path)
-        assert item["start_at"] == f"{D3}T20:00" and item["end_at"] == f"{D3}T22:00"
-
-    def test_cal_update_task_due_and_rejects_cancelled(self, cal_db_path, tmp_path):
-        _cli(["cal-add", "--member", "MemberA", "--kind", "task", "--title", "买蛋糕"],
-             cal_db_path, tmp_path)
-        r = _cli(["cal-update", "--member", "MemberA", "--kind", "task", "--id", "1",
-                  "--date", D3], cal_db_path, tmp_path)
-        assert r.returncode == 0, r.stderr
-        assert cal_db.get_item(1, db_path=cal_db_path)["start_at"] == D3
-        _cli(["cal-delete", "--member", "MemberA", "--id", "1"], cal_db_path, tmp_path)
-        r = _cli(["cal-update", "--member", "MemberA", "--kind", "task", "--id", "1",
-                  "--title", "x"], cal_db_path, tmp_path)
-        assert r.returncode != 0 and "已取消" in r.stderr
-
-    def test_cal_add_event_and_list(self, cal_db_path, tmp_path):
-        r = _cli(["cal-add", "--member", "MemberA", "--kind", "event",
-                  "--title", "游泳课", "--date", D1, "--start", "14:00",
-                  "--end", "15:00", "--location", "泳馆"], cal_db_path, tmp_path)
-        assert r.returncode == 0, r.stderr
-        assert "#e1" in r.stdout and "待同步" in r.stdout
-        item = cal_db.get_item(1, db_path=cal_db_path)
-        assert item["start_at"] == f"{D1}T14:00"
-        assert item["end_at"] == f"{D1}T15:00"
-        out = _cli(["cal-list"], cal_db_path, tmp_path)
-        assert "游泳课" in out.stdout and "泳馆" in out.stdout
-
-    def test_cal_list_range_shows_past(self, cal_db_path, tmp_path):
-        past = (date.today() - timedelta(days=45)).isoformat()
-        _add_event(cal_db_path, title="历史游泳课", start=f"{past}T14:00", end="")
-        out = _cli(["cal-list"], cal_db_path, tmp_path)
-        assert "历史游泳课" not in out.stdout          # 默认窗口只看未来
-        out = _cli(["cal-list", "--from", past, "--to", past],
-                   cal_db_path, tmp_path)
-        assert out.returncode == 0, out.stderr
-        assert "历史游泳课" in out.stdout
-
-    def test_cal_list_range_open_from_and_empty_notice(self, cal_db_path, tmp_path):
-        past = (date.today() - timedelta(days=400)).isoformat()
-        _add_event(cal_db_path, title="去年的", start=f"{past}T09:00", end="")
-        out = _cli(["cal-list", "--to", date.today().isoformat()],
-                   cal_db_path, tmp_path)
-        assert "去年的" in out.stdout                  # --from 省略 = 不限过去
-        out = _cli(["cal-list", "--from", "2001-01-01", "--to", "2001-12-31"],
-                   cal_db_path, tmp_path)
-        assert "2001-01-01~2001-12-31 无日程" in out.stdout
-
-    def test_cal_list_range_rejects_bad_dates(self, cal_db_path, tmp_path):
-        r = _cli(["cal-list", "--from", "07/01/2026"], cal_db_path, tmp_path)
-        assert r.returncode == 1 and "YYYY-MM-DD" in r.stderr
-        r = _cli(["cal-list", "--from", "2026-07-31", "--to", "2026-07-01"],
-                 cal_db_path, tmp_path)
-        assert r.returncode == 1 and "晚于" in r.stderr
-
-    def test_cal_add_task_undated(self, cal_db_path, tmp_path):
-        r = _cli(["cal-add", "--member", "MemberA", "--kind", "task",
-                  "--title", "买蛋糕"], cal_db_path, tmp_path)
-        assert r.returncode == 0, r.stderr
-        assert cal_db.get_item(1, db_path=cal_db_path)["start_at"] == ""
-
-    def test_cal_add_event_requires_date(self, cal_db_path, tmp_path):
-        r = _cli(["cal-add", "--member", "M", "--kind", "event",
-                  "--title", "没日期"], cal_db_path, tmp_path)
-        assert r.returncode != 0
-
-    def test_cal_add_requires_member(self, cal_db_path, tmp_path):
-        r = _cli(["cal-add", "--kind", "task", "--title", "x"],
-                 cal_db_path, tmp_path)
-        assert r.returncode != 0
-
-    def test_cal_list_empty(self, cal_db_path, tmp_path):
-        r = _cli(["cal-list"], cal_db_path, tmp_path)
-        assert r.returncode == 0
-        assert "无日程" in r.stdout
-
-    def test_cal_done_task_only(self, cal_db_path, tmp_path):
-        tk = _add_task(cal_db_path, due=D3)
-        ev = _add_event(cal_db_path, start=f"{D1}T09:00", end="")
-        r = _cli(["cal-done", "--id", str(tk)], cal_db_path, tmp_path)
-        assert r.returncode == 0 and "已完成" in r.stdout
-        assert cal_db.get_item(tk, db_path=cal_db_path)["status"] == "done"
-        r2 = _cli(["cal-done", "--id", str(ev)], cal_db_path, tmp_path)
-        assert r2.returncode != 0          # 活动不能"完成"，要用 cal-delete
-        r3 = _cli(["cal-done", "--id", "999"], cal_db_path, tmp_path)
-        assert r3.returncode != 0
-
-    def test_cal_delete_cancels(self, cal_db_path, tmp_path):
-        ev = _add_event(cal_db_path, start=f"{D1}T09:00", end="")
-        r = _cli(["cal-delete", "--id", str(ev)], cal_db_path, tmp_path)
-        assert r.returncode == 0 and "已取消" in r.stdout
-        assert cal_db.get_item(ev, db_path=cal_db_path)["status"] == "cancelled"
-        r2 = _cli(["cal-delete", "--id", "999"], cal_db_path, tmp_path)
-        assert r2.returncode != 0
-
-    def test_cal_status_reports_pending(self, cal_db_path, tmp_path):
-        _add_event(cal_db_path, start=f"{D1}T09:00", end="")
-        r = _cli(["cal-status"], cal_db_path, tmp_path)
-        assert r.returncode == 0
-        assert "待同步: 1" in r.stdout
-        assert "未配置" in r.stdout        # GCAL_* 在测试环境里被清掉
-
-    def test_cal_sync_unconfigured(self, cal_db_path, tmp_path):
-        r = _cli(["cal-sync"], cal_db_path, tmp_path)
-        assert r.returncode == 0
-        assert "未配置" in r.stdout
-
-    def test_cal_add_stores_source_image(self, cal_db_path, tmp_path):
-        r = _cli(["cal-add", "--member", "MemberA", "--kind", "event", "--title", "X",
-                  "--date", D1, "--source-image", "MemberA/schedule/2026-06/x.jpg"],
-                 cal_db_path, tmp_path)
-        assert r.returncode == 0, r.stderr
-        assert cal_db.get_item(1, db_path=cal_db_path)["source_image"] == \
-            "MemberA/schedule/2026-06/x.jpg"
-
-    def test_override_mode_prints_no_verify(self, cal_db_path, tmp_path):
-        # CAL_DB_PATH 覆盖（测试模式）绝不打远端、绝不出校验行
-        r = _cli(["cal-add", "--member", "MemberA", "--kind", "task",
-                  "--title", "x"], cal_db_path, tmp_path)
-        assert r.returncode == 0 and "校验" not in r.stdout
-
-
-class TestSourceImageRelocate:
-    """add_event/add_task 把暂存来图搬进该成员对应域目录，并记 source_image。"""
-
-    def test_add_event_relocates_and_stores_image(self, tmp_path, monkeypatch):
-        import agent_core
-        import paths
-        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-        monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        img = paths.member_inbox_dir("MemberA") / "invite.jpg"
-        img.write_bytes(b"x")
-        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_event(
-            {"member": "MemberA", "title": "Party", "date": D1, "source-image": str(img)})
-        assert "已添加" in out
-        assert not img.exists()                       # 搬出 inbox
-        sdb = str(paths.member_store("MemberA", "schedule"))
-        rows = cal_db.list_upcoming(days=3650, today=date.today(),
-                                    include_closed=True, db_path=sdb)
-        assert len(rows) == 1
-        si = rows[0]["source_image"]
-        assert si.startswith("membera/schedule/") and si.endswith("invite.jpg")
-        assert paths.resolve_rel(si).exists()
-
-
-def _write_members(mp):
-    """临时 members.json（通用占位成员），让路由测试不依赖真实私有注册表。"""
-    import json as _json
-    mp.parent.mkdir(parents=True, exist_ok=True)
-    mp.write_text(_json.dumps({
-        "Alex Lee": {"wechat": ["wxAlex"], "dir": "Alex"},
-        "Robin": {"dir": "Robin"},
-        "Sam Lee": {"dir": "Sam"},
-    }, ensure_ascii=False), encoding="utf-8")
-
-
 class TestForMemberRouting:
-    """默认归发送者；显式 for-member 把活动/待办路由到目标成员日历，图片仍存发送者名下。
+    """默认归发送者；显式 for-member（须已登记）路由到目标成员；来图不搬迁、不透传。"""
 
-    用临时 members.json（Alex Lee→dir Alex, Robin→dir Robin），不碰真实私有注册表。
-    """
-
-    @pytest.fixture(autouse=True)
-    def _registry(self, tmp_path, monkeypatch):
+    @pytest.fixture
+    def seen(self, tmp_path, monkeypatch):
         import members
+        import tool_runtime as rt
         mp = tmp_path / "members.json"
-        _write_members(mp)
+        mp.write_text(json.dumps({"Alex Lee": {"dir": "Alex"}, "Robin": {"dir": "Robin"}}),
+                      encoding="utf-8")
         monkeypatch.setattr(members, "MEMBERS_PATH", mp)
-        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
+        calls = []
+        monkeypatch.setattr(rt, "run_cli", lambda cmd, args=None: calls.append((cmd, args)) or "ok")
+        return calls
 
-    def _rows(self, member, domain):
-        import paths
-        db = str(paths.member_store(member, domain))
-        if not Path(db).exists():
-            return []
-        return cal_db.list_upcoming(days=3650, today=date.today(),
-                                    include_closed=True, db_path=db)
-
-    def test_event_defaults_to_sender(self, tmp_path, monkeypatch):
+    def _tools(self):
         import agent_core
-        import paths as _p
-        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-        monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        img = _p.member_inbox_dir("Alex Lee") / "a.jpg"; img.write_bytes(b"x")
-        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_event(
-            {"member": "Alex Lee", "title": "关于Robin的活动", "date": D1,
-             "source-image": str(img)})
-        assert "已添加" in out
-        alex = self._rows("Alex Lee", "schedule")
-        assert len(alex) == 1 and alex[0]["member"] == "Alex Lee"
-        assert alex[0]["source_image"].startswith("Alex/schedule/")
-        assert self._rows("Robin", "schedule") == []        # 未碰 Robin 日历
+        return agent_core.REGISTRY.modules["Calendar_Keeper"]
 
-    def test_event_for_member_routes_to_target_image_stays_sender(self, tmp_path, monkeypatch):
-        import agent_core
-        import paths as _p
-        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-        monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        img = _p.member_inbox_dir("Alex Lee") / "b.jpg"; img.write_bytes(b"x")
-        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_event(
-            {"member": "Alex Lee", "for-member": "Robin", "title": "Robin recital",
-             "date": D1, "source-image": str(img)})
-        assert "已添加" in out
-        eu = self._rows("Robin", "schedule")
-        assert len(eu) == 1 and eu[0]["member"] == "Robin"   # 路由到 Robin 日历
-        assert eu[0]["source_image"].startswith("Alex/schedule/")  # 图片归发送者 Alex
-        assert _p.resolve_rel(eu[0]["source_image"]).exists()
-        assert self._rows("Alex Lee", "schedule") == []      # Alex 日历无该活动
+    def test_event_defaults_to_sender(self, seen):
+        self._tools().tool_add_event({"member": "Alex Lee", "title": "关于Robin的活动", "date": D1})
+        assert seen == [("cal-add", {"member": "Alex Lee", "title": "关于Robin的活动",
+                                     "date": D1, "kind": "event"})]
 
-    def test_task_for_member_routes_to_target(self, tmp_path, monkeypatch):
-        import agent_core
-        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-        monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_task(
-            {"member": "Alex Lee", "for-member": "Robin", "title": "Robin homework"})
-        assert "已添加" in out
-        assert len(self._rows("Robin", "tasks")) == 1
-        assert self._rows("Alex Lee", "tasks") == []
+    def test_event_for_member_routes_to_target(self, seen):
+        self._tools().tool_add_event({"member": "Alex Lee", "for-member": "Robin",
+                                      "title": "Robin recital", "date": D1})
+        assert seen[0][1]["member"] == "Robin" and "for-member" not in seen[0][1]
 
-    def test_for_member_unregistered_falls_back_to_sender(self, tmp_path, monkeypatch):
-        import agent_core
-        monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-        monkeypatch.delenv("CAL_DB_PATH", raising=False)
-        out = agent_core.REGISTRY.modules["Calendar_Keeper"].tool_add_event(
-            {"member": "Alex Lee", "for-member": "Stranger", "title": "X", "date": D1})
-        assert "已添加" in out
-        alex = self._rows("Alex Lee", "schedule")
-        assert len(alex) == 1 and alex[0]["member"] == "Alex Lee"  # 退回发送者
+    def test_task_due_becomes_date_and_routes(self, seen):
+        self._tools().tool_add_task({"member": "Alex Lee", "for-member": "Robin",
+                                     "title": "Robin homework", "due": D3})
+        assert seen == [("cal-add", {"member": "Robin", "title": "Robin homework",
+                                     "date": D3, "kind": "task"})]
 
+    def test_for_member_unregistered_falls_back_to_sender(self, seen):
+        self._tools().tool_add_event({"member": "Alex Lee", "for-member": "Stranger",
+                                      "title": "X", "date": D1})
+        assert seen[0][1]["member"] == "Alex Lee"
 
-def _cli_member(args, data_root, tmp):
-    """无 CAL_DB_PATH 覆盖：按成员路由到 data/<dir>/{schedule,tasks}/*.db。"""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GCAL_")}
-    env["DATA_ROOT"] = str(data_root)
-    env["CALENDAR_STATE_DIR"] = str(tmp)
-    env["CALENDAR_CONFIG"] = str(tmp / "no-such-config.json")
-    env["BACKUP_STATE_DIR"] = str(tmp)
-    env["PYTHONIOENCODING"] = "utf-8"
-    return subprocess.run([_sys.executable, str(_CLI)] + args,
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=env, cwd=str(_ROOT))
-
-
-class TestCliPerMember:
-    """无覆盖时事件入 schedule.db、待办入 tasks.db，按成员私有。依赖真实 members.json。"""
-
-    def test_event_and_task_go_to_separate_stores(self, tmp_path):
-        data_root = tmp_path / "data"
-        r = _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "event",
-                         "--title", "游泳课", "--date", D1, "--start", "14:00"],
-                        data_root, tmp_path)
-        assert r.returncode == 0, r.stderr
-        r = _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "task",
-                         "--title", "买蛋糕"], data_root, tmp_path)
-        assert r.returncode == 0, r.stderr
-        assert (data_root / "Alex" / "schedule" / "schedule.db").exists()
-        assert (data_root / "Alex" / "tasks" / "tasks.db").exists()
-        # event lives in schedule.db only
-        ev = cal_db.list_upcoming(days=10, today=date.today(),
-                                  db_path=str(data_root / "Alex" / "schedule" / "schedule.db"))
-        assert [r["title"] for r in ev] == ["游泳课"]
-        tk = cal_db.list_upcoming(days=10, today=date.today(), include_closed=True,
-                                  db_path=str(data_root / "Alex" / "tasks" / "tasks.db"))
-        assert [r["title"] for r in tk] == ["买蛋糕"]
-
-    def test_list_merges_member_stores(self, tmp_path):
-        data_root = tmp_path / "data"
-        _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "event",
-                     "--title", "游泳课", "--date", D1, "--start", "14:00"],
-                    data_root, tmp_path)
-        _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "task",
-                     "--title", "买蛋糕"], data_root, tmp_path)
-        out = _cli_member(["cal-list", "--member", "Alex Lee"], data_root, tmp_path)
-        assert out.returncode == 0, out.stderr
-        assert "游泳课" in out.stdout and "买蛋糕" in out.stdout
-
-    def test_empty_member_rejected_no_phantom_store(self, tmp_path):
-        # 无 --member（默认空）+ 无覆盖 → 报错，不落 data/member 幽灵库
-        data_root = tmp_path / "data"
-        r = _cli_member(["cal-done", "--id", "1"], data_root, tmp_path)
-        assert r.returncode == 1, r.stdout
-        assert "需要 --member" in r.stderr
-        assert not (data_root / "member").exists()
-
-    def test_delete_disambiguates_colliding_ids_across_stores(self, tmp_path):
-        # 活动库/待办库各自自增 → 活动 #1 与待办 #1 撞号。删除靠 kind 消歧；
-        # 不带 kind 且两库都命中 → 拒绝，绝不静默删错库（曾把待办删成了活动）。
-        data_root = tmp_path / "data"
-        sdb = str(data_root / "Alex" / "schedule" / "schedule.db")
-        tdb = str(data_root / "Alex" / "tasks" / "tasks.db")
-        assert _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "event",
-                            "--title", "游泳课", "--date", D1, "--start", "14:00"],
-                           data_root, tmp_path).returncode == 0
-        assert _cli_member(["cal-add", "--member", "Alex Lee", "--kind", "task",
-                            "--title", "买蛋糕"], data_root, tmp_path).returncode == 0
-        assert cal_db.get_item(1, db_path=sdb)["title"] == "游泳课"
-        assert cal_db.get_item(1, db_path=tdb)["title"] == "买蛋糕"   # 两条都是 #1
-
-        # 不带 kind：id 在两库都存在 → 拒绝，两条都不动
-        amb = _cli_member(["cal-delete", "--member", "Alex Lee", "--id", "1"],
-                          data_root, tmp_path)
-        assert amb.returncode != 0
-        assert cal_db.get_item(1, db_path=sdb)["status"] == "active"
-        assert cal_db.get_item(1, db_path=tdb)["status"] == "active"
-
-        # --kind task：只删待办，活动不动
-        dt = _cli_member(["cal-delete", "--member", "Alex Lee", "--id", "1",
-                          "--kind", "task"], data_root, tmp_path)
-        assert dt.returncode == 0, dt.stderr
-        assert cal_db.get_item(1, db_path=tdb)["status"] == "cancelled"
-        assert cal_db.get_item(1, db_path=sdb)["status"] == "active"
-
-        # --kind event：删活动
-        de = _cli_member(["cal-delete", "--member", "Alex Lee", "--id", "1",
-                          "--kind", "event"], data_root, tmp_path)
-        assert de.returncode == 0, de.stderr
-        assert cal_db.get_item(1, db_path=sdb)["status"] == "cancelled"
-
-
-# ── CLI 校验尾行（in-process：subprocess 打不了桩） ──────────────
-
-
-def _load_calkeeper_cli():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("calkeeper_cli", str(_CLI))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-@pytest.fixture
-def cli_verify(monkeypatch, tmp_path):
-    """in-process CLI + fake provider（subprocess 打不了桩）。"""
-    monkeypatch.delenv("CAL_DB_PATH", raising=False)
-    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
-    monkeypatch.setenv("CALENDAR_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("BACKUP_STATE_DIR", str(tmp_path))
-    mod = _load_calkeeper_cli()
-    monkeypatch.setattr(mod, "_DB_OVERRIDE", None)
-    fake = FakeProvider()
-    monkeypatch.setattr(calendar_sync, "provider_for",
-                        lambda m, d: fake if m == "MemberA" else None)
-    return mod, fake
-
-
-def _ns(**kw):
-    import argparse
-    base = {"member": "MemberA", "kind": "event", "title": "X", "date": None,
-            "start": None, "end": None, "all_day": False, "location": None,
-            "notes": None, "source_image": None, "days": 10, "all": False,
-            "id": 1, "date_from": None, "date_to": None}
-    base.update(kw)
-    return argparse.Namespace(**base)
-
-
-class TestCliVerify:
-    def test_add_in_sync_verdict(self, cli_verify, capsys):
-        mod, fake = cli_verify
-        mod.cmd_cal_add(_ns(title="游泳课", date=D1, start="14:00", end="15:00"))
-        out = capsys.readouterr().out
-        assert "已添加" in out
-        assert "校验: 本地=远端一致（活动）" in out   # 刚推送→新鲜豁免→一致
-
-    def test_list_heals_remote_task_done_and_orders_output(self, cli_verify, capsys):
-        # 手机上划掉的待办：cal-list 先修复再列 → 列表不再含它，verdict 说已修复
-        import paths
-        mod, fake = cli_verify
-        tdb = str(paths.member_store("MemberA", "tasks"))
-        tk = cal_db.add_item(kind="task", title="买蛋糕", start_at=D3,
-                             member="MemberA", db_path=tdb)
-        cal_db.mark_synced(tk, uid="t-1", db_path=tdb)
-        _age(tdb, tk)
-        fake.tasks = [{"uid": "t-1", "title": "买蛋糕", "due": D3,
-                       "notes": "", "done": True}]
-        mod.cmd_cal_list(_ns(kind="task"))
-        out = capsys.readouterr().out
-        assert "已自动修复" in out
-        assert "买蛋糕" not in out.split("校验")[0]   # 修复后已 done，不在开放列表
-        assert cal_db.get_item(tk, db_path=tdb)["status"] == "done"
-
-    def test_list_range_pulls_remote_history(self, cli_verify, capsys):
-        # 历史查询：本地一无所有，靠 refresh_range 实拉远端那段窗口
-        mod, fake = cli_verify
-        fake.events = [{"uid": "ev-old", "title": "去年游泳课",
-                        "start": "2025-07-06T14:00", "end": "2025-07-06T15:00",
-                        "all_day": False, "location": "泳馆", "notes": ""}]
-        mod.cmd_cal_list(_ns(kind="event", date_from="2025-07-01",
-                             date_to="2025-07-31"))
-        out = capsys.readouterr().out
-        assert "去年游泳课" in out and "2025-07-06" in out   # 跨年 → 日期带年份
-        assert fake.event_windows[-1][0][:10] == "2025-07-01"
-        assert fake.event_windows[-1][1][:10] == "2025-07-31"
-        assert "校验" not in out                    # 区间模式不跑常驻窗口校验
-
-    def test_list_range_open_from_reaches_epoch(self, cli_verify, capsys):
-        mod, fake = cli_verify
-        mod.cmd_cal_list(_ns(kind="event", date_to="2026-01-01"))
-        capsys.readouterr()
-        assert fake.event_windows[-1][0][:10] == "1970-01-01"
-
-    def test_list_range_remote_failure_is_reported(self, cli_verify, capsys):
-        mod, fake = cli_verify
-        fake.fail_list = True
-        mod.cmd_cal_list(_ns(kind="event", date_from="2025-07-01",
-                             date_to="2025-07-31"))
-        out = capsys.readouterr().out
-        assert "⚠ 历史拉取失败（活动）" in out      # 不许静默：结果可能不全
-
-    def test_list_range_local_member_silent(self, cli_verify, capsys):
-        mod, _ = cli_verify
-        mod.cmd_cal_list(_ns(member="Robin", kind="event", date_from="2025-07-01",
-                             date_to="2025-07-31"))
-        out = capsys.readouterr().out
-        assert "无日程" in out and "⚠" not in out
-
-    def test_add_push_failure_still_divergent(self, cli_verify, capsys):
-        mod, fake = cli_verify
-        fake.fail_create = True
-        mod.cmd_cal_add(_ns(title="推不动", date=D1))
-        out = capsys.readouterr().out
-        assert "已添加" in out                       # 主操作不受影响
-        assert "⚠ 校验: 本地≠远端（活动）" in out and "待推送1" in out
-
-    def test_verify_error_line(self, cli_verify, capsys):
-        mod, fake = cli_verify
-        fake.events = []
-        fake.fail_list = True
-        mod.cmd_cal_add(_ns(title="X", date=D1))
-        out = capsys.readouterr().out
-        assert "已添加" in out and "校验失败（活动）" in out
-
-    def test_local_member_no_verdict(self, cli_verify, capsys):
-        mod, fake = cli_verify
-        mod.cmd_cal_add(_ns(member="Robin", title="本地", date=D1))
-        out = capsys.readouterr().out
-        assert "已添加" in out and "校验" not in out
-
-    def test_done_and_delete_verify_their_domain(self, cli_verify, capsys):
-        import paths
-        mod, fake = cli_verify
-        tdb = str(paths.member_store("MemberA", "tasks"))
-        tk = cal_db.add_item(kind="task", title="T", member="MemberA", db_path=tdb)
-        cal_db.mark_synced(tk, uid="t-1", db_path=tdb)
-        fake.tasks = [{"uid": "t-1", "title": "T", "due": "", "notes": "",
-                       "done": False}]
-        mod.cmd_cal_done(_ns(id=tk))
-        out = capsys.readouterr().out
-        assert "已完成待办" in out and "（待办）" in out and "校验" in out
-
-    def test_status_appends_verify(self, cli_verify, capsys):
-        mod, fake = cli_verify
-        mod.cmd_cal_status(_ns())
-        out = capsys.readouterr().out
-        assert "日历同步（MemberA）" in out
-        assert out.count("校验") >= 2               # 活动+待办各一行
-
-    def test_sync_appends_verify(self, cli_verify, capsys):
-        mod, fake = cli_verify
-        mod.cmd_cal_sync(_ns())
-        out = capsys.readouterr().out
-        assert "已刷新" in out and "校验" in out
+    def test_source_image_not_passed_or_moved(self, seen, tmp_path):
+        img = tmp_path / "invite.jpg"
+        img.write_bytes(b"x")
+        self._tools().tool_add_event({"member": "Alex Lee", "title": "Party", "date": D1,
+                                      "source-image": str(img)})
+        assert "source-image" not in seen[0][1] and img.exists()
 
 
 # ── Agent 接线（agent_core） ────────────────────────────────────
 
 _TOOLS = ("add_event", "add_task", "list_schedule", "complete_task",
           "remove_schedule_item", "update_schedule_item", "calendar_status")
-_COMMANDS = {"cal-add", "cal-list", "cal-update", "cal-done", "cal-delete",
-             "cal-sync", "cal-status"}
+_COMMANDS = {"cal-add", "cal-list", "cal-update", "cal-done", "cal-delete", "cal-status"}
+
+
+def _desc(name):
+    import agent_core
+    return next(t["function"] for t in agent_core.TOOL_SCHEMAS
+                if t["function"]["name"] == name)
 
 
 class TestAgentWiring:
@@ -1618,6 +345,7 @@ class TestAgentWiring:
         path = agent_core._cli_path("cal-add")
         assert path.parts[-2:] == ("Calendar_Keeper", "cli.py")
         assert _COMMANDS <= agent_core.ALLOWED_COMMANDS
+        assert "cal-sync" not in agent_core.ALLOWED_COMMANDS
 
     def test_member_injected_on_schedule_writes(self):
         import agent_core
@@ -1628,26 +356,22 @@ class TestAgentWiring:
         assert out2["member"] == "MemberA"
 
     def test_member_forced_on_read_and_mutate_tools(self):
-        # 回归：这五个工具历史上不在任何强制集 → member="" → cal-done 命中空库、
-        # cal-delete/cal-list 抛 "需要 --member"，每次都失效。必须强制注入发送者。
+        # 回归：这五个工具历史上不在任何强制集 → member="" → CLI 报 "需要 --member"。必须强制注入发送者。
         import agent_core
         for tool in ("complete_task", "remove_schedule_item", "list_schedule",
                      "update_schedule_item", "calendar_status"):
-            out = agent_core._apply_member(tool, {"member": "假冒", "id": 1}, "MemberA")
+            out = agent_core._apply_member(tool, {"member": "假冒", "id": "t:1"}, "MemberA")
             assert out.get("member") == "MemberA", tool
 
     def test_prompt_forces_tool_on_schedule_query(self):
         import agent_core
         p = agent_core._build_system_prompt()
-        assert "必须调 list_schedule" in p          # 查询必须过工具（远端核对）
-        assert "校验" in p                          # verdict 转告规则
-        assert "calendar_status 不是凭据" not in p   # 旧拐杖已退役
+        assert "必须调 list_schedule" in p
+        assert "本地↔远端" not in p and "日程快照" not in p   # 缓存时代的话术已退役
 
     def test_list_schedule_exposes_history_window(self):
         # 回归：schema 只有 days（未来窗口）→ LLM 无从查历史，直接答"我只能看到未来日程"
-        import agent_core
-        fn = next(t["function"] for t in agent_core.TOOL_SCHEMAS
-                  if t["function"]["name"] == "list_schedule")
+        fn = _desc("list_schedule")
         props = fn["parameters"]["properties"]
         assert "from" in props and "to" in props
         assert "历史" in fn["description"] or "过去" in props["from"]["description"]
@@ -1658,32 +382,23 @@ class TestAgentWiring:
         assert "历史日程一样能查" in p
         assert "查不到历史" in p          # 明令禁止那句错话
 
-    def test_calendar_tool_descs_mention_verify(self):
+    def test_ids_described_with_remote_prefix(self):
+        for name in ("update_schedule_item", "complete_task", "remove_schedule_item"):
+            assert "e:" in _desc(name)["parameters"]["properties"]["id"]["description"] \
+                or "t:" in _desc(name)["parameters"]["properties"]["id"]["description"], name
+
+    def test_no_schedule_snapshot_injection_or_sync_tick(self):
         import agent_core
-        descs = {t["function"]["name"]: t["function"]["description"]
-                 for t in agent_core.TOOL_SCHEMAS}
-        assert "核对" in descs["calendar_status"]
-        assert "核对" in descs["list_schedule"]
+        cal = agent_core.REGISTRY.modules["Calendar_Keeper"]
+        assert not getattr(cal, "CONTEXT_FNS", [])
+        ticks = {getattr(f, "__name__", "") for f in cal.MESSAGE_TICKS}
+        assert ticks == {"image_gc_tick"}
 
-    def test_schedule_context_formats_and_empty(self, cal_db_path):
+    def test_calendar_status_is_plain_status(self, monkeypatch):
         import agent_core
-        assert agent_core.REGISTRY.modules["Calendar_Keeper"].schedule_context(db_path=cal_db_path) == ""
-        _add_event(cal_db_path, title="游泳课",
-                   start=f"{D1}T14:00", end=f"{D1}T15:00", location="泳馆")
-        _add_task(cal_db_path, title="买蛋糕", due=D3)
-        block = agent_core.REGISTRY.modules["Calendar_Keeper"].schedule_context(db_path=cal_db_path)
-        assert "游泳课" in block and "@泳馆" in block
-        assert "☐ 买蛋糕" in block
-        assert "不要主动播报" in block      # 防刷屏规则随块注入
-
-
-def test_calendar_status_sync_flag_picks_command(monkeypatch):
-    import agent_core
-    import tool_runtime as rt
-    seen = []
-    monkeypatch.setattr(rt, "run_cli", lambda cmd, args=None: seen.append((cmd, args)) or "ok")
-    tool = agent_core._TOOL_MAP["calendar_status"]
-    tool({"member": "MemberA"})
-    tool({"member": "MemberA", "sync": True})
-    assert [c for c, _ in seen] == ["cal-status", "cal-sync"]
-    assert "sync" not in seen[1][1]
+        import tool_runtime as rt
+        seen = []
+        monkeypatch.setattr(rt, "run_cli", lambda cmd, args=None: seen.append((cmd, args)) or "ok")
+        agent_core._TOOL_MAP["calendar_status"]({"member": "MemberA"})
+        assert seen == [("cal-status", {"member": "MemberA"})]
+        assert "sync" not in _desc("calendar_status")["parameters"]["properties"]

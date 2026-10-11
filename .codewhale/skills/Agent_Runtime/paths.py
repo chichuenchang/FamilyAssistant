@@ -3,10 +3,8 @@ Family Assistant — 磁盘布局解析（数据落盘位置的单一事实来�
 
 所有 skill 经本模块取数据路径，集中管理 data/ 下的分区：
 
-    data/<成员目录>/schedule/schedule.db   成员活动（events），私有
-    data/<成员目录>/tasks/tasks.db         成员待办（tasks），私有
     data/<成员目录>/notes/notes.db         成员备忘 + notes/YYYY-MM/ 图片，私有
-    data/<成员目录>/inbox/YYYY-MM/          来图暂存（按发送成员归属）
+    data/<成员目录>/inbox/YYYY-MM/          来图（按发送成员归属；日程/待办来图常驻此处，1 年后清）
     data/<成员目录>/pdf_edits/<id>/         PDF 编辑会话（plan/layout/产出），私有
     data/<成员目录>/cache/<名>/             可再生产物（charts / web_images），不入备份
     data/Family/ledger.db                   家庭账本（收支/定期/划转/报税/汇率，纯财务）
@@ -108,7 +106,7 @@ def family_documents_dir(doc_type: str) -> Path:
 
 # ── 成员私有 ────────────────────────────────────────────────
 
-_DOMAINS = {"schedule": "schedule.db", "tasks": "tasks.db", "notes": "notes.db"}
+_DOMAINS = {"notes": "notes.db"}   # 日程/待办直连远程日历，无本地库
 
 
 def member_dir(member: str) -> Path:
@@ -123,13 +121,8 @@ def member_store_dir(member: str, domain: str) -> Path:
 
 
 def member_store(member: str, domain: str) -> Path:
-    """成员某 domain 的 DB 文件路径（schedule/tasks/notes）。父目录由 DB 连接时建。"""
+    """成员某 domain 的 DB 文件路径。父目录由 DB 连接时建。"""
     return member_store_dir(member, domain) / _DOMAINS[domain]
-
-
-def member_sync_state(member: str, domain: str) -> Path:
-    """成员某 domain 的同步状态文件（与 store 同目录，不入备份）。"""
-    return member_store_dir(member, domain) / ".sync_state.json"
 
 
 def member_inbox_dir(member: str, dt: date | None = None) -> Path:
@@ -171,7 +164,7 @@ def member_cache_dir(member: str, name: str) -> Path:
 
 
 def member_domain_image_dir(member: str, domain: str, dt: date | None = None) -> Path:
-    """某域来图按月目录 data/<成员>/<域>/YYYY-MM/（notes/schedule/tasks 通用），不存在则创建。"""
+    """某域来图按月目录 data/<成员>/<域>/YYYY-MM/，不存在则创建。"""
     d = member_store_dir(member, domain) / (dt or date.today()).strftime("%Y-%m")
     d.mkdir(parents=True, exist_ok=True)
     return d

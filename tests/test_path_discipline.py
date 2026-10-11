@@ -5,7 +5,6 @@ import json
 import pytest
 
 import agent_core
-import cal_db
 import members
 import note_db
 import sheet_db
@@ -18,10 +17,6 @@ class TestDbPathRequired:
     def test_note_db_connect_requires_db_path(self):
         with pytest.raises(ValueError, match="db_path"):
             note_db._connect()
-
-    def test_cal_db_connect_requires_db_path(self):
-        with pytest.raises(ValueError, match="db_path"):
-            cal_db._connect()
 
     def test_sheet_db_connect_requires_db_path(self):
         with pytest.raises(ValueError, match="db_path"):

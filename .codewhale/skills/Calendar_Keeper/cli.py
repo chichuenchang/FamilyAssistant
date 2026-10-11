@@ -1,24 +1,18 @@
 """
 Family Assistant — Calendar Keeper CLI
 
-家庭日程/待办的记录、查询、完成、取消与远程日历同步。
-Agent 经白名单子命令调用，输出纯文本。
+家庭日程/待办直连远程日历（remote_schedule），无本地缓存。
+Agent 经白名单子命令调用，输出纯文本；失败写 stderr，退出码 1。
 
 用法: python .codewhale/skills/Calendar_Keeper/cli.py <command> [args]
 
 命令：
-    cal-add     新增活动/待办（写本地后即时尽力推送远程；未配置则留待同步）
-    cal-list    未来 N 天日程 + 开放待办（先校验+修复远端再读本地）；
-                带 --from/--to 则查任意窗口（含历史），先按窗口实拉远端再读本地
-    cal-done    完成一条待办（活动请用 cal-delete 取消）
-    cal-delete  取消一条日程（已上云的会同步删除远端）
-    cal-sync    立即强制刷新（忽略节流）
-    cal-status  同步状态 + 本地↔远端实时校验结论
-
-每个命令对远程同步成员收尾输出一行"校验"结论（本地↔远端实时核对，
-不一致自动修复；本地模式成员无此行）。
-
-测试钩子：环境变量 CAL_DB_PATH 可覆盖数据库路径（仅测试用，跳过推送与校验）。
+    cal-add     新增活动/待办
+    cal-list    未来 N 天日程 + 开放待办；--from/--to 查任意窗口（含历史）
+    cal-update  编辑一条（只改给了的字段）
+    cal-done    完成一条待办（活动请用 cal-delete）
+    cal-delete  删除一条日程/待办
+    cal-status  远程日历配置状态
 """
 
 import argparse
@@ -38,112 +32,9 @@ if sys.platform == "win32":
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
-import cal_db
-import calendar_sync
-import paths as _paths
+import remote_schedule as rs
 
-# 测试钩子：覆盖数据库路径，避免测试碰真实账本（设置后忽略成员/类型分库）
-_DB_OVERRIDE = os.environ.get("CAL_DB_PATH") or None
-
-
-def _validate_member(member: str, *, required: bool) -> str:
-    """按成员私有日历：非覆盖模式下 required 时 member 必填非空，否则空名 slug
-    成 'member' 幽灵库。覆盖库（测试）放行。（不校验登记与否——注册表非 DATA_ROOT
-    隔离，且运行时归属由 agent_core 注入已解析成员名。）"""
-    if _DB_OVERRIDE:
-        return member
-    if required and not member:
-        raise ValueError("按成员私有日历，需要 --member")
-    return member
-
-
-def _store_for(member: str, kind: str) -> str:
-    """事件→data/<成员>/schedule/schedule.db，待办→.../tasks/tasks.db。覆盖时返回覆盖库。"""
-    if _DB_OVERRIDE:
-        return _DB_OVERRIDE
-    return str(_paths.member_store(member, "schedule" if kind == "event" else "tasks"))
-
-
-def _member_stores(member: str, kind: str | None = None) -> list[str]:
-    """成员相关库列表：覆盖时单库；否则按 kind 选 schedule/tasks，缺省两者。"""
-    if _DB_OVERRIDE:
-        return [_DB_OVERRIDE]
-    if not member:
-        raise ValueError("按成员私有日历，需要 --member")
-    if kind == "event":
-        return [str(_paths.member_store(member, "schedule"))]
-    if kind == "task":
-        return [str(_paths.member_store(member, "tasks"))]
-    return [str(_paths.member_store(member, "schedule")),
-            str(_paths.member_store(member, "tasks"))]
-
-
-from backup_hook import mark_dirty as _mark_backup_dirty  # 写入后通知备份（失败静默）
-
-
-def _push_quietly(db_path: str, member: str = "", kind: str = "") -> None:
-    """写入后即时尽力推送，按成员的域 provider；本地模式成员/覆盖库不推。静默。"""
-    try:
-        if _DB_OVERRIDE:
-            return                         # 单库覆盖（测试）：不触发真实推送
-        if not member:
-            return
-        domain = "schedule" if kind == "event" else "tasks"
-        prov = calendar_sync.provider_for(member, domain)
-        if prov is None:
-            return                         # 本地模式成员：不推不拉
-        calendar_sync.push_pending(db_path=db_path, prov=prov, kind=kind)
-    except Exception:
-        pass
-
-
-def _sync_suffix(item_id: int, db_path: str) -> str:
-    item = cal_db.get_item(item_id, db_path=db_path)
-    return "已同步到日历" if item and item["synced"] == 1 else "待同步"
-
-
-_DOMAIN_LABEL = {"schedule": "活动", "tasks": "待办"}
-
-
-def _verify_lines(member: str, domains: list[str]) -> list[str]:
-    """每操作校验：查本地+远端并对账，返回 verdict 行。绝不抛、绝不影响主操作。
-
-    覆盖库（测试）/无成员 → 空。本地模式域 → 无行（不打扰未配置用户）。
-    """
-    if _DB_OVERRIDE or not member:
-        return []
-    lines: list[str] = []
-    for d in domains:
-        label = _DOMAIN_LABEL[d]
-        try:
-            r = calendar_sync.verify_and_heal(member, d)
-        except Exception as e:                    # verify_and_heal 永不抛，双保险
-            lines.append(f"校验失败（{label}）: {e}")
-            continue
-        if r.get("mode") == "local":
-            continue
-        if r.get("mode") == "error":
-            lines.append(f"校验失败（{label}）: {r.get('error')}")
-        elif r.get("healed"):
-            lines.append(f"校验: 发现不一致，已自动修复"
-                         f"（推送{r['heal_pushed']}/拉取{r['heal_synced']}）（{label}）")
-        elif r.get("in_sync"):
-            lines.append(f"校验: 本地=远端一致（{label}）")
-        else:
-            parts = []
-            for key, word in (("pending", "待推送"), ("local_only", "远端缺失"),
-                              ("remote_only", "本地缺失"), ("drift", "字段不一致")):
-                if r.get(key):
-                    parts.append(f"{word}{len(r[key])}（{r[key][0]}）")
-            lines.append(f"⚠ 校验: 本地≠远端（{label}）— " + "、".join(parts))
-    return lines
-
-
-def _print_verify(member: str, domains: list[str]) -> None:
-    for line in _verify_lines(member, domains):
-        print(line)
-
-
+_TAG = {"event": "活动", "task": "待办"}
 _WEEKDAYS = "一二三四五六日"
 
 
@@ -170,64 +61,30 @@ def _fmt_when(item: dict) -> str:
     return f"{day} {st}"
 
 
-def _apply_ref(args) -> None:
-    """--id 接受 e12 / t7 / #e12 / 12（cal_db.parse_ref）：前缀定 kind（与 --kind 冲突则报错），args.id 归一成 int。"""
-    kind, item_id = cal_db.parse_ref(args.id)
-    if kind and getattr(args, "kind", None) and args.kind != kind:
-        raise ValueError(f"id {args.id} 是{'活动' if kind == 'event' else '待办'}，与 --kind {args.kind} 不符")
-    args.id = item_id
-    if kind:
-        args.kind = kind
-
-
 def _fmt_item(item: dict) -> str:
-    tag = "活动" if item["kind"] == "event" else "待办"
-    state = {"done": "[已完成] ", "cancelled": "[已取消] "}.get(item["status"], "")
+    state = "[已完成] " if item["status"] == "done" else ""
+    parts = [f"{item['id']} [{_TAG[item['kind']]}] {state}{item['title']}"]
     when = _fmt_when(item)
-    parts = [f"#{cal_db.ref(item['kind'], item['id'])} [{tag}] {state}{item['title']}"]
     if when:
         parts.append(when)
     if item["location"]:
         parts.append(f"@{item['location']}")
-    if item["member"]:
-        parts.append(f"·{item['member']}")
     return " ".join(parts)
 
 
 def cmd_cal_add(args):
-    _validate_member(args.member, required=True)
-    if args.kind == "event" and not args.date:
-        print("错误: 活动必须带 --date", file=sys.stderr)
-        sys.exit(1)
     if args.start and not args.date:
-        print("错误: --start 必须配合 --date", file=sys.stderr)
-        sys.exit(1)
-    start_at = ""
-    end_at = ""
+        raise ValueError("--start 必须配合 --date")
+    start_at = end_at = ""
     if args.date:
         start_at = args.date
         if args.kind == "event" and args.start and not args.all_day:
             start_at = f"{args.date}T{args.start}"
             if args.end:
                 end_at = f"{args.date}T{args.end}"
-    db = _store_for(args.member, args.kind)
-    item_id = cal_db.add_item(
-        kind=args.kind,
-        title=args.title,
-        start_at=start_at,
-        end_at=end_at,
-        all_day=args.all_day,
-        location=args.location or "",
-        notes=args.notes or "",
-        member=args.member,
-        source_image=args.source_image or "",
-        db_path=db,
-    )
-    _mark_backup_dirty()
-    _push_quietly(db, args.member, args.kind)
-    tag = "活动" if args.kind == "event" else "待办"
-    print(f"已添加{tag} #{cal_db.ref(args.kind, item_id)}（{_sync_suffix(item_id, db)}）")
-    _print_verify(args.member, ["schedule" if args.kind == "event" else "tasks"])
+    item = rs.add(args.member, args.kind, args.title, start_at=start_at, end_at=end_at,
+                  all_day=args.all_day, location=args.location or "", notes=args.notes or "")
+    print(f"已添加{_TAG[args.kind]} {item['id']}「{item['title']}」")
 
 
 def _shift(iso: str, days: int) -> str:
@@ -270,32 +127,13 @@ def _edited_times(item: dict, args) -> dict:
 
 
 def cmd_cal_update(args):
-    _validate_member(args.member, required=True)
-    _apply_ref(args)
-    if not args.kind:
-        raise ValueError("id 要带前缀（e12 / t7）或给 --kind")
-    db = _store_for(args.member, args.kind)
-    item = cal_db.get_item(args.id, db_path=db)
-    if item is None or item["kind"] != args.kind:
-        print("[错误] 无此日程", file=sys.stderr)
-        sys.exit(1)
-    if item["status"] != "active":
-        print(f"[错误] #{cal_db.ref(args.kind, args.id)} 已{'完成' if item['status'] == 'done' else '取消'}，不能编辑",
-              file=sys.stderr)
-        sys.exit(1)
+    item = rs.must_get(args.member, args.id)
     fields = {k: v for k, v in (("title", args.title), ("location", args.location),
                                 ("notes", args.notes)) if v is not None}
     fields.update(_edited_times(item, args))
     if not fields:
         raise ValueError("没给要改的字段")
-    item = cal_db.update_item(args.id, fields, db_path=db)
-    _mark_backup_dirty()
-    _push_quietly(db, args.member, args.kind)
-    print(f"已更新 {_fmt_item(item)}（{_sync_suffix(args.id, db)}）")
-    _print_verify(args.member, ["schedule" if args.kind == "event" else "tasks"])
-
-
-_EPOCH = "1970-01-01"        # --from 省略时的"不限过去"下界（Google 接受，实为拉全部历史）
+    print(f"已更新 {_fmt_item(rs.update(args.member, item, fields))}")
 
 
 def _parse_day(value: str, flag: str) -> str:
@@ -305,176 +143,51 @@ def _parse_day(value: str, flag: str) -> str:
         raise ValueError(f"{flag} 需要 YYYY-MM-DD 格式，收到 {value!r}")
 
 
-def _fetch_range(member: str, domains: list[str], start: str, end: str) -> list[str]:
-    """历史查询：把 [start, end] 的远端条目拉进本地缓存。返回要打印的告警行。
-
-    覆盖库（测试）/无成员/本地模式 → 无动作。拉取失败只告警，本地照旧可读
-    （不能静默：agent 据此知道结果可能不全）。
-    """
-    if _DB_OVERRIDE or not member:
-        return []
-    lines: list[str] = []
-    s, e = date.fromisoformat(start), date.fromisoformat(end)
-    for d in domains:
-        try:
-            r = calendar_sync.refresh_range(member, d, s, e)
-        except Exception as exc:                  # refresh_range 永不抛，双保险
-            lines.append(f"⚠ 历史拉取失败（{_DOMAIN_LABEL[d]}）: {exc}")
-            continue
-        for err in r.get("errors") or []:
-            lines.append(f"⚠ 历史拉取失败（{_DOMAIN_LABEL[d]}）: {err}")
-    return lines
-
-
 def cmd_cal_list(args):
-    _validate_member(args.member or "", required=False)
-    domains = {"event": ["schedule"], "task": ["tasks"]}.get(
-        args.kind, ["schedule", "tasks"])
-    date_from = getattr(args, "date_from", None) or ""
-    date_to = getattr(args, "date_to", None) or ""
-    ranged = bool(date_from or date_to)
-
-    if ranged:
-        # 历史/任意窗口模式：先按该窗口拉远端（--from 省略 = 不限过去 = 拉全部历史），
-        # 再读本地。不跑 verify（它只覆盖常驻窗口，这里的窗口已自带一次实拉）。
-        start = _parse_day(date_from, "--from") if date_from else _EPOCH
-        end = (_parse_day(date_to, "--to") if date_to
+    if args.date_from or args.date_to:
+        start = _parse_day(args.date_from, "--from") if args.date_from else ""
+        end = (_parse_day(args.date_to, "--to") if args.date_to
                else (date.today() + timedelta(days=args.days)).isoformat())
-        if start > end:
+        if start and start > end:
             raise ValueError(f"--from({start}) 晚于 --to({end})")
-        notes = _fetch_range(args.member or "", domains, start, end)
+        rows = rs.list_items(args.member, args.kind, start, end, closed=args.all)
+        empty = f"（{start or '最早'}~{end} 无日程）"
     else:
-        # 默认（未来 N 天）：查询前先校验+修复（无节流）——捕获远端新加事件与
-        # 手机上划掉的待办，列表读的是修复后的本地。
-        notes = _verify_lines(args.member or "", domains)
-
-    rows = []
-    for db in _member_stores(args.member, args.kind):
-        if ranged:
-            rows.extend(cal_db.list_range(
-                start=start, end=end,
-                kind=args.kind,
-                member=args.member if _DB_OVERRIDE else None,
-                include_closed=args.all,
-                db_path=db,
-            ))
-        else:
-            rows.extend(cal_db.list_upcoming(
-                days=args.days,
-                kind=args.kind,
-                member=args.member if _DB_OVERRIDE else None,  # 分库后库即成员，无需再过滤
-                include_closed=args.all,
-                db_path=db,
-            ))
-    rows.sort(key=lambda r: (r["start_at"] == "", r["start_at"], r["id"]))
-    if not rows:
-        print(f"（{start}~{end} 无日程）" if ranged else "（无日程）")
-    else:
-        for r in rows:
-            print(_fmt_item(r))
-    for line in notes:
-        print(line)
+        today = date.today()
+        rows = rs.list_items(args.member, args.kind, today.isoformat(),
+                             (today + timedelta(days=args.days)).isoformat(),
+                             closed=args.all, undated=True)
+        empty = "（无日程）"
+    print("\n".join(_fmt_item(r) for r in rows) if rows else empty)
 
 
 def cmd_cal_done(args):
-    _validate_member(args.member, required=True)
-    args.kind = None
-    _apply_ref(args)
-    if args.kind == "event":
-        print(f"[错误] #{cal_db.ref('event', args.id)} 是活动，取消请用 cal-delete", file=sys.stderr)
-        sys.exit(1)
-    db = _DB_OVERRIDE or str(_paths.member_store(args.member, "tasks"))
-    item = cal_db.get_item(args.id, db_path=db)
-    if item is None:
-        print("[错误] 无此日程", file=sys.stderr)
-        sys.exit(1)
-    if item["kind"] != "task":
-        print(f"[错误] #{cal_db.ref('event', args.id)} 是活动，取消请用 cal-delete", file=sys.stderr)
-        sys.exit(1)
-    cal_db.set_status(args.id, "done", db_path=db)
-    _mark_backup_dirty()
-    _push_quietly(db, args.member, "task")
-    print(f"已完成待办 #{cal_db.ref('task', args.id)}（{_sync_suffix(args.id, db)}）")
-    _print_verify(args.member, ["tasks"])
+    item = rs.complete(args.member, args.id)
+    print(f"已完成待办 {item['id']}「{item['title']}」")
 
 
 def cmd_cal_delete(args):
-    _validate_member(args.member, required=True)
-    _apply_ref(args)
-    # 活动库/待办库各自自增 → 同一 id 号可能在两库并存。给了 --kind 只查该库；
-    # 没给且两库都命中 → 拒绝消歧（旧行为按库序取首个，会把待办删成活动）。
-    kind = getattr(args, "kind", None)
-    matches = []
-    for cand in _member_stores(args.member, kind):
-        found = cal_db.get_item(args.id, db_path=cand)
-        if found is not None:
-            matches.append((cand, found))
-    if not matches:
-        print("[错误] 无此日程", file=sys.stderr)
-        sys.exit(1)
-    if len(matches) > 1:
-        kinds = "、".join("活动" if it["kind"] == "event" else "待办"
-                         for _, it in matches)
-        print(f"[错误] #{args.id} 在多个库都存在（{kinds}），"
-              f"请加 --kind event|task 指定要删哪个", file=sys.stderr)
-        sys.exit(1)
-    db, item = matches[0]
-    cal_db.set_status(args.id, "cancelled", db_path=db)
-    _mark_backup_dirty()
-    _push_quietly(db, args.member, item["kind"])
-    print(f"已取消日程 #{cal_db.ref(item['kind'], args.id)}「{item['title']}」（{_sync_suffix(args.id, db)}）")
-    _print_verify(args.member,
-                  ["schedule" if item["kind"] == "event" else "tasks"])
-
-
-def cmd_cal_sync(args):
-    member = _validate_member(getattr(args, "member", "") or "", required=False)
-    if member and not _DB_OVERRIDE:
-        result = calendar_sync.force_sync(member=member)
-    else:
-        result = calendar_sync.force_sync(db_path=_DB_OVERRIDE)
-    if result is None:
-        print("日历 provider 未配置（需 GCAL_CLIENT_ID / GCAL_CLIENT_SECRET / "
-              "GCAL_REFRESH_TOKEN 环境变量），当前仅本地记录。")
-        return
-    pushed = result.get("pushed", 0)
-    synced = result.get("synced")
-    if synced is None:
-        synced = result.get("events", 0) + result.get("tasks", 0)
-    print(f"已刷新：推送 {pushed} 条，同步 {synced} 项")
-    for e in result["errors"]:
-        print(f"  ⚠ {e}")
-    _print_verify(member, ["schedule", "tasks"])
+    item = rs.delete(args.member, args.id)
+    print(f"已取消日程 {item['id']}「{item['title']}」")
 
 
 def cmd_cal_status(args):
-    member = _validate_member(getattr(args, "member", "") or "", required=False)
-    if member and not _DB_OVERRIDE:
-        print(f"日历同步（{member}）: {'已启用' if calendar_sync.CFG.get('enabled') else '未启用'}")
-        for d, label in (("schedule", "活动"), ("tasks", "待办")):
-            st = calendar_sync.status(member=member, domain=d)
-            line = (f"  {label}: {'已配置' if st['configured'] else '未配置'}，"
-                    f"上次刷新 {st['last_refresh'] or '从未'}，待同步 {st['pending']} 条")
-            if st["last_error"]:
-                line += f"，上次错误 {st['last_error']}"
-            print(line)
-        _print_verify(member, ["schedule", "tasks"])
-        return
-    st = calendar_sync.status(db_path=_DB_OVERRIDE)
-    print(f"日历同步: {'已启用' if st['enabled'] else '未启用（config.json calendar.enabled）'}")
-    print(f"Provider: {'已配置' if st['configured'] else '未配置（GCAL_* 环境变量）'}")
-    print(f"上次刷新: {st['last_refresh'] or '从未'}")
-    print(f"待同步: {st['pending']} 条")
-    if st["last_error"]:
-        print(f"上次错误: {st['last_error']}")
+    switch = "已启用" if rs.CFG.get("enabled") else "未启用（config.json calendar.enabled）"
+    print(f"日历（{args.member}）: 总开关{switch}")
+    for domain, ok in rs.status(args.member).items():
+        print(f"  {'活动' if domain == 'schedule' else '待办'}: {'已配置' if ok else '未配置'}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Family Assistant — Calendar Keeper CLI")
     sub = parser.add_subparsers(dest="command", required=True)
+    id_help = "条目 id，照列表原样传（e:… 活动 / t:… 待办）"
+
+    def member(p):
+        p.add_argument("--member", required=True, help="成员（私有日历）")
 
     p = sub.add_parser("cal-add", help="新增活动/待办")
-    p.add_argument("--member", required=True, help="创建成员（归属 + 路由到该成员私有日历）")
+    member(p)
     p.add_argument("--kind", required=True, choices=["event", "task"],
                    help="event=活动/安排，task=待办")
     p.add_argument("--title", required=True, help="标题")
@@ -484,24 +197,20 @@ def main() -> int:
     p.add_argument("--all-day", action="store_true", help="全天活动")
     p.add_argument("--location", help="地点")
     p.add_argument("--notes", help="备注")
-    p.add_argument("--source-image", help="原始来图（data 相对路径），定期清理")
 
     p = sub.add_parser("cal-list", help="未来 N 天日程 + 开放待办（--from/--to 查任意历史窗口）")
-    p.add_argument("--days", type=int,
-                   default=int(calendar_sync.CFG.get("lookahead_days", 10)),
+    member(p)
+    p.add_argument("--days", type=int, default=int(rs.CFG["lookahead_days"]),
                    help="窗口天数（默认 config calendar.lookahead_days）")
     p.add_argument("--from", dest="date_from",
-                   help="窗口起始日 YYYY-MM-DD（可为过去；省略=不限过去，拉全部历史）")
-    p.add_argument("--to", dest="date_to",
-                   help="窗口结束日 YYYY-MM-DD（省略=今天 + --days）")
+                   help="窗口起始日 YYYY-MM-DD（可为过去；省略=不限过去）")
+    p.add_argument("--to", dest="date_to", help="窗口结束日 YYYY-MM-DD（省略=今天 + --days）")
     p.add_argument("--kind", choices=["event", "task"], help="只看活动或待办")
-    p.add_argument("--member", help="按创建成员过滤")
-    p.add_argument("--all", action="store_true", help="包含已完成/已取消")
+    p.add_argument("--all", action="store_true", help="包含已完成待办")
 
-    p = sub.add_parser("cal-update", help="编辑一条活动/待办（只改给了的字段，同步到远端）")
-    p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
-    p.add_argument("--id", required=True, help="日程 ID（e12 / t7；裸号需配 --kind）")
-    p.add_argument("--kind", choices=["event", "task"])
+    p = sub.add_parser("cal-update", help="编辑一条活动/待办（只改给了的字段）")
+    member(p)
+    p.add_argument("--id", required=True, help=id_help)
     p.add_argument("--title")
     p.add_argument("--date", help="新日期 YYYY-MM-DD（活动整条平移；待办=截止日）")
     p.add_argument("--start", help="新开始时间 HH:MM")
@@ -511,35 +220,34 @@ def main() -> int:
     p.add_argument("--notes")
 
     p = sub.add_parser("cal-done", help="完成一条待办")
-    p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
-    p.add_argument("--id", required=True, help="日程 ID（e12 / t7 / 裸号）")
+    member(p)
+    p.add_argument("--id", required=True, help=id_help)
 
-    p = sub.add_parser("cal-delete", help="取消一条日程（同步删除远端）")
-    p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
-    p.add_argument("--id", required=True, help="日程 ID（e12 / t7 / 裸号）")
-    p.add_argument("--kind", choices=["event", "task"],
-                   help="活动或待办（id 在两库可能撞号，指定以消歧）")
+    p = sub.add_parser("cal-delete", help="删除一条日程/待办（远端同步删除）")
+    member(p)
+    p.add_argument("--id", required=True, help=id_help)
 
-    p = sub.add_parser("cal-sync", help="立即强制刷新远程日历")
-    p.add_argument("--member", default="", help="按成员刷新其活动+待办；不给则单库全局视图")
-
-    p = sub.add_parser("cal-status", help="同步状态")
-    p.add_argument("--member", default="", help="按成员查看其活动+待办同步状态")
+    p = sub.add_parser("cal-status", help="远程日历配置状态")
+    member(p)
 
     args = parser.parse_args()
-
     dispatch = {
         "cal-add": cmd_cal_add,
         "cal-list": cmd_cal_list,
         "cal-update": cmd_cal_update,
         "cal-done": cmd_cal_done,
         "cal-delete": cmd_cal_delete,
-        "cal-sync": cmd_cal_sync,
         "cal-status": cmd_cal_status,
     }
     try:
         dispatch[args.command](args)
-    except ValueError as e:
+    except rs.NotFound:
+        print("[错误] 无此日程", file=sys.stderr)
+        return 1
+    except RuntimeError as e:
+        print(f"错误: 远程日历调用失败: {e}", file=sys.stderr)
+        return 1
+    except (rs.NotConfigured, ValueError) as e:
         print(f"错误: {e}", file=sys.stderr)
         return 1
     return 0

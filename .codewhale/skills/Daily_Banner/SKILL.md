@@ -6,7 +6,7 @@
 
 - `config.json` → `daily_banner.enabled: true`。
 - `data/members.json` 该成员加 `"banner": true`（opt-in；没加不推）。
-- 邮件段需该成员 `mail` 块已配好（见 `Mail_Keeper/SKILL.md`）；日程段需 `calendar.enabled` + 该成员 `sync` 块，否则只读本地库。
+- 邮件段需该成员 `mail` 块已配好（见 `Mail_Keeper/SKILL.md`）；日程段需 `calendar.enabled` + 该成员 `sync` 块，否则无日程段；远端读取失败则标注没取到。
 
 ## 排障
 

@@ -13,7 +13,7 @@
 | **Document Keeper** | 家庭文档归档、OCR 索引、到期跟踪与每日提醒、家庭成员资料（profiles，家庭共享） | [SKILL.md](.codewhale/skills/Document_Keeper/SKILL.md) | 文档、合同、租约、保险单、证件、到期、提醒 |
 | **PDF Editor** | 一句指令改 PDF：填表单（原生字段）、任意位置写字/打勾、白底覆盖改写、贴签名、画线、删页/旋转/重排/合并；会话落盘可续改（pypdf / reportlab / pypdfium2 可选依赖，缺席优雅降级） | [SKILL.md](.codewhale/skills/PDF_Editor/SKILL.md) | 填表、改 PDF、签名、删页、合并 PDF、移民表格 |
 | **Note Keeper** | 个人备忘（杂项信息长期记忆，按成员私有，支持图片 OCR 入忘、置顶常驻上下文） | [SKILL.md](.codewhale/skills/Note_Keeper/SKILL.md) | 记一下、帮我记住、备忘、我记过什么 |
-| **Calendar Keeper** | 按成员私有的日程与待办（活动/待办分库），与各成员自己的远程日历静默同步，每次日程操作实时核对本地↔远端一致性并自动修复（作者已实现 Google Calendar + Tasks provider，按成员/域选择，用户可按契约换其他日历服务） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
+| **Calendar Keeper** | 按成员私有的日程与待办，直连各成员远程日历，无本地库（作者已实现 Google Calendar + Tasks provider，按成员/域选择，可按契约换） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
 | **Mail Keeper** | 按成员私有的邮箱：查收/读全文/回信/发新信，可带附件（发信须用户下一条消息确认才发出，闸门在代码里；回信收件人由原信决定），可选新邮件播报（AI 判需处理才报，发件人+主题+一行理由；说"这种别推"/"漏推了"即学会 mute/always 该类）；建 Gmail 过滤器把某类信分到别的标签（同样两轮确认）；当前 Gmail provider，可按契约换 | [SKILL.md](.codewhale/skills/Mail_Keeper/SKILL.md) | 邮件、邮箱、Gmail、回邮件、查收邮件 |
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
 | **Web Reach** | 只读联网：搜最新资讯、抓取/总结网页、转写 YouTube 字幕（无需 key；YouTube 需 yt-dlp，缺失优雅降级） | [SKILL.md](.codewhale/skills/Web_Reach/SKILL.md) | 最新新闻、查一下、外面在发生什么、总结链接、YouTube、视频 |
@@ -71,7 +71,7 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 | `doc_types` | `Document_Keeper/doc_models.py`（读一次→常量）、`Document_Keeper/agent_tools.py`（工具 enum） |
 | `reminder_lead_days` | `Document_Keeper/doc_models.py`（读一次→常量） |
 | `backup`（enabled/debounce_seconds） | `Remote_Backup/backup_sync.py`（CFG，读一次）。每成员 provider/cred_prefix/remote_root/scopes 在 `data/members.json` 的 backup 块 |
-| `calendar`（enabled/lookahead_days/refresh_minutes/sync_horizon_days/sync_past_days/query_refresh_seconds/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/calendar_sync.py`（CFG，含 sync_past_days~sync_horizon_days 拉取窗口、query_refresh_seconds 后台节流）；`image_gc.py`（来图清理参数）；`Calendar_Keeper/agent_tools.py`（LOOKAHEAD，上下文注入窗口）；`cli.py`（默认窗口）。按成员/域的远程同步偏好在 `data/members.json` 的 sync 块（不在 config.json） |
+| `calendar`（enabled/lookahead_days/image_retention_years/image_prune_interval_days） | `Calendar_Keeper/remote_schedule.py`（CFG）；`image_gc.py`（来图清理）；`agent_tools.py`/`cli.py`（lookahead_days 默认窗口）。按成员接入在 `data/members.json` 的 sync 块 |
 | `notes`（chart_retention_days/worksheet_pin_row_cap） | `Note_Keeper/cli.py`（chart_retention_days，prune-on-render）；`Note_Keeper/agent_tools.py`（WORKSHEET_PIN_ROW_CAP，置顶 table 工作表注入行上限） |
 | `agent`（context_max_tokens/idle_clear_hours/tool_rounds） | `agent_core`（单条消息工具往返上限；上下文自动管理：历史 token 预算超出→从最旧一问一答成对丢弃；用户闲置超 N 小时→下一条消息前清空其历史；0=关闭。用户也可发 /clear 手动清空） |
 | ~~`members`~~（已迁出 → `data/members.json`，git 不跟踪） | `Agent_Runtime/members.py`（resolve / member-* 读写均走该文件） |
@@ -90,6 +90,6 @@ python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
 - `.codewhale/skills/PDF_Editor/` — PDF 编辑 skill（cli.py 入口 + pdf_layout.py 版面 + pdf_boxes.py 表格空格/勾选框 + pdf_plan.py 会话与排版 + pdf_apply.py 应用；按成员私有）
 - `.codewhale/skills/Note_Keeper/` — 个人备忘 skill（cli.py 入口 + note_db.py 数据层；按成员私有）
 - `.codewhale/skills/Remote_Backup/` — 用户数据云盘镜像 skill（backup_provider.py 当前为 Google Drive 实现；按其文件头契约重写即可换成其他云盘）
-- `.codewhale/skills/Calendar_Keeper/` — 按成员私有的日程/待办 + 远程日历同步 skill（活动/待办分库；按成员/域选 provider，providers.py 注册表，calendar_provider.py 为 Google Calendar + Tasks 实现；image_gc.py 清理陈旧来图）
+- `.codewhale/skills/Calendar_Keeper/` — 按成员私有日程/待办，直连远程日历（remote_schedule.py；providers.py 注册表；calendar_provider.py 为 Google 实现；image_gc.py 清旧来图月目录）
 - `.codewhale/skills/Mail_Keeper/` — 按成员私有邮箱 skill（gmail_provider.py Gmail 实现 + mail_draft.py 两轮发信闸门 + mail_watch.py 新邮件播报 + mail_triage.py LLM 分拣 + mail_rules.py mute/always 规则；无 cli.py，工具进程内跑）
 - `.codewhale/skills/Agent_Runtime/` — 远程频道接入（Agent 核心 + 微信 + Telegram 传输层 + knowking_jobs.py 懂王舆情桥），详见其 SKILL.md
