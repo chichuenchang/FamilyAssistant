@@ -47,7 +47,8 @@ def tool_view_image(args):
         parts.append(part)
     models = _llm.vision_models()
     if not models:
-        return "[看图不可用] 没有已配置的识图模型（如 deepseek-flash 需 DEEPSEEK_API_KEY）"
+        return ("[看图不可用] 没有已配置的识图模型（如 deepseek-flash 需 DEEPSEEK_API_KEY）"
+                "；要文字可改用 ocr_read")
     question = (args.get("question") or "").strip() or "详细描述这张图的内容。"
     msgs = [{"role": "system", "content": _SYSTEM},
             {"role": "user", "content": [{"type": "text", "text": question}, *parts]}]
@@ -57,7 +58,7 @@ def tool_view_image(args):
         if answer:
             return answer
         _log.warning("识图模型 %s 无回答，换下一个", model)
-    return f"[看图失败] 识图模型（{'、'.join(models)}）都没回答"
+    return f"[看图失败] 识图模型（{'、'.join(models)}）都没回答；要文字可改用 ocr_read"
 
 
 TOOLS = {"view_image": tool_view_image}

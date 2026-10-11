@@ -148,6 +148,20 @@ def test_ocr_read_returns_plain_text(monkeypatch, tmp_path):
     assert _ocr_at.tool_ocr_read({"path": str(f)}) == "合同第一页"
 
 
+def test_ocr_failure_names_the_other_route(monkeypatch):
+    img = _paths.data_root() / "blank.jpg"
+    pdf = _paths.data_root() / "blank.pdf"
+    img.write_bytes(b"jpg")
+    pdf.write_bytes(b"%PDF")
+    monkeypatch.setattr(ocr, "is_available", lambda: False)
+    assert "view_image" in _ocr_at.tool_ocr_read({"path": str(img)})
+    assert "没有别的读法" in _ocr_at.tool_ocr_read({"path": str(pdf)})
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda p: "")
+    out = _ocr_at.tool_ocr_read({"path": str(img)})
+    assert out.startswith("[未识别到文字]") and "view_image" in out
+
+
 def test_ocr_read_refuses_path_outside_data_root(tmp_path):
     out = _ocr_at.tool_ocr_read({"path": str(tmp_path / "secret.png")})
     assert out.startswith("[错误]")

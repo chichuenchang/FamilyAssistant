@@ -97,7 +97,8 @@ def test_view_image_tries_next_vision_model_when_one_fails(vision, two_vision):
     assert vision["models"] == ["deepseek-flash", "qwen-vl"]
     vision["reply"] = None
     out = vision["tool"]({"paths": [str(vision["dir"] / "cat.png")]})
-    assert out == "[看图失败] 识图模型（deepseek-flash、qwen-vl）都没回答"
+    assert out.startswith("[看图失败] 识图模型（deepseek-flash、qwen-vl）都没回答")
+    assert "ocr_read" in out                      # 指出另一条路，选不选由模型定
 
 
 def test_prompt_tells_agent_to_switch_tool_on_failure():

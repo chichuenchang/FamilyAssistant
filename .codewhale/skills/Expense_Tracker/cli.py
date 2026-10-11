@@ -182,6 +182,8 @@ def cmd_list(args):
     for r in rows:
         print(f"#{r['id']} [{r['date']}] {r['type']} {r['amount']} {r['currency']} "
               f"| {r['category'] or '-'} | {r['description']}")
+    if len(rows) == (args.limit or 200):
+        print(f"…已到 {len(rows)} 条上限，可能还有更早的；缩小日期范围或用 query_ledger 聚合")
 
 
 def cmd_update(args):

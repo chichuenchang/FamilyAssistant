@@ -87,6 +87,8 @@ def cmd_note_list(args):
         return
     for r in rows:
         print(_fmt_note(r))
+    if len(rows) == args.limit:
+        print(f"…只列了最近 {args.limit} 条，更早的用 search_notes 或加大 limit")
 
 
 def cmd_note_search(args):
