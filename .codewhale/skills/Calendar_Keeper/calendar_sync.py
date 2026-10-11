@@ -149,6 +149,11 @@ def provider_for(member: str, domain: str):
 
 # ── 推送（先推） ────────────────────────────────────────────
 
+def _label(row) -> str:
+    """报错/校验行里指代一条：#e12 标题前 20 字。"""
+    return f"#{cal_db.ref(row['kind'], row['id'])} {row['title'][:20]}"
+
+
 def push_pending(db_path=None, prov=None, kind: str | None = None):
     """推送待同步行（synced=0）。prov 缺省用模块全局 provider；kind 给定则只推该类。
 
@@ -192,7 +197,7 @@ def push_pending(db_path=None, prov=None, kind: str | None = None):
                 cal_db.mark_synced(row["id"], db_path=db_path)
             pushed += 1
         except Exception as e:
-            errors.append(f"#{cal_db.ref(row['kind'], row['id'])} {row['title'][:20]}: {e}")
+            errors.append(f"{_label(row)}: {e}")
     return pushed, errors
 
 
@@ -483,8 +488,7 @@ def verify_domain(member: str, domain: str, *, db_path=None, prov=None,
             remote = {t["uid"]: t for t in p.list_tasks()}
 
         local_uids = cal_db.uids(kind, db_path=db_path)
-        pend = [f"#{cal_db.ref(r['kind'], r['id'])} {r['title'][:20]}"
-                for r in cal_db.pending(db_path=db_path) if r["kind"] == kind]
+        pend = [_label(r) for r in cal_db.pending(db_path=db_path) if r["kind"] == kind]
 
         local_only: list[str] = []
         drift: list[str] = []
@@ -497,9 +501,9 @@ def verify_domain(member: str, domain: str, *, db_path=None, prov=None,
                 continue                          # 读写延迟保护
             r = remote.get(row["uid"])
             if r is None:
-                local_only.append(f"#{cal_db.ref(row['kind'], row['id'])} {row['title'][:20]}")
+                local_only.append(_label(row))
             elif _fields_differ(kind, row, r):
-                drift.append(f"#{cal_db.ref(row['kind'], row['id'])} {row['title'][:20]}")
+                drift.append(_label(row))
 
         remote_only = [_norm(remote[u].get("title"))[:20] or "(无标题)"
                        for u in remote if u not in local_uids]
