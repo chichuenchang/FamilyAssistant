@@ -1,65 +1,57 @@
-# tests/test_image_gc.py — 陈旧来图清理（Calendar_Keeper/image_gc.py）。
+# tests/test_image_gc.py — 陈旧来图清理（Calendar_Keeper/image_gc.py）：按月目录年龄删。
 from datetime import datetime as dt
 
 import pytest
 
 import image_gc
-import cal_db
-import paths
 import members
+import paths
 
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    """DATA_ROOT=tmp，单成员 M，schedule 库有一旧一新带图行。"""
+    """DATA_ROOT=tmp，单成员 M；inbox/schedule/tasks/notes 各有新旧月目录。"""
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "data"))
     monkeypatch.setenv("IMAGE_GC_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("CALENDAR_CONFIG", str(tmp_path / "no-config.json"))  # 用回退参数
     monkeypatch.setattr(members, "member_names", lambda *a, **k: ["M"])
-
-    sdb = str(paths.member_store("M", "schedule"))
-    imgdir = paths.member_domain_image_dir("M", "schedule")
-    old_img = imgdir / "old.jpg"; old_img.write_bytes(b"x")
-    new_img = imgdir / "new.jpg"; new_img.write_bytes(b"y")
-    old_id = cal_db.add_item(kind="event", title="old", start_at="2020-01-01T10:00",
-                             member="M", source_image=paths.to_rel(old_img), db_path=sdb)
-    new_id = cal_db.add_item(kind="event", title="new", start_at="2026-05-01T10:00",
-                             member="M", source_image=paths.to_rel(new_img), db_path=sdb)
-    return tmp_path, sdb, old_id, new_id, old_img, new_img
-
-
-def test_item_date_fallback():
-    assert image_gc._item_date(
-        {"start_at": "2020-01-01T10:00", "created_at": "2025-01-01T00:00:00"}) == "2020-01-01"
-    assert image_gc._item_date(
-        {"start_at": "", "created_at": "2025-01-01T00:00:00"}) == "2025-01-01"
+    root = paths.member_dir("M")
+    made = {}
+    for area in ("inbox", "schedule", "tasks", "notes"):
+        for month in ("2025-05", "2025-06"):
+            d = root / area / month
+            d.mkdir(parents=True)
+            (d / "a.jpg").write_bytes(b"x")
+            made[(area, month)] = d
+    (root / "schedule" / "schedule.db").write_bytes(b"db")   # 非月目录：绝不碰
+    return root, made
 
 
-def test_prune_clears_old_keeps_recent(env):
-    tmp, sdb, old_id, new_id, old_img, new_img = env
-    rep = image_gc.prune_stale_images(now=dt(2026, 6, 19), retention_years=2)
-    assert rep["cleared"] == 1 and rep["files_deleted"] == 1
-    # 旧：文件删、链接清、行仍在
-    assert not old_img.exists()
-    old = cal_db.get_item(old_id, db_path=sdb)
-    assert old["source_image"] == "" and old["status"] == "active"
-    # 新：原样
-    assert new_img.exists()
-    assert cal_db.get_item(new_id, db_path=sdb)["source_image"] != ""
+def test_default_retention_is_one_year():
+    assert image_gc._FALLBACK["image_retention_years"] == 1
+
+
+def test_prune_deletes_months_before_cutoff(env):
+    root, made = env
+    rep = image_gc.prune_stale_images(now=dt(2026, 6, 19))
+    for area in ("inbox", "schedule", "tasks"):
+        assert not made[(area, "2025-05")].exists(), area
+        assert made[(area, "2025-06")].exists(), area      # 截止月本身保留
+    assert made[("notes", "2025-05")].exists()             # notes 库链接其图，不归这里管
+    assert (root / "schedule" / "schedule.db").exists()
+    assert rep["dirs_deleted"] == 3 and rep["files_deleted"] == 3
 
 
 def test_prune_dry_run_changes_nothing(env):
-    tmp, sdb, old_id, new_id, old_img, new_img = env
-    rep = image_gc.prune_stale_images(now=dt(2026, 6, 19), retention_years=2, dry_run=True)
-    assert rep["cleared"] == 1 and rep["files_deleted"] == 0
-    assert old_img.exists()
-    assert cal_db.get_item(old_id, db_path=sdb)["source_image"] != ""
+    _, made = env
+    rep = image_gc.prune_stale_images(now=dt(2026, 6, 19), dry_run=True)
+    assert rep["dirs_deleted"] == 3 and rep["files_deleted"] == 0
+    assert all(d.exists() for d in made.values())
 
 
 def test_prune_retention_window(env):
-    # retention=10 年 → 2020 的也在保留期内，不清
     rep = image_gc.prune_stale_images(now=dt(2026, 6, 19), retention_years=10)
-    assert rep["cleared"] == 0
+    assert rep["dirs_deleted"] == 0
 
 
 def test_tick_throttles(tmp_path, monkeypatch):

@@ -81,7 +81,7 @@
     "sync_horizon_days": 90,
     "sync_past_days": 365,
     "query_refresh_seconds": 60,
-    "image_retention_years": 2,
+    "image_retention_years": 1,
     "image_prune_interval_days": 30
   },
   "daily_banner": {
