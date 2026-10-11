@@ -214,7 +214,7 @@ def fence(text: str, source: str) -> str:
 def relocate_image(src: str, member: str, domain: str) -> str:
     """来图从暂存（成员 inbox，data_root 内）搬到该成员某域 YYYY-MM/，返回 data 相对路径。
 
-    domain ∈ notes/schedule/tasks。失败保留原路径，绝不丢图。
+    domain = notes（日程/待办来图留 inbox）。失败保留原路径，绝不丢图。
     仅处理 data_root 内的文件 + 已知成员；否则原样返回。"""
     try:
         if not member:

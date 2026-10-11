@@ -55,17 +55,11 @@
 
 ### 📅 家庭日程与待办（Calendar Keeper）
 - 自然语言加日程/待办："周六下午2点孩子游泳课"、"提醒我15号前买生日蛋糕"
-- **静默同步远程日历**：已注册成员消息到达时自动拉取过去 365 天（`sync_past_days`）～未来 90 天
-  （`sync_horizon_days`）日程（节流，默认 15 分钟一次），不主动播报；问"接下来有什么安排""待办清单"
-  时即答（回答窗口默认 10 天）
-- **历史日程也能查**：问"7月游了几次课""去年那趟航班哪天"→ Agent 传 `from`/`to` 框窗口，
-  比常驻缓存更久远的历史即时从远端实拉（`--from` 省略 = 整本日历）
-- **每次日程操作实时校验**：加/查/完成/取消/同步都会同时查本地与远端并核对一致性，
-  不一致自动修复并报告——在手机上直接划掉的待办、Gmail 自动建的日程立刻拉平
-- Agent 新建/完成/取消的日程待办自动推送远端；离线/未配置时本地照常用，配好自动补推
+- **直连远程日历，无本地库**：每次查/加/改/完成/删除都直接读写远端；家人在手机上的改动下一问即见
+- **历史日程也能查**：问"7月游了几次课"→ Agent 传 `from`/`to`（`--from` 省略 = 整本日历）
+- 远端不可用或成员未配远程日历 → 如实报错，不假装记上
 - 当前内置 Google Calendar + Google Tasks 实现（最小权限 `calendar.events` + `tasks`）；
   按 provider 契约可换任意日历服务
-- 家人在手机日历上的改动会同步回来：远端是日程的事实源（改名/删除/完成都对账）
 
 ### ☀️ 每日早报（Daily Banner）
 - 每天 08:20 主动推：未来 3 天日程 + 未完成待办 + 昨天以来未读邮件，LLM 排优先级压成一条（失败退模板）
@@ -256,13 +250,12 @@ FamilyAssistant/
 │       │   ├── backup_sync.py    ← 同步引擎
 │       │   ├── backup_provider.py← Google Drive 实现（可按契约换成其他云盘）
 │       │   └── cli.py            ← 备份 CLI 入口
-│       ├── Calendar_Keeper/  ← 家庭日程/待办 + 远程日历同步
+│       ├── Calendar_Keeper/  ← 家庭日程/待办，直连远程日历
 │       │   ├── SKILL.md
-│       │   ├── cal_db.py         ← 数据层（日程缓存）
-│       │   ├── calendar_sync.py  ← 同步引擎（静默节流刷新/先推后拉/对账/每操作校验）
+│       │   ├── remote_schedule.py ← 按成员读写远端（无本地库）
 │       │   ├── calendar_provider.py ← Google Calendar+Tasks 实现（可按契约换）
 │       │   ├── providers.py       ← provider 注册表（(域,名)→实现）
-│       │   ├── image_gc.py        ← 陈旧来图清理（N 年前的 source_image）
+│       │   ├── image_gc.py        ← 旧来图月目录清理
 │       │   └── cli.py            ← 日程 CLI 入口
 │       ├── Mail_Keeper/      ← 按成员私有邮箱（读 + 两轮确认回信）
 │       │   ├── SKILL.md
@@ -294,7 +287,7 @@ FamilyAssistant/
 ├── FamilyAssistant.md    ← 开发者总览（架构 / config 键表 / 运行方式）
 ├── data/                 ← 全部用户数据（git 不跟踪）
 │   ├── Family/           ← 家庭共享：ledger.db（财务）、documents.db（文档+成员资料）、receipts/、documents/
-│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/、pdf_edits/（PDF 编辑会话）、cache/（可再生，不备份）
+│   ├── <成员>/           ← 成员私有：notes/、inbox/、pdf_edits/（PDF 编辑会话）、cache/（可再生，不备份）
 │   ├── .state/           ← 运行时状态/凭据/日志（不备份）；路径一律经 paths.state_file
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）
