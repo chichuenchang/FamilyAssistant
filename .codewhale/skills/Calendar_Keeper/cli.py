@@ -73,8 +73,6 @@ def _fmt_item(item: dict) -> str:
 
 
 def cmd_cal_add(args):
-    if args.kind == "event" and not args.date:
-        raise ValueError("活动必须带 --date")
     if args.start and not args.date:
         raise ValueError("--start 必须配合 --date")
     start_at = end_at = ""
