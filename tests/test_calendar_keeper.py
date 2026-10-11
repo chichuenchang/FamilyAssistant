@@ -51,6 +51,14 @@ def _age(db, item_id, minutes=5):
 
 
 class TestCalDb:
+    def test_parse_ref_inverts_ref(self):
+        for kind in ("event", "task"):
+            assert cal_db.parse_ref(cal_db.ref(kind, 12)) == (kind, 12)
+        assert cal_db.parse_ref("#E3") == ("event", 3)
+        assert cal_db.parse_ref("7") == (None, 7)
+        with pytest.raises(ValueError, match="格式"):
+            cal_db.parse_ref("x9")
+
     def test_update_item_marks_pending(self, cal_db_path):
         iid = _add_event(cal_db_path)
         cal_db.mark_synced(iid, uid="ev-1", db_path=cal_db_path)

@@ -72,9 +72,22 @@ def _connect(db_path: Optional[str] = None) -> sqlite3.Connection:
     return conn
 
 
+_REF_PREFIX = {"event": "e", "task": "t"}
+
+
 def ref(kind: str, item_id: int) -> str:
     """对外 id：活动/待办分库各自自增，裸号会撞 → 一律带前缀 e12 / t7。"""
-    return f"{'e' if kind == 'event' else 't'}{item_id}"
+    return f"{_REF_PREFIX[kind]}{item_id}"
+
+
+def parse_ref(raw) -> tuple[Optional[str], int]:
+    """ref 的逆：e12 / t7 / #e12 / 12 → (kind 或 None（裸号）, id)。格式不对抛 ValueError。"""
+    s = str(raw).strip().lstrip("#").lower()
+    kind = next((k for k, p in _REF_PREFIX.items() if s.startswith(p)), None)
+    num = s[1:] if kind else s
+    if not num.isdigit():
+        raise ValueError(f"id 格式不对: {raw}（形如 e12 活动 / t7 待办）")
+    return kind, int(num)
 
 
 def _now() -> str:

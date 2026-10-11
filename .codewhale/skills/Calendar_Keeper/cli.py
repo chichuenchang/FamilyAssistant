@@ -170,20 +170,12 @@ def _fmt_when(item: dict) -> str:
     return f"{day} {st}"
 
 
-_ref = cal_db.ref
-
-
 def _apply_ref(args) -> None:
-    """--id 接受 e12 / t7 / #e12 / 12：前缀定 kind（与 --kind 冲突则报错），args.id 归一成 int。"""
-    raw = str(args.id).strip().lstrip("#").lower()
-    kind = {"e": "event", "t": "task"}.get(raw[:1])
-    if kind:
-        raw = raw[1:]
-    if not raw.isdigit():
-        raise ValueError(f"id 格式不对: {args.id}（形如 e12 活动 / t7 待办）")
+    """--id 接受 e12 / t7 / #e12 / 12（cal_db.parse_ref）：前缀定 kind（与 --kind 冲突则报错），args.id 归一成 int。"""
+    kind, item_id = cal_db.parse_ref(args.id)
     if kind and getattr(args, "kind", None) and args.kind != kind:
         raise ValueError(f"id {args.id} 是{'活动' if kind == 'event' else '待办'}，与 --kind {args.kind} 不符")
-    args.id = int(raw)
+    args.id = item_id
     if kind:
         args.kind = kind
 
@@ -192,7 +184,7 @@ def _fmt_item(item: dict) -> str:
     tag = "活动" if item["kind"] == "event" else "待办"
     state = {"done": "[已完成] ", "cancelled": "[已取消] "}.get(item["status"], "")
     when = _fmt_when(item)
-    parts = [f"#{_ref(item['kind'], item['id'])} [{tag}] {state}{item['title']}"]
+    parts = [f"#{cal_db.ref(item['kind'], item['id'])} [{tag}] {state}{item['title']}"]
     if when:
         parts.append(when)
     if item["location"]:
@@ -234,7 +226,7 @@ def cmd_cal_add(args):
     _mark_backup_dirty()
     _push_quietly(db, args.member, args.kind)
     tag = "活动" if args.kind == "event" else "待办"
-    print(f"已添加{tag} #{_ref(args.kind, item_id)}（{_sync_suffix(item_id, db)}）")
+    print(f"已添加{tag} #{cal_db.ref(args.kind, item_id)}（{_sync_suffix(item_id, db)}）")
     _print_verify(args.member, ["schedule" if args.kind == "event" else "tasks"])
 
 
@@ -288,7 +280,7 @@ def cmd_cal_update(args):
         print("[错误] 无此日程", file=sys.stderr)
         sys.exit(1)
     if item["status"] != "active":
-        print(f"[错误] #{_ref(args.kind, args.id)} 已{'完成' if item['status'] == 'done' else '取消'}，不能编辑",
+        print(f"[错误] #{cal_db.ref(args.kind, args.id)} 已{'完成' if item['status'] == 'done' else '取消'}，不能编辑",
               file=sys.stderr)
         sys.exit(1)
     fields = {k: v for k, v in (("title", args.title), ("location", args.location),
@@ -389,7 +381,7 @@ def cmd_cal_done(args):
     args.kind = None
     _apply_ref(args)
     if args.kind == "event":
-        print(f"[错误] #{_ref('event', args.id)} 是活动，取消请用 cal-delete", file=sys.stderr)
+        print(f"[错误] #{cal_db.ref('event', args.id)} 是活动，取消请用 cal-delete", file=sys.stderr)
         sys.exit(1)
     db = _DB_OVERRIDE or str(_paths.member_store(args.member, "tasks"))
     item = cal_db.get_item(args.id, db_path=db)
@@ -397,12 +389,12 @@ def cmd_cal_done(args):
         print("[错误] 无此日程", file=sys.stderr)
         sys.exit(1)
     if item["kind"] != "task":
-        print(f"[错误] #{_ref('event', args.id)} 是活动，取消请用 cal-delete", file=sys.stderr)
+        print(f"[错误] #{cal_db.ref('event', args.id)} 是活动，取消请用 cal-delete", file=sys.stderr)
         sys.exit(1)
     cal_db.set_status(args.id, "done", db_path=db)
     _mark_backup_dirty()
     _push_quietly(db, args.member, "task")
-    print(f"已完成待办 #{_ref('task', args.id)}（{_sync_suffix(args.id, db)}）")
+    print(f"已完成待办 #{cal_db.ref('task', args.id)}（{_sync_suffix(args.id, db)}）")
     _print_verify(args.member, ["tasks"])
 
 
@@ -430,7 +422,7 @@ def cmd_cal_delete(args):
     cal_db.set_status(args.id, "cancelled", db_path=db)
     _mark_backup_dirty()
     _push_quietly(db, args.member, item["kind"])
-    print(f"已取消日程 #{_ref(item['kind'], args.id)}「{item['title']}」（{_sync_suffix(args.id, db)}）")
+    print(f"已取消日程 #{cal_db.ref(item['kind'], args.id)}「{item['title']}」（{_sync_suffix(args.id, db)}）")
     _print_verify(args.member,
                   ["schedule" if item["kind"] == "event" else "tasks"])
 
