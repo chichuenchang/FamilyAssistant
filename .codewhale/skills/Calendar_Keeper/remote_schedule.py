@@ -62,6 +62,11 @@ def _prov(member: str, kind: str):
     return p
 
 
+def _call(member: str, kind: str, op: str, *args):
+    """provider 的 <op>_event / <op>_task（get/create/update/complete/delete）。"""
+    return getattr(_prov(member, kind), f"{op}_{kind}")(*args)
+
+
 def ref(kind: str, uid: str) -> str:
     return f"{_PREFIX[kind]}:{uid}"
 
@@ -131,8 +136,7 @@ def list_items(member: str, kind: str | None = None, start: str = "", end: str =
 
 def get(member: str, item_ref) -> dict | None:
     kind, uid = parse_ref(item_ref)
-    p = _prov(member, kind)
-    raw = p.get_event(uid) if kind == "event" else p.get_task(uid)
+    raw = _call(member, kind, "get", uid)
     return _item(kind, raw) if raw else None
 
 
@@ -149,11 +153,10 @@ def add(member: str, kind: str, title: str, start_at: str = "", end_at: str = ""
         raise ValueError("title 不能为空")
     if kind == "event" and not start_at:
         raise ValueError("活动必须带日期")
-    p = _prov(member, kind)
     item = {"kind": kind, "title": title.strip(), "start_at": start_at, "end_at": end_at,
             "all_day": int(bool(all_day)), "location": location, "notes": notes,
             "status": "active"}
-    uid = p.create_event(item) if kind == "event" else p.create_task(item)
+    uid = _call(member, kind, "create", item)
     return {"id": ref(kind, uid), **item}
 
 
@@ -162,31 +165,30 @@ def update(member: str, it: dict, fields: dict) -> dict:
     if it["status"] == "done":
         raise ValueError(f"{it['id']} 已完成，不能编辑")
     merged = {**it, **fields}
-    p = _prov(member, it["kind"])
-    uid = parse_ref(it["id"])[1]
-    (p.update_event if it["kind"] == "event" else p.update_task)(uid, merged)
+    kind, uid = parse_ref(it["id"])
+    _call(member, kind, "update", uid, merged)
     return merged
 
 
 def complete(member: str, item_ref) -> dict:
-    if parse_ref(item_ref)[0] == "event":
+    kind, uid = parse_ref(item_ref)
+    if kind == "event":
         raise ValueError(f"{item_ref} 是活动，取消请用 cal-delete")
     it = _must_get(member, item_ref)
-    _prov(member, "task").complete_task(parse_ref(it["id"])[1])
+    _call(member, kind, "complete", uid)
     return {**it, "status": "done"}
 
 
 def delete(member: str, item_ref) -> dict:
     it = _must_get(member, item_ref)
-    p = _prov(member, it["kind"])
-    uid = parse_ref(it["id"])[1]
-    (p.delete_event if it["kind"] == "event" else p.delete_task)(uid)
+    kind, uid = parse_ref(item_ref)
+    _call(member, kind, "delete", uid)
     return it
 
 
 def status(member: str) -> dict[str, bool]:
     out = {}
-    for kind, domain in _DOMAIN.items():
+    for domain in _DOMAIN.values():
         p = provider_for(member, domain)
         out[domain] = bool(p and p.is_configured())
     return out
