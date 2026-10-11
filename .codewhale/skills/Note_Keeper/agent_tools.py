@@ -58,7 +58,7 @@ def tool_edit_worksheet(args):
         return "[错误] ops 至少一项"
     lines = []
     for i, op in enumerate(ops, 1):
-        kind = (op or {}).get("op") if isinstance(op, dict) else None
+        kind = op.get("op") if isinstance(op, dict) else None
         if kind not in _SHEET_OPS:
             lines.append(f"{i}) [错误] 未知 op: {kind}（可选 {'/'.join(_SHEET_OPS)}）")
             continue
