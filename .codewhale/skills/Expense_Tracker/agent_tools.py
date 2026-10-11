@@ -73,30 +73,28 @@ TOOLS = {
 # 写工具：归属由代码注入（防 LLM 冒名记到别人头上）
 MEMBER_LOCKED = {"add_transaction", "add_transactions", "add_deposit", "add_transfer", "add_tax"}
 
+# 一笔账的字段：add_transaction 与 add_transactions 每行共用
+_TX_PROPS = {
+    "type": s("交易类型", enum=TX_TYPES),
+    "amount": num("金额，正数"),
+    "currency": s(f"币种，默认 {BASE_CUR}", enum=CURRENCIES),
+    "date": s("日期 YYYY-MM-DD"),
+    "category": s(f"分类，必须从合法分类中选: {CATS_DESC}"),
+    "desc": s("描述，带商家+时间以区分同日同额，如 午餐"),
+    "notes": s("备注"),
+    "force": boolean("跳过重复检查强制写入（确认是另一笔独立交易、非重复时用）"),
+}
+_TX_REQUIRED = ["type", "amount", "date"]
+
 SCHEMAS = [
-    fn("add_transaction", "记一笔账（支出/收入/投资/储蓄）", {
-        "type": s("交易类型", enum=TX_TYPES),
-        "amount": num("金额，正数"),
-        "currency": s(f"币种，默认 {BASE_CUR}", enum=CURRENCIES),
-        "date": s("日期 YYYY-MM-DD"),
-        "category": s(f"分类，必须从合法分类中选: {CATS_DESC}"),
-        "desc": s("描述，如 午餐"),
-        "notes": s("备注"),
-        "force": boolean("跳过重复检查强制写入（确认是另一笔独立交易、非重复时用）"),
-    }, ["type", "amount", "date"]),
+    fn("add_transaction", "记一笔账（支出/收入/投资/储蓄）", _TX_PROPS, _TX_REQUIRED),
     fn("add_transactions", "一次记多笔账（账单/流水逐笔明细）。每行独立处理，返回逐行结果"
        "（已添加/疑似重复未写/错误），你据此决定哪些行带 force 重记或问用户", {
         "rows": {"type": "array", "description": "每项一笔，字段同 add_transaction",
-                 "items": {"type": "object", "properties": {
-                     "type": s("交易类型", enum=TX_TYPES),
-                     "amount": num("金额，正数"),
-                     "currency": s(f"币种，默认 {BASE_CUR}", enum=CURRENCIES),
-                     "date": s("日期 YYYY-MM-DD"),
-                     "category": s("分类，同 add_transaction"),
-                     "desc": s("描述，带商家+时间以区分同日同额"),
-                     "notes": s("备注"),
-                     "force": boolean("确认是另一笔独立交易时跳过重复检查"),
-                 }, "required": ["type", "amount", "date"]}},
+                 "items": {"type": "object",
+                           # 分类清单已在 add_transaction 给过，行里不再重复（省 token）
+                           "properties": {**_TX_PROPS, "category": s("分类，同 add_transaction")},
+                           "required": _TX_REQUIRED}},
     }, ["rows"]),
     fn("query_ledger", "对家庭账本跑一条只读 SQL（SQLite 方言，单条 SELECT/WITH，写操作会被拒）。"
        "任意统计、对比、趋势、跨表都可自己写；固定视图不够用时用它。最多返回 200 行。"
