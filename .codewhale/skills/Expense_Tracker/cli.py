@@ -28,7 +28,7 @@ import members as members_registry
 import paths as _paths
 
 # 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）
-_BACKUP_WRITE_COMMANDS = {"init", "add", "update", "delete", "deposit-add", "transfer-add",
+_BACKUP_WRITE_COMMANDS = {"init", "add", "add-batch", "update", "delete", "deposit-add", "transfer-add",
                           "tax-add", "fx-set", "member-add", "member-remove"}
 
 
@@ -124,6 +124,46 @@ def cmd_add(args):
             print("未写入。如确认不是重复，请加 --force 强制写入。")
     else:
         print(f"已添加交易 #{tid}: {args.type} {args.amount} {args.currency} — {args.category or '未分类'}")
+
+
+def cmd_add_batch(args):
+    """--rows = JSON 数组，每项同 add 的字段（type/amount/currency/date/category/desc/notes/force）。
+    逐行独立：一行失败不影响其余，每行一条结果，首行汇总。"""
+    import json
+    try:
+        rows = json.loads(args.rows)
+        if not isinstance(rows, list):
+            raise ValueError
+    except ValueError:
+        raise ValueError("--rows 须是 JSON 数组")
+    member = members_registry.require_registered(args.member or "")
+    lines, added, dup, err = [], 0, 0, 0
+    for i, r in enumerate(rows, 1):
+        try:
+            if not isinstance(r, dict):
+                raise ValueError("该行不是对象")
+            tid, dupes = add_transaction(
+                type_=r.get("type", ""), amount=float(r.get("amount") or 0),
+                currency=r.get("currency") or get_base_currency(), date_=r.get("date", ""),
+                category=r.get("category") or "", description=r.get("desc") or "",
+                notes=r.get("notes") or "", skip_dup_check=bool(r.get("force")), member=member)
+        except (AssertionError, ValueError, TypeError) as e:
+            err += 1
+            lines.append(f"{i}) 错误: {e or '字段不合法'}")
+            continue
+        if dupes:
+            dup += 1
+            d = dupes[0]
+            lines.append(f"{i}) 疑似重复，未写入（已有 #{d['id']} [{d['date']}] {d['amount']} "
+                         f"{d['currency']} {d['description']}）；确属另一笔就带 force 重记")
+        else:
+            added += 1
+            lines.append(f"{i}) 已添加 #{tid}: {r.get('date')} {r.get('amount')} "
+                         f"{r.get('currency') or get_base_currency()} {r.get('category') or '未分类'} "
+                         f"{r.get('desc') or ''}".rstrip())
+    print(f"{len(rows)} 行：已添加 {added}，疑似重复未写 {dup}，错误 {err}")
+    for line in lines:
+        print(line)
 
 
 def cmd_list(args):
@@ -399,6 +439,10 @@ def main():
     p.add_argument("--force", action="store_true", help="跳过重复检查，强制写入")
 
     # list
+    p = sub.add_parser("add-batch", help="批量添加交易（逐行结果）")
+    p.add_argument("--rows", required=True, help="JSON 数组，每项字段同 add")
+    p.add_argument("--member", help="归属成员（须已登记）")
+
     p = sub.add_parser("list", help="查询交易")
     p.add_argument("--type")
     p.add_argument("--category")
@@ -536,6 +580,7 @@ def main():
     dispatch = {
         "init": cmd_init,
         "add": cmd_add,
+        "add-batch": cmd_add_batch,
         "list": cmd_list,
         "update": cmd_update,
         "delete": cmd_delete,

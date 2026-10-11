@@ -714,3 +714,41 @@ def test_store_receipt_invalid_date_falls_back_to_today(monkeypatch, tmp_path):
 
     today = _date.today()
     assert rel == f"Family/receipts/{today.strftime('%Y-%m')}/{today.isoformat()}_expense_x.jpg"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# add-batch CLI（账单逐笔一次记完，逐行结果）
+# ═══════════════════════════════════════════════════════════════════════
+
+def _run_expense_cli(tmp_path, *args):
+    import json as _json, os as _os, subprocess, sys as _sys
+    env = {**_os.environ, "DATA_ROOT": str(tmp_path / "data"),
+           "BACKUP_STATE_DIR": str(tmp_path), "PYTHONIOENCODING": "utf-8"}
+    cli = _Path(__file__).resolve().parents[1] / ".codewhale/skills/Expense_Tracker/cli.py"
+    return subprocess.run([_sys.executable, str(cli), *args], capture_output=True, text=True,
+                          encoding="utf-8", env=env)
+
+
+def test_add_batch_reports_each_row(tmp_path):
+    import json as _json
+    rows = [
+        {"type": "expense", "amount": 12, "currency": "USD", "date": "2026-05-01",
+         "category": "餐饮", "desc": "Starbucks 08:10"},
+        {"type": "expense", "amount": 12, "currency": "USD", "date": "2026-05-01",
+         "category": "餐饮", "desc": "Starbucks 08:10"},                   # 同批重复 → 拦下
+        {"type": "expense", "amount": 5, "currency": "XXX", "date": "2026-05-02"},  # 坏币种
+        {"type": "expense", "amount": 12, "currency": "USD", "date": "2026-05-01",
+         "category": "餐饮", "desc": "Starbucks 08:10", "force": True},     # 确属另一笔
+    ]
+    _run_expense_cli(tmp_path, "init")
+    r = _run_expense_cli(tmp_path, "add-batch", "--rows", _json.dumps(rows, ensure_ascii=False))
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert "4 行：已添加 2，疑似重复未写 1，错误 1" in out
+    assert "1) 已添加 #1" in out and "2) 疑似重复" in out
+    assert "3) 错误" in out and "4) 已添加 #2" in out
+
+
+def test_add_batch_rejects_bad_json(tmp_path):
+    r = _run_expense_cli(tmp_path, "add-batch", "--rows", "{not json")
+    assert r.returncode != 0 and "rows" in r.stderr

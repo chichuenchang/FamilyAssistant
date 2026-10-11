@@ -11,7 +11,7 @@ from tool_runtime import fn, s, num, int_, boolean
 ORDER = 10
 
 _FALLBACK = {
-    "add", "list", "summary", "monthly", "update", "delete",
+    "add", "add-batch", "list", "summary", "monthly", "update", "delete",
     "deposit-add", "deposit-list", "tax-add", "tax-list",
     "fx-get", "fx-set",
     "transfer-add", "transfer-list",
@@ -26,8 +26,13 @@ CURRENCIES = rt.CONFIG.get("supported_currencies") or ["USD", "CNY", "CAD"]
 BASE_CUR = rt.CONFIG.get("base_currency") or "USD"
 CATS_DESC = json.dumps(rt.CONFIG.get("categories", {}), ensure_ascii=False)
 
+def tool_add_transactions(args):
+    return rt.run_cli("add-batch", rt.json_arg(args, "rows"))
+
+
 TOOLS = {
     "add_transaction": "add",
+    "add_transactions": tool_add_transactions,
     "list_transactions": "list",
     "get_summary": "summary",
     "get_monthly": "monthly",
@@ -44,7 +49,7 @@ TOOLS = {
 }
 
 # 写工具：归属由代码注入（防 LLM 冒名记到别人头上）
-MEMBER_LOCKED = {"add_transaction", "add_deposit", "add_transfer", "add_tax"}
+MEMBER_LOCKED = {"add_transaction", "add_transactions", "add_deposit", "add_transfer", "add_tax"}
 
 SCHEMAS = [
     fn("add_transaction", "记一笔账（支出/收入/投资/储蓄）", {
@@ -57,6 +62,20 @@ SCHEMAS = [
         "notes": s("备注"),
         "force": boolean("跳过重复检查强制写入（确认是另一笔独立交易、非重复时用）"),
     }, ["type", "amount", "date"]),
+    fn("add_transactions", "一次记多笔账（账单/流水逐笔明细）。每行独立处理，返回逐行结果"
+       "（已添加/疑似重复未写/错误），你据此决定哪些行带 force 重记或问用户", {
+        "rows": {"type": "array", "description": "每项一笔，字段同 add_transaction",
+                 "items": {"type": "object", "properties": {
+                     "type": s("交易类型", enum=TX_TYPES),
+                     "amount": num("金额，正数"),
+                     "currency": s(f"币种，默认 {BASE_CUR}", enum=CURRENCIES),
+                     "date": s("日期 YYYY-MM-DD"),
+                     "category": s("分类，同 add_transaction"),
+                     "desc": s("描述，带商家+时间以区分同日同额"),
+                     "notes": s("备注"),
+                     "force": boolean("确认是另一笔独立交易时跳过重复检查"),
+                 }, "required": ["type", "amount", "date"]}},
+    }, ["rows"]),
     fn("list_transactions", "查询交易流水", {
         "type": s("交易类型", enum=TX_TYPES),
         "category": s("分类"),
