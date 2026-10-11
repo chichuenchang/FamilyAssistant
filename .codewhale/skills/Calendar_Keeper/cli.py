@@ -127,9 +127,7 @@ def _edited_times(item: dict, args) -> dict:
 
 
 def cmd_cal_update(args):
-    item = rs.get(args.member, args.id)
-    if item is None:
-        raise rs.NotFound(args.id)
+    item = rs.must_get(args.member, args.id)
     fields = {k: v for k, v in (("title", args.title), ("location", args.location),
                                 ("notes", args.notes)) if v is not None}
     fields.update(_edited_times(item, args))

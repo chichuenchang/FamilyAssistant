@@ -146,7 +146,7 @@ def get(member: str, item_ref) -> dict | None:
     return _item(kind, raw) if raw else None
 
 
-def _must_get(member: str, item_ref) -> dict:
+def must_get(member: str, item_ref) -> dict:
     it = get(member, item_ref)
     if it is None:
         raise NotFound(item_ref)
@@ -180,13 +180,13 @@ def complete(member: str, item_ref) -> dict:
     kind, uid = parse_ref(item_ref)
     if kind == "event":
         raise ValueError(f"{item_ref} 是活动，取消请用 cal-delete")
-    it = _must_get(member, item_ref)
+    it = must_get(member, item_ref)
     _call(member, kind, "complete", uid)
     return {**it, "status": "done"}
 
 
 def delete(member: str, item_ref) -> dict:
-    it = _must_get(member, item_ref)
+    it = must_get(member, item_ref)
     kind, uid = parse_ref(item_ref)
     _call(member, kind, "delete", uid)
     return it
