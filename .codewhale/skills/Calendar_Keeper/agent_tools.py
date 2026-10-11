@@ -34,29 +34,24 @@ def target_member(args: dict, sender: str) -> str:
     return target
 
 
-def tool_add_event(args):
+def _routed(args: dict) -> dict:
+    """来图不入日程（照片留 inbox，凭 chat_history 来件找回）；member 换成目标成员。"""
     args = dict(args)
-    sender = args.get("member", "")
-    target = target_member(args, sender)
-    src = args.get("source-image", "")
-    if src:                                   # 原始图始终归发送者名下
-        args["source-image"] = rt.relocate_image(src, sender, "schedule")
-    args["member"] = target                   # 活动入目标成员日历
-    return rt.run_cli("cal-add", {**args, "kind": "event"})
+    args.pop("source-image", None)
+    args["member"] = target_member(args, args.get("member", ""))
+    return args
+
+
+def tool_add_event(args):
+    return rt.run_cli("cal-add", {**_routed(args), "kind": "event"})
 
 
 def tool_add_task(args):
     # LLM 用 due 表达截止日，CLI 统一收 --date
-    args = dict(args)
+    args = _routed(args)
     due = args.pop("due", "")
     if due:
         args["date"] = due
-    sender = args.get("member", "")
-    target = target_member(args, sender)
-    src = args.get("source-image", "")
-    if src:
-        args["source-image"] = rt.relocate_image(src, sender, "tasks")
-    args["member"] = target
     return rt.run_cli("cal-add", {**args, "kind": "task"})
 
 
@@ -87,8 +82,6 @@ SCHEMAS = [
         "all-day": boolean("全天活动"),
         "location": s("地点"),
         "notes": s("备注"),
-        "source-image": s("从图片（邀请函/海报/截图）建活动时，传那张已保存图片的路径，"
-                          "留存原始材料；纯文字建活动不填"),
         "for-member": rt.member_param("默认归你（当前成员）自己的日历，即使活动关于别人也是。仅当用户"
                         "明确说\"加到 X 的日历\"时，传该家庭成员名；否则不填"),
     }, ["title", "date"]),
@@ -96,8 +89,6 @@ SCHEMAS = [
         "title": s("待办内容，如 买生日蛋糕"),
         "due": s("截止日期 YYYY-MM-DD（没有就不填）"),
         "notes": s("备注"),
-        "source-image": s("从图片（账单/发票/截图）建待办时，传那张已保存图片的路径，"
-                          "留存原始材料；纯文字建待办不填"),
         "for-member": rt.member_param("默认归你自己的待办清单。仅当用户明确说\"记到 X 的待办\"时，"
                         "传该家庭成员名；否则不填"),
     }, ["title"]),
@@ -191,5 +182,5 @@ from image_gc import image_gc_tick  # noqa: E402
 MESSAGE_TICKS = [calendar_tick, image_gc_tick]
 
 IMAGE_ROUTES = [
-    "邀请函/海报/预约等带日期的安排 → 日程；账单/催款等需跟进办理的 → 待办。都带 source_image 留存原图",
+    "邀请函/海报/预约等带日期的安排 → 日程；账单/催款等需跟进办理的 → 待办。原图留 inbox，日后凭 chat_history 来件找回",
 ]

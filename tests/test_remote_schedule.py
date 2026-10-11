@@ -237,3 +237,93 @@ class TestMutations:
                    lambda: rs.delete("MemberA", "e:nope")):
             with pytest.raises(rs.NotFound):
                 op()
+
+
+# ── CLI（in-process：provider 打桩） ─────────────────────────────
+
+import importlib.util
+import sys
+from pathlib import Path
+
+_CLI = Path(__file__).resolve().parent.parent / ".codewhale" / "skills" / "Calendar_Keeper" / "cli.py"
+
+
+@pytest.fixture
+def cli(fake, monkeypatch, capsys):
+    spec = importlib.util.spec_from_file_location("calkeeper_cli", str(_CLI))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    def run(*argv):
+        monkeypatch.setattr(sys, "argv", ["cli.py", *argv])
+        code = mod.main()
+        out = capsys.readouterr()
+        return code, out.out, out.err
+    return run
+
+
+class TestCli:
+    def test_add_then_list_shows_ref(self, cli, fake):
+        code, out, _ = cli("cal-add", "--member", "MemberA", "--kind", "event", "--title", "游泳课",
+                           "--date", D1, "--start", "14:00", "--end", "15:00", "--location", "泳馆")
+        assert code == 0 and "已添加活动 e:ev1" in out
+        code, out, _ = cli("cal-list", "--member", "MemberA")
+        assert code == 0 and "e:ev1 [活动] 游泳课" in out and "14:00–15:00" in out and "@泳馆" in out
+
+    def test_list_default_includes_undated_tasks(self, cli, fake):
+        cli("cal-add", "--member", "MemberA", "--kind", "task", "--title", "买蛋糕")
+        _, out, _ = cli("cal-list", "--member", "MemberA", "--kind", "task")
+        assert "t:tk1 [待办] 买蛋糕" in out
+
+    def test_list_range_history(self, cli, fake):
+        fake.events["old"] = {"uid": "old", "title": "去年游泳课", "start": "2025-07-06T14:00",
+                              "end": "2025-07-06T15:00", "all_day": False, "location": "", "notes": ""}
+        _, out, _ = cli("cal-list", "--member", "MemberA", "--kind", "event",
+                        "--from", "2025-07-01", "--to", "2025-07-31")
+        assert "去年游泳课" in out and "2025-07-06" in out
+        assert fake.windows[-1][0][:10] == "2025-07-01"
+
+    def test_list_empty_message(self, cli, fake):
+        _, out, _ = cli("cal-list", "--member", "MemberA")
+        assert "（无日程）" in out
+
+    def test_update_moves_date_keeps_time(self, cli, fake):
+        cli("cal-add", "--member", "MemberA", "--kind", "event", "--title", "牙医",
+            "--date", D1, "--start", "09:00", "--end", "10:00")
+        code, out, _ = cli("cal-update", "--member", "MemberA", "--id", "e:ev1", "--date", D3)
+        assert code == 0 and "已更新" in out
+        sent = fake.updated[-1][2]
+        assert sent["start_at"] == f"{D3}T09:00" and sent["end_at"] == f"{D3}T10:00"
+
+    def test_done_and_delete(self, cli, fake):
+        cli("cal-add", "--member", "MemberA", "--kind", "task", "--title", "T")
+        code, out, _ = cli("cal-done", "--member", "MemberA", "--id", "t:tk1")
+        assert code == 0 and "已完成待办 t:tk1" in out and fake.tasks["tk1"]["done"]
+        cli("cal-add", "--member", "MemberA", "--kind", "event", "--title", "E", "--date", D1)
+        code, out, _ = cli("cal-delete", "--member", "MemberA", "--id", "e:ev2")
+        assert code == 0 and "已取消日程 e:ev2「E」" in out and "ev2" not in fake.events
+
+    def test_not_configured_placeholder(self, cli):
+        code, _, err = cli("cal-list", "--member", "MemberB")
+        assert code == 1 and "MemberB 未配置远程日历" in err
+
+    def test_remote_failure_reported(self, cli, fake):
+        fake.fail = True
+        code, _, err = cli("cal-add", "--member", "MemberA", "--kind", "task", "--title", "X")
+        assert code == 1 and "远程日历调用失败: network down" in err
+
+    def test_missing_item(self, cli, fake):
+        code, _, err = cli("cal-delete", "--member", "MemberA", "--id", "e:nope")
+        assert code == 1 and "无此日程" in err
+
+    def test_old_numeric_id_rejected(self, cli, fake):
+        code, _, err = cli("cal-done", "--member", "MemberA", "--id", "t7")
+        assert code == 1 and "id 格式不对" in err
+
+    def test_status(self, cli, fake):
+        code, out, _ = cli("cal-status", "--member", "MemberA")
+        assert code == 0 and "活动: 已配置" in out and "待办: 已配置" in out
+
+    def test_sync_command_gone(self, cli):
+        with pytest.raises(SystemExit):
+            cli("cal-sync", "--member", "MemberA")
