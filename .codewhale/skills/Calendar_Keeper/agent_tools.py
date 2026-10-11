@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import members as _members
+import remote_schedule as _rs
 import tool_runtime as rt
 from tool_runtime import fn, s, int_, boolean
 
@@ -14,7 +15,7 @@ ORDER = 60
 
 COMMANDS = {"cal-add", "cal-list", "cal-update", "cal-done", "cal-delete", "cal-status"}
 
-LOOKAHEAD = int((rt.CONFIG.get("calendar") or {}).get("lookahead_days") or 10)
+LOOKAHEAD = int(_rs.CFG["lookahead_days"])
 
 _ID = "条目 id，照列表原样传（e:… 活动 / t:… 待办）"
 

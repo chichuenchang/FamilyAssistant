@@ -202,7 +202,7 @@ def main() -> int:
 
     p = sub.add_parser("cal-list", help="未来 N 天日程 + 开放待办（--from/--to 查任意历史窗口）")
     member(p)
-    p.add_argument("--days", type=int, default=int(rs.CFG.get("lookahead_days") or 10),
+    p.add_argument("--days", type=int, default=int(rs.CFG["lookahead_days"]),
                    help="窗口天数（默认 config calendar.lookahead_days）")
     p.add_argument("--from", dest="date_from",
                    help="窗口起始日 YYYY-MM-DD（可为过去；省略=不限过去）")

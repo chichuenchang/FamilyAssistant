@@ -120,7 +120,7 @@ def list_items(member: str, kind: str | None = None, start: str = "", end: str =
         p = _prov(member, k)
         if k == "event":
             hi = (date.fromisoformat(end) if end
-                  else date.today() + timedelta(days=int(CFG.get("lookahead_days") or 10)))
+                  else date.today() + timedelta(days=int(CFG["lookahead_days"])))
             raws = p.list_events(_window_iso(date.fromisoformat(start or EPOCH)),
                                  _window_iso(hi, True))
         else:
