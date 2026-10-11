@@ -1,7 +1,7 @@
 """Vision 的 Agent manifest（契约见 Agent_Runtime/skill_registry.py）。
 
 view_image：把数据目录内的图片连同问题发给识图模型（llm_client.vision_models()），返回文字回答。
-与主模型解耦：用户 /model 切到不识图的模型也能看图。路径限 data_root 内（同 OCR，防本地文件外泄）。
+路径限 data_root 内（同 OCR，防本地文件外泄）。
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def tool_view_image(args):
     question = (args.get("question") or "").strip() or "详细描述这张图的内容。"
     msgs = [{"role": "system", "content": _SYSTEM},
             {"role": "user", "content": [{"type": "text", "text": question}, *parts]}]
-    for model in models:   # 一个识图模型挂了换下一个（chat 自带 fallback 不识图，关掉）
+    for model in models:   # 一个识图模型挂了换下一个
         out = _llm.chat(msgs, None, model, EFFORT, fallback=False)
         answer = ((out or {}).get("content") or "").strip()
         if answer:
