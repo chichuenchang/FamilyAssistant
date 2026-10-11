@@ -1,7 +1,7 @@
 """
 Calendar Keeper — Google Calendar + Google Tasks Provider（用户私有实现）
 
-实现 calendar_sync 调用契约（下方 8 个函数），零外部依赖（仅标准库 urllib，
+实现 calendar_sync 调用契约（下方 8 个必需 + 2 个可选函数），零外部依赖（仅标准库 urllib，
 Calendar REST API v3 + Tasks REST API v1 + OAuth refresh token）。
 
 认证（全部走环境变量，不进代码、不进日志、不进 git）：
@@ -28,9 +28,11 @@ Calendar REST API v3 + Tasks REST API v1 + OAuth refresh token）。
     create_event(item) -> uid        item 取 cal_db 行字段
                                      （title/start_at/end_at/all_day/location/notes）
     delete_event(uid)                远端不存在视为成功
+    update_event(uid, item)          可选；缺省时本地编辑只留本地（引擎 getattr 探测）
     list_tasks() -> list[dict]       @default 清单全部待办（含已完成）。dict:
                                      {uid, title, due('YYYY-MM-DD'或''), notes, done}
     create_task(item) -> uid         item 取 cal_db 行字段（title/start_at=截止日/notes）
+    update_task(uid, item)           可选，同 update_event
     complete_task(uid)               远端不存在视为成功
     delete_task(uid)                 远端不存在视为成功
     网络/API 错误抛 RuntimeError（引擎记录并在下一轮重试）。
@@ -176,31 +178,45 @@ def list_events(time_min_iso: str, time_max_iso: str) -> list[dict]:
     return out
 
 
-def create_event(item: dict) -> str:
-    """新建活动，返回远端 uid。item 字段同 cal_db 行。"""
-    cal = urllib.parse.quote(_calendar_id())
+def _event_body(item: dict) -> dict:
+    """cal_db 行 → Calendar API 活动体。start/end 显式把另一种时间键置 null：
+    PATCH 是合并语义，全天↔定时互转时不清掉旧键会两者并存被拒。"""
     start_at = item.get("start_at") or ""
-    body: dict = {"summary": item.get("title") or "(无标题)"}
-    if item.get("location"):
-        body["location"] = item["location"]
-    if item.get("notes"):
-        body["description"] = item["notes"]
+    body: dict = {"summary": item.get("title") or "(无标题)",
+                  "location": item.get("location") or "",
+                  "description": item.get("notes") or ""}
     if item.get("all_day") or len(start_at) == 10:
         day = start_at[:10]
         next_day = (datetime.strptime(day, "%Y-%m-%d")
                     + timedelta(days=1)).strftime("%Y-%m-%d")
-        body["start"] = {"date": day}
-        body["end"] = {"date": next_day}  # 全天活动 end 独占
+        body["start"] = {"date": day, "dateTime": None}
+        body["end"] = {"date": next_day, "dateTime": None}  # 全天活动 end 独占
     else:
         off = _tz_offset()
         end_at = item.get("end_at") or ""
         if not end_at:
             end_at = (datetime.strptime(start_at, "%Y-%m-%dT%H:%M")
                       + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
-        body["start"] = {"dateTime": f"{start_at}:00{off}"}
-        body["end"] = {"dateTime": f"{end_at}:00{off}"}
+        body["start"] = {"dateTime": f"{start_at}:00{off}", "date": None}
+        body["end"] = {"dateTime": f"{end_at}:00{off}", "date": None}
+    return body
+
+
+def create_event(item: dict) -> str:
+    """新建活动，返回远端 uid。item 字段同 cal_db 行。"""
+    cal = urllib.parse.quote(_calendar_id())
+    body = {k: v for k, v in _event_body(item).items() if v != ""}
+    for k in ("start", "end"):
+        body[k] = {kk: vv for kk, vv in body[k].items() if vv is not None}
     r = _api("POST", f"{CAL_API}/calendars/{cal}/events", body)
     return r.get("id", "")
+
+
+def update_event(uid: str, item: dict) -> None:
+    """按本地行覆盖远端活动的标题/时间/地点/备注（PATCH，参会人等其他字段不动）。"""
+    cal = urllib.parse.quote(_calendar_id())
+    _api("PATCH", f"{CAL_API}/calendars/{cal}/events/{urllib.parse.quote(uid)}",
+         _event_body(item))
 
 
 def delete_event(uid: str) -> None:
@@ -253,6 +269,14 @@ def create_task(item: dict) -> str:
         body["due"] = f"{due}T00:00:00.000Z"  # Tasks API 只认日期部分
     r = _api("POST", _tasks_url(), body)
     return r.get("id", "")
+
+
+def update_task(uid: str, item: dict) -> None:
+    """按本地行覆盖远端待办的标题/备注/截止日（截止日空 = 清除）。"""
+    due = (item.get("start_at") or "")[:10]
+    _api("PATCH", _tasks_url(uid), {
+        "title": item.get("title") or "(无标题)", "notes": item.get("notes") or "",
+        "due": f"{due}T00:00:00.000Z" if due else None})
 
 
 def complete_task(uid: str) -> None:

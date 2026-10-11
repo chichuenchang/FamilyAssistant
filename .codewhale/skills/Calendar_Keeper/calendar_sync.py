@@ -185,7 +185,10 @@ def push_pending(db_path=None, prov=None, kind: str | None = None):
                         p.delete_task(row["uid"])
                 cal_db.mark_synced(row["id"], db_path=db_path)
             else:
-                # active 且已有 uid（无编辑路径）：标记已同步，避免卡死在待推送
+                # active 且已有 uid = 本地编辑 → 推远端；provider 不支持 update_* 则只标已同步
+                upd = getattr(p, "update_event" if row["kind"] == "event" else "update_task", None)
+                if upd is not None:
+                    upd(row["uid"], row)
                 cal_db.mark_synced(row["id"], db_path=db_path)
             pushed += 1
         except Exception as e:

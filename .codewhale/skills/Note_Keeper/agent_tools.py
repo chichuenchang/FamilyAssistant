@@ -16,7 +16,7 @@ _log = logging.getLogger("familyassist.agent")
 
 ORDER = 50
 
-NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
+NOTE_COMMANDS = {"note-add", "note-list", "note-search", "note-edit", "note-delete", "note-pin"}
 SHEET_COMMANDS = {"sheet-create", "sheet-list", "sheet-show", "sheet-set",
                   "sheet-unset", "sheet-row-add", "sheet-row-edit",
                   "sheet-row-delete", "sheet-rename", "sheet-pin", "sheet-delete"}
@@ -54,6 +54,7 @@ TOOLS = {
     "save_note": tool_save_note,
     "list_notes": "note-list",
     "search_notes": "note-search",
+    "update_note": "note-edit",
     "delete_note": "note-delete",
     "pin_note": "note-pin",
     "create_worksheet": "sheet-create",
@@ -70,7 +71,7 @@ TOOLS = {
     "visualize_data": tool_visualize_data,
 }
 
-NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "delete_note", "pin_note"}
+NOTE_TOOLS = {"save_note", "search_notes", "list_notes", "update_note", "delete_note", "pin_note"}
 SHEET_TOOLS = {"create_worksheet", "list_worksheets", "show_worksheet",
                "set_worksheet_field", "unset_worksheet_field", "add_worksheet_row",
                "edit_worksheet_row", "delete_worksheet_row", "rename_worksheet",
@@ -91,6 +92,10 @@ SCHEMAS = [
     fn("search_notes", "按关键词搜索本人的备忘（用户问\"我记过什么\"\"XX是什么来着\"）", {
         "keyword": s("关键词，匹配备忘内容"),
     }, ["keyword"]),
+    fn("update_note", "改写本人的一条备忘（信息变了/补充时用，别删了重记）", {
+        "id": int_("备忘 id"),
+        "content": s("新的完整内容（整条覆盖，要保留的旧内容一并写上）"),
+    }, ["id", "content"]),
     fn("delete_note", "删除本人的一条备忘", {
         "id": int_("备忘 id"),
     }, ["id"]),

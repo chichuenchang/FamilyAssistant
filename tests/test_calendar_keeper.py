@@ -51,6 +51,17 @@ def _age(db, item_id, minutes=5):
 
 
 class TestCalDb:
+    def test_update_item_marks_pending(self, cal_db_path):
+        iid = _add_event(cal_db_path)
+        cal_db.mark_synced(iid, uid="ev-1", db_path=cal_db_path)
+        row = cal_db.update_item(iid, {"title": "新标题", "location": "泳馆"},
+                                 db_path=cal_db_path)
+        assert row["title"] == "新标题" and row["location"] == "泳馆"
+        assert row["synced"] == 0 and row["uid"] == "ev-1"
+        assert cal_db.update_item(999, {"title": "x"}, db_path=cal_db_path) is None
+        with pytest.raises(ValueError):
+            cal_db.update_item(iid, {"member": "别人"}, db_path=cal_db_path)
+
     def test_add_and_get_roundtrip(self, cal_db_path):
         iid = _add_event(cal_db_path, location="泳馆", notes="带泳镜")
         item = cal_db.get_item(iid, db_path=cal_db_path)
@@ -317,6 +328,21 @@ def _items_resp(*items, next_token=None):
 
 
 class TestGoogleProvider:
+    def test_update_event_patches_and_clears_other_time_kind(self, gcal):
+        fake, calls = gcal
+        fake.responses = [(200, b"{}"), (200, b"{}")]
+        calendar_provider.update_event("ev1", {"title": "游泳课", "start_at": "2026-06-13T14:00",
+                                               "end_at": "", "all_day": 0,
+                                               "location": "", "notes": "带泳镜"})
+        assert calls[0]["method"] == "PATCH" and calls[0]["url"].endswith("/events/ev1")
+        body = json.loads(calls[0]["data"])
+        assert body["start"] == {"dateTime": "2026-06-13T14:00:00+00:00", "date": None}
+        assert body["end"]["dateTime"] == "2026-06-13T15:00:00+00:00"
+        assert body["description"] == "带泳镜" and body["location"] == ""
+        calendar_provider.update_task("t1", {"title": "买蛋糕", "start_at": "", "notes": ""})
+        body = json.loads(calls[1]["data"])
+        assert calls[1]["method"] == "PATCH" and body["due"] is None
+
     def test_is_configured_requires_all_env(self, monkeypatch):
         for var in ("GCAL_CLIENT_ID", "GCAL_CLIENT_SECRET", "GCAL_REFRESH_TOKEN"):
             monkeypatch.delenv(var, raising=False)
@@ -479,6 +505,7 @@ class FakeProvider:
         self.created = []         # (kind, item)
         self.completed = []       # task uids
         self.deleted = []         # (kind, uid)
+        self.updated = []         # (kind, uid, item)
         self.fail_create = False
         self.fail_list = False
         self._uid_seq = 0
@@ -520,6 +547,12 @@ class FakeProvider:
     def delete_task(self, uid):
         self.deleted.append(("task", uid))
 
+    def update_event(self, uid, item):
+        self.updated.append(("event", uid, dict(item)))
+
+    def update_task(self, uid, item):
+        self.updated.append(("task", uid, dict(item)))
+
 
 @pytest.fixture
 def engine(monkeypatch, tmp_path, cal_db_path):
@@ -560,6 +593,30 @@ class TestSyncEngine:
         assert ("event", "ev-9") in fake.deleted
         assert fake.created == []           # 从未上云的取消项不会先创建再删除
         assert cal_db.pending(db_path=db) == []
+
+    def test_push_pending_edit_patches_remote(self, engine):
+        fake, db = engine
+        ev = _add_event(db)
+        cal_db.mark_synced(ev, uid="ev-9", db_path=db)
+        cal_db.update_item(ev, {"title": "改名了"}, db_path=db)
+        pushed, errors = calendar_sync.push_pending(db_path=db)
+        assert errors == [] and pushed == 1
+        assert fake.updated[0][:2] == ("event", "ev-9")
+        assert fake.updated[0][2]["title"] == "改名了"
+        assert fake.created == [] and cal_db.pending(db_path=db) == []
+
+    def test_push_pending_edit_without_update_support(self, engine):
+        fake, db = engine
+        del FakeProvider.update_event        # 旧契约 provider：只标已同步，不炸
+        try:
+            ev = _add_event(db)
+            cal_db.mark_synced(ev, uid="ev-9", db_path=db)
+            cal_db.update_item(ev, {"title": "改名了"}, db_path=db)
+            pushed, errors = calendar_sync.push_pending(db_path=db)
+            assert errors == [] and cal_db.pending(db_path=db) == []
+        finally:
+            FakeProvider.update_event = lambda self, uid, item: self.updated.append(
+                ("event", uid, dict(item)))
 
     def test_push_failure_isolated_per_row(self, engine):
         fake, db = engine
@@ -1030,6 +1087,37 @@ def _cli(args, db, tmp):
 
 
 class TestCli:
+    def test_cal_update_shifts_event_and_keeps_times(self, cal_db_path, tmp_path):
+        _cli(["cal-add", "--member", "MemberA", "--kind", "event", "--title", "游泳课",
+              "--date", D1, "--start", "14:00", "--end", "15:00"], cal_db_path, tmp_path)
+        r = _cli(["cal-update", "--member", "MemberA", "--kind", "event", "--id", "1",
+                  "--date", D3, "--location", "新泳馆"], cal_db_path, tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert "已更新" in r.stdout
+        item = cal_db.get_item(1, db_path=cal_db_path)
+        assert item["start_at"] == f"{D3}T14:00" and item["end_at"] == f"{D3}T15:00"
+        assert item["location"] == "新泳馆" and item["title"] == "游泳课"
+        r = _cli(["cal-update", "--member", "MemberA", "--kind", "event", "--id", "1",
+                  "--start", "09:00", "--end", "10:30"], cal_db_path, tmp_path)
+        item = cal_db.get_item(1, db_path=cal_db_path)
+        assert item["start_at"] == f"{D3}T09:00" and item["end_at"] == f"{D3}T10:30"
+        r = _cli(["cal-update", "--member", "MemberA", "--kind", "event", "--id", "1",
+                  "--all-day"], cal_db_path, tmp_path)
+        item = cal_db.get_item(1, db_path=cal_db_path)
+        assert item["start_at"] == D3 and item["end_at"] == "" and item["all_day"] == 1
+
+    def test_cal_update_task_due_and_rejects_cancelled(self, cal_db_path, tmp_path):
+        _cli(["cal-add", "--member", "MemberA", "--kind", "task", "--title", "买蛋糕"],
+             cal_db_path, tmp_path)
+        r = _cli(["cal-update", "--member", "MemberA", "--kind", "task", "--id", "1",
+                  "--date", D3], cal_db_path, tmp_path)
+        assert r.returncode == 0, r.stderr
+        assert cal_db.get_item(1, db_path=cal_db_path)["start_at"] == D3
+        _cli(["cal-delete", "--member", "MemberA", "--id", "1"], cal_db_path, tmp_path)
+        r = _cli(["cal-update", "--member", "MemberA", "--kind", "task", "--id", "1",
+                  "--title", "x"], cal_db_path, tmp_path)
+        assert r.returncode != 0 and "已取消" in r.stderr
+
     def test_cal_add_event_and_list(self, cal_db_path, tmp_path):
         r = _cli(["cal-add", "--member", "MemberA", "--kind", "event",
                   "--title", "游泳课", "--date", D1, "--start", "14:00",

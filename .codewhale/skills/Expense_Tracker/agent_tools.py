@@ -11,7 +11,7 @@ from tool_runtime import fn, s, num, int_, boolean
 ORDER = 10
 
 _FALLBACK = {
-    "add", "list", "summary", "monthly", "delete",
+    "add", "list", "summary", "monthly", "update", "delete",
     "deposit-add", "deposit-list", "tax-add", "tax-list",
     "fx-get", "fx-set",
     "transfer-add", "transfer-list",
@@ -39,6 +39,7 @@ TOOLS = {
     "list_tax": "tax-list",
     "add_transfer": "transfer-add",
     "list_transfers": "transfer-list",
+    "update_transaction": "update",
     "delete_transaction": "delete",
 }
 
@@ -142,6 +143,16 @@ SCHEMAS = [
         "trace": s("模糊匹配 描述/银行/账号/备注"),
         "limit": int_("最多返回条数"),
     }),
+    fn("update_transaction", "修改一条交易：只传要改的字段，其余不动（记错金额/日期/分类/描述时用，别删了重记）", {
+        "id": int_("交易 id"),
+        "type": s("交易类型", enum=TX_TYPES),
+        "amount": num("金额，正数"),
+        "currency": s("币种", enum=CURRENCIES),
+        "date": s("日期 YYYY-MM-DD"),
+        "category": s("分类（须属于改后的交易类型）"),
+        "desc": s("描述"),
+        "notes": s("备注"),
+    }, ["id"]),
     fn("delete_transaction", "删除一条交易", {
         "id": int_("交易 id"),
     }, ["id"]),

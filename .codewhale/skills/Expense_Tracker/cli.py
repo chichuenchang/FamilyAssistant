@@ -28,7 +28,7 @@ import members as members_registry
 import paths as _paths
 
 # 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）
-_BACKUP_WRITE_COMMANDS = {"init", "add", "delete", "deposit-add", "transfer-add",
+_BACKUP_WRITE_COMMANDS = {"init", "add", "update", "delete", "deposit-add", "transfer-add",
                           "tax-add", "fx-set", "member-add", "member-remove"}
 
 
@@ -38,6 +38,7 @@ from db import (
     init_db,
     add_transaction,
     get_transactions,
+    update_transaction,
     delete_transaction,
     summarize_by_category,
     monthly_summary,
@@ -141,6 +142,17 @@ def cmd_list(args):
     for r in rows:
         print(f"#{r['id']} [{r['date']}] {r['type']} {r['amount']} {r['currency']} "
               f"| {r['category'] or '-'} | {r['description']}")
+
+
+def cmd_update(args):
+    row = update_transaction(args.id, type_=args.type, amount=args.amount,
+                             currency=args.currency, date_=args.date, category=args.category,
+                             description=args.desc, notes=args.notes)
+    if row is None:
+        print(f"未找到 交易 #{args.id}")
+        return
+    print(f"已更新交易 #{row['id']}: [{row['date']}] {row['type']} {row['amount']} {row['currency']} "
+          f"| {row['category'] or '-'} | {row['description']}")
 
 
 def cmd_delete(args):
@@ -397,6 +409,16 @@ def main():
     p.add_argument("--member", help="按成员过滤")
 
     # delete
+    p = sub.add_parser("update", help="修改交易（只改给了的字段）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--type", choices=list(TRANSACTION_TYPES))
+    p.add_argument("--amount", type=float)
+    p.add_argument("--currency")
+    p.add_argument("--date", help="YYYY-MM-DD")
+    p.add_argument("--category")
+    p.add_argument("--desc")
+    p.add_argument("--notes")
+
     p = sub.add_parser("delete", help="删除交易")
     p.add_argument("--id", type=int, required=True)
 
@@ -515,6 +537,7 @@ def main():
         "init": cmd_init,
         "add": cmd_add,
         "list": cmd_list,
+        "update": cmd_update,
         "delete": cmd_delete,
         "summary": cmd_summary,
         "monthly": cmd_monthly,

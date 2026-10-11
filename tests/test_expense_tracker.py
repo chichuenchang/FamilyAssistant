@@ -260,6 +260,30 @@ def test_delete_transaction(db):
     assert dbm.delete_transaction(99999, db_path=db) is False
 
 
+def test_update_transaction_changes_only_given_fields(db):
+    txn_id, _ = dbm.add_transaction(
+        type_="expense", amount=5, currency="CNY", date_="2025-06-01",
+        category="餐饮", description="午饭", member="爸爸", db_path=db)
+    row = dbm.update_transaction(txn_id, amount=7.5, description="午餐", db_path=db)
+    assert row["amount"] == 7.5 and row["description"] == "午餐"
+    assert row["category"] == "餐饮" and row["member"] == "爸爸"
+    assert dbm.update_transaction(99999, amount=1, db_path=db) is None
+
+
+def test_update_transaction_validates_final_values(db):
+    txn_id, _ = dbm.add_transaction(
+        type_="expense", amount=5, currency="CNY", date_="2025-06-01",
+        category="餐饮", db_path=db)
+    with pytest.raises(ValueError):
+        dbm.update_transaction(txn_id, type_="income", db_path=db)   # 餐饮 不是 income 分类
+    with pytest.raises(ValueError):
+        dbm.update_transaction(txn_id, currency="EUR", db_path=db)
+    with pytest.raises(ValueError):
+        dbm.update_transaction(txn_id, amount=0, db_path=db)
+    row = dbm.update_transaction(txn_id, type_="income", category="收入", db_path=db)
+    assert row["type"] == "income" and row["category"] == "收入"
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # 10. summarize_by_category
 # ═══════════════════════════════════════════════════════════════════════

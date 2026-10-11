@@ -106,6 +106,7 @@
       "list",
       "summary",
       "monthly",
+      "update",
       "delete",
       "deposit-add",
       "deposit-list",

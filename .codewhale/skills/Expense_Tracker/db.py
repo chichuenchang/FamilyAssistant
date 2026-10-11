@@ -189,6 +189,49 @@ def get_transactions(
     return [dict(r) for r in rows]
 
 
+def update_transaction(
+    txn_id: int,
+    type_: Optional[str] = None,
+    amount: Optional[float] = None,
+    currency: Optional[str] = None,
+    date_: Optional[str] = None,
+    category: Optional[str] = None,
+    description: Optional[str] = None,
+    notes: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> Optional[dict]:
+    """只改给了的字段（None = 不动），按改后的值校验。返回改后整行；id 不存在返回 None。
+    归属 member 不可改（写入归属由代码注入）。"""
+    conn = get_db(db_path)
+    try:
+        row = conn.execute("SELECT * FROM transactions WHERE id = ?", (txn_id,)).fetchone()
+        if row is None:
+            return None
+        new = dict(row)
+        given = {"type": type_, "amount": amount, "currency": currency, "date": date_,
+                 "category": category, "description": description, "notes": notes}
+        new.update({k: v for k, v in given.items() if v is not None})
+        if new["type"] not in TRANSACTION_TYPES:
+            raise ValueError(f"无效类型 '{new['type']}'。可选: {', '.join(TRANSACTION_TYPES)}")
+        if not new["amount"] or new["amount"] <= 0:
+            raise ValueError("金额必须为正数")
+        allowed_cur = get_supported_currencies()
+        if new["currency"] not in allowed_cur:
+            raise ValueError(f"不支持的币种 '{new['currency']}'。可选: {', '.join(allowed_cur)}")
+        if new["category"] and new["category"] not in get_categories(new["type"]):
+            raise ValueError(f"无效分类 '{new['category']}'（类型 {new['type']}）。"
+                             f"可选: {', '.join(get_categories(new['type']))}")
+        conn.execute(
+            """UPDATE transactions SET type=?, amount=?, currency=?, date=?, category=?,
+               description=?, notes=? WHERE id = ?""",
+            (new["type"], new["amount"], new["currency"], new["date"], new["category"],
+             new["description"], new["notes"], txn_id))
+        conn.commit()
+        return new
+    finally:
+        conn.close()
+
+
 def delete_transaction(txn_id: int, db_path: Optional[str] = None) -> bool:
     """删除一条交易。"""
     conn = get_db(db_path)

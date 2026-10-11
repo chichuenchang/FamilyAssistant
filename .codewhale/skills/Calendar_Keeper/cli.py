@@ -220,6 +220,61 @@ def cmd_cal_add(args):
     _print_verify(args.member, ["schedule" if args.kind == "event" else "tasks"])
 
 
+def _shift(iso: str, days: int) -> str:
+    """ISO 日期/日期时间整体平移 days 天（保留时间部分）。"""
+    if not iso or not days:
+        return iso
+    return (date.fromisoformat(iso[:10]) + timedelta(days=days)).isoformat() + iso[10:]
+
+
+def _edited_times(item: dict, args) -> dict:
+    """由 --date/--start/--end/--all-day 算出新的 start_at/end_at/all_day（只返回有变的）。
+    只给 --date = 整条平移到该日（保留时刻与跨天时长）；待办的 --date = 截止日。"""
+    if item["kind"] == "task":
+        return {"start_at": args.date} if args.date else {}
+    start, end = item["start_at"], item["end_at"]
+    day = args.date or start[:10]
+    if args.date and start:
+        delta = (date.fromisoformat(args.date) - date.fromisoformat(start[:10])).days
+        start, end = _shift(start, delta), _shift(end, delta)
+    if args.all_day:
+        return {"start_at": day, "end_at": "", "all_day": 1}
+    if args.start:
+        start = f"{day}T{args.start}"
+        end = f"{day}T{args.end}" if args.end else ""
+    elif args.end:
+        if len(start) <= 10:
+            raise ValueError("全天活动改 --end 前先给 --start")
+        end = f"{day}T{args.end}"
+    out = {"start_at": start, "end_at": end}
+    if len(start) > 10:
+        out["all_day"] = 0
+    return out
+
+
+def cmd_cal_update(args):
+    _validate_member(args.member, required=True)
+    db = _store_for(args.member, args.kind)
+    item = cal_db.get_item(args.id, db_path=db)
+    if item is None or item["kind"] != args.kind:
+        print("[错误] 无此日程", file=sys.stderr)
+        sys.exit(1)
+    if item["status"] != "active":
+        print(f"[错误] #{args.id} 已{'完成' if item['status'] == 'done' else '取消'}，不能编辑",
+              file=sys.stderr)
+        sys.exit(1)
+    fields = {k: v for k, v in (("title", args.title), ("location", args.location),
+                                ("notes", args.notes)) if v is not None}
+    fields.update(_edited_times(item, args))
+    if not fields:
+        raise ValueError("没给要改的字段")
+    cal_db.update_item(args.id, fields, db_path=db)
+    _mark_backup_dirty()
+    _push_quietly(db, args.member, args.kind)
+    print(f"已更新 {_fmt_item(cal_db.get_item(args.id, db_path=db))}（{_sync_suffix(args.id, db)}）")
+    _print_verify(args.member, ["schedule" if args.kind == "event" else "tasks"])
+
+
 _EPOCH = "1970-01-01"        # --from 省略时的"不限过去"下界（Google 接受，实为拉全部历史）
 
 
@@ -417,6 +472,18 @@ def main() -> int:
     p.add_argument("--member", help="按创建成员过滤")
     p.add_argument("--all", action="store_true", help="包含已完成/已取消")
 
+    p = sub.add_parser("cal-update", help="编辑一条活动/待办（只改给了的字段，同步到远端）")
+    p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
+    p.add_argument("--id", type=int, required=True, help="日程 ID")
+    p.add_argument("--kind", required=True, choices=["event", "task"])
+    p.add_argument("--title")
+    p.add_argument("--date", help="新日期 YYYY-MM-DD（活动整条平移；待办=截止日）")
+    p.add_argument("--start", help="新开始时间 HH:MM")
+    p.add_argument("--end", help="新结束时间 HH:MM")
+    p.add_argument("--all-day", action="store_true", help="改成全天")
+    p.add_argument("--location")
+    p.add_argument("--notes")
+
     p = sub.add_parser("cal-done", help="完成一条待办")
     p.add_argument("--member", default="", help="归属成员（无 CAL_DB_PATH 覆盖时定位分库）")
     p.add_argument("--id", type=int, required=True, help="日程 ID")
@@ -438,6 +505,7 @@ def main() -> int:
     dispatch = {
         "cal-add": cmd_cal_add,
         "cal-list": cmd_cal_list,
+        "cal-update": cmd_cal_update,
         "cal-done": cmd_cal_done,
         "cal-delete": cmd_cal_delete,
         "cal-sync": cmd_cal_sync,

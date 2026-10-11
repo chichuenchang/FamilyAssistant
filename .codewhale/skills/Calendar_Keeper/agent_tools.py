@@ -18,7 +18,7 @@ _log = logging.getLogger("familyassist.agent")
 
 ORDER = 60
 
-COMMANDS = {"cal-add", "cal-list", "cal-done", "cal-delete", "cal-sync", "cal-status"}
+COMMANDS = {"cal-add", "cal-list", "cal-update", "cal-done", "cal-delete", "cal-sync", "cal-status"}
 
 LOOKAHEAD = int((rt.CONFIG.get("calendar") or {}).get("lookahead_days") or 10)
 
@@ -64,6 +64,7 @@ TOOLS = {
     "add_event": tool_add_event,
     "add_task": tool_add_task,
     "list_schedule": "cal-list",
+    "update_schedule_item": "cal-update",
     "complete_task": "cal-done",
     "remove_schedule_item": "cal-delete",
     "sync_calendar": "cal-sync",
@@ -105,6 +106,18 @@ SCHEMAS = [
         "kind": s("只看活动或待办", enum=["event", "task"]),
         "all": boolean("包含已完成/已取消。数历史次数时通常要传 true，否则取消掉的那几次看不到"),
     }),
+    fn("update_schedule_item", "编辑一条活动/待办，只传要改的字段（同步到远程，远端参会人等不受影响）。"
+       "改期、改时间、补地点备注、合并重复时用，别删了重加", {
+        "id": int_("日程 id"),
+        "kind": s("活动(event)或待办(task)，按列表里该条的 [活动]/[待办]", enum=["event", "task"]),
+        "title": s("新标题"),
+        "date": s("新日期 YYYY-MM-DD：活动整条平移到该日（保留时刻）；待办 = 新截止日"),
+        "start": s("新开始时间 HH:MM（活动）"),
+        "end": s("新结束时间 HH:MM（活动）"),
+        "all-day": boolean("改成全天活动"),
+        "location": s("新地点"),
+        "notes": s("新备注（覆盖）"),
+    }, ["id", "kind"]),
     fn("complete_task", "标记一条待办完成（同步到远程）", {
         "id": int_("日程 id"),
     }, ["id"]),
@@ -122,7 +135,7 @@ PROMPT_SECTIONS = [
 - 上下文注入你未来{LOOKAHEAD}天的日程快照，可能过期；用户问安排/待办时**必须调 list_schedule 再回答**（它先与远端核对）。不要主动播报日程
 - **历史日程一样能查**：list_schedule 的 from 可以是任意过去日期；数次数带 all。绝不能说"查不到历史"
 - 要加/记一件事 → 这一轮就调写工具，拿到返回再回复；没调工具 = 没做，绝不假装已完成
-- 避免重复：加之前对照已有日程（同一天同一件事，措辞不同也算）。跳过、替换或合并由你判断，但必须告诉用户每条怎么处理的；替换会丢用户可能在意的信息时先问
+- 避免重复：加之前对照已有日程（同一天同一件事，措辞不同也算）。跳过、更新已有条目或合并由你判断，但必须告诉用户每条怎么处理的；替换会丢用户可能在意的信息时先问
 - 归属默认发送者，即使内容关于别人；用户明确说"加到 X 的日历"才用 for-member
 - 结果末尾"校验"行是本地↔远端核对结论：不一致/校验失败必须告诉用户""",
 ]

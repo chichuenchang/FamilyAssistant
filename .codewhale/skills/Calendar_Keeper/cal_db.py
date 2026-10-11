@@ -7,7 +7,7 @@ Family Assistant — Calendar Keeper 数据库操作层
 
 日程按成员私有（每成员独立 schedule/tasks 库，只见自己的）；member 记录归属。
 远程日历是日程数据的事实源，本表是缓存 + 离线缓冲：
-    synced=0  本地有改动待推送（新建/完成/取消）
+    synced=0  本地有改动待推送（新建/编辑/完成/取消）
     synced=1  与远端一致；拉取时远端字段直接覆盖（remote wins）
     origin    local=本地创建 / remote=从远端拉取
 同步引擎（calendar_sync.py）是唯一推/拉调用方。
@@ -222,6 +222,30 @@ def set_status(
     ok = cur.rowcount > 0
     conn.close()
     return ok
+
+
+_EDITABLE = ("title", "start_at", "end_at", "all_day", "location", "notes")
+
+
+def update_item(item_id: int, fields: dict,
+                db_path: Optional[str] = None) -> Optional[dict]:
+    """本地编辑（只改 fields 里给的远端字段）→ synced=0 待推送。返回改后整行；无此 id 返回 None。
+    归属/状态/uid 不经此改（状态走 set_status）。"""
+    bad = set(fields) - set(_EDITABLE)
+    if bad:
+        raise ValueError(f"不可编辑字段: {', '.join(sorted(bad))}")
+    if "title" in fields and not (fields["title"] or "").strip():
+        raise ValueError("title 不能为空")
+    if not fields:
+        return get_item(item_id, db_path=db_path)
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    conn = _connect(db_path)
+    cur = conn.execute(
+        f"UPDATE schedule_items SET {sets}, synced = 0, updated_at = ? WHERE id = ?",
+        (*fields.values(), _now(), item_id))
+    conn.commit()
+    conn.close()
+    return get_item(item_id, db_path=db_path) if cur.rowcount else None
 
 
 def clear_source_image(item_id: int, db_path: Optional[str] = None) -> bool:

@@ -150,6 +150,9 @@ python .codewhale/skills/Expense_Tracker/cli.py add --type expense --amount 45.5
 python .codewhale/skills/Expense_Tracker/cli.py list --type expense --start 2026-05-01 --end 2026-05-31
 python .codewhale/skills/Expense_Tracker/cli.py list --category 餐饮 --currency USD
 
+# 修改（只改给了的字段；归属不可改）
+python .codewhale/skills/Expense_Tracker/cli.py update --id 3 --amount 7.5 --desc 午餐
+
 # 删除
 python .codewhale/skills/Expense_Tracker/cli.py delete --id 3
 
