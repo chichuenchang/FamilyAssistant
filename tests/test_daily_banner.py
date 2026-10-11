@@ -207,6 +207,18 @@ class TestGather:
         d = banner.gather("Alex", DAY, CFG)
         assert d.stale and d.events == [] and d.tasks == []
 
+    def test_one_domain_failing_keeps_the_other(self, data, monkeypatch):
+        _ev("游泳课", "2026-09-17T14:00")
+        monkeypatch.setattr(data, "list_tasks", lambda: (_ for _ in ()).throw(RuntimeError("down")))
+        d = banner.gather("Alex", DAY, CFG)
+        assert d.stale and d.events == ["09-17 周四 14:00 游泳课"] and d.tasks == []
+
+    def test_only_events_configured_is_not_stale(self, data, monkeypatch):
+        _ev("游泳课", "2026-09-17T14:00")
+        monkeypatch.setattr(rs, "provider_for", lambda m, d: data if d == "schedule" else None)
+        d = banner.gather("Alex", DAY, CFG)
+        assert not d.stale and len(d.events) == 1 and d.tasks == []
+
     def test_no_remote_calendar_is_not_stale(self, data, monkeypatch):
         monkeypatch.setattr(rs, "provider_for", lambda m, d: None)
         d = banner.gather("Alex", DAY, CFG)

@@ -130,17 +130,25 @@ def _task_line(r: dict, today: str) -> str:
 
 
 def _calendar(member: str, day: date, end: date) -> tuple[list[dict], list[dict], bool]:
-    """远程日历取 (窗口内活动, 全部开放待办, 是否失败)。未配远程日历 = 空，不算失败。"""
+    """远程日历取 (窗口内活动, 全部开放待办, 是否失败)。两域各自取：未配 = 空不算失败；
+    失败 = 空并标失败，另一域照用。"""
     import remote_schedule as rs
-    try:
-        events = rs.list_items(member, "event", day.isoformat(), end.isoformat())
-        tasks = rs.list_items(member, "task", undated=True)
-        return events, tasks, False
-    except rs.NotConfigured:
-        return [], [], False
-    except Exception:
-        _log.exception("早报取远程日历失败: %s", member)
-        return [], [], True
+    failed = False
+
+    def fetch(kind: str, **kw) -> list[dict]:
+        nonlocal failed
+        try:
+            return rs.list_items(member, kind, **kw)
+        except rs.NotConfigured:
+            return []
+        except Exception:
+            _log.exception("早报取远程日历失败: %s/%s", member, kind)
+            failed = True
+            return []
+
+    events = fetch("event", start=day.isoformat(), end=end.isoformat())
+    tasks = fetch("task", undated=True)
+    return events, tasks, failed
 
 
 def _mail(member: str) -> list[str] | None:
