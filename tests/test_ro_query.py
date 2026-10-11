@@ -64,3 +64,11 @@ def test_query_ledger_tool_reads_family_ledger(ledger, monkeypatch):
     monkeypatch.setattr(models, "DB_PATH", ledger)
     tool = skill_registry.load().tool_map["query_ledger"]
     assert tool({"sql": "SELECT COUNT(*) AS n FROM transactions"}) == "n\n3"
+
+
+def test_query_ledger_schema_lists_every_table_column():
+    import skill_registry
+    desc = next(t["function"]["description"] for t in skill_registry.load().schemas
+                if t["function"]["name"] == "query_ledger")
+    assert "transactions(id, type, amount, currency, category, description, date," in desc
+    assert "transfers(id, from_desc" in desc

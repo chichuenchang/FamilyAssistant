@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import re
+import sqlite3
 
 
 import models
@@ -30,13 +30,17 @@ CATS_DESC = json.dumps(rt.CONFIG.get("categories", {}), ensure_ascii=False)
 
 
 def _table_columns(schema: str) -> str:
-    """models.SCHEMA → "表(列, 列…)"（schema 单一事实来源，不手抄）。"""
-    out = []
-    for name, body in re.findall(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", schema, re.S):
-        cols = [ln.split()[0] for ln in body.splitlines()
-                if ln.strip() and not ln.strip().startswith("--")]
-        out.append(f"{name}({', '.join(cols)})")
-    return "；".join(out)
+    """models.SCHEMA → "表(列, 列…)"（schema 单一事实来源，不手抄；内存库建一遍再读，不解析 DDL 文本）。"""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(schema)
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+        return "；".join(
+            f"{t}({', '.join(r[1] for r in conn.execute(f'PRAGMA table_info({t})'))})"
+            for t in tables)
+    finally:
+        conn.close()
 
 
 def tool_query_ledger(args):
