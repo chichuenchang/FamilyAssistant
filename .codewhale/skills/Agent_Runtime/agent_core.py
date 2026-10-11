@@ -457,6 +457,7 @@ class Agent:
                 except (json.JSONDecodeError, KeyError):
                     targs = {}
                 fn = _TOOL_MAP.get(name)
+                targs = rt.to_manifest_keys(name, targs)
                 targs = _apply_member(name, targs, member)
                 targs = _apply_context(name, targs, self.channel, user, member,
                                        turn_id=turn_id, text=said)

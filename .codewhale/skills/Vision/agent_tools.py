@@ -70,7 +70,7 @@ SCHEMAS = [
        "版面，或 OCR 读不出东西的图。返回文字回答。只收图片（jpeg/png/gif/webp），PDF 用 ocr_read。"
        "多张图一起问（对比、找差异）就放进同一次调用", {
         "paths": {"type": "array", "items": {"type": "string"},
-                  "description": f"图片路径（材料路径或之前存下的 source-image），1–{MAX_IMAGES} 张"},
+                  "description": f"图片路径（材料路径或之前存下的 source_image），1–{MAX_IMAGES} 张"},
         "question": s("要识图模型回答的具体问题，带上用户关心的点（如“这是什么植物，叶子有没有病斑”）；"
                       "留空 = 详细描述"),
     }, ["paths"]),

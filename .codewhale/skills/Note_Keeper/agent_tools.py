@@ -240,5 +240,5 @@ def worksheets_context(member: str, db_path: str | None = None) -> str:
 CONTEXT_FNS = [notes_context, worksheets_context]
 
 IMAGE_ROUTES = [
-    "其他有信息价值的杂项（路由器标签/课表/名片/告示等）→ 备忘：整理成一两句关键信息，带 source-image",
+    "其他有信息价值的杂项（路由器标签/课表/名片/告示等）→ 备忘：整理成一两句关键信息，带 source_image",
 ]

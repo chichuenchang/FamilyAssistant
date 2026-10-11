@@ -137,12 +137,29 @@ def ro_query(db_path: str, sql: str, max_rows: int = 200) -> str:
 
 # ── schema 小助手（OpenAI function calling 格式） ──────────────
 
+# 工具名 → {模型看到的 snake_case 参数名: manifest/CLI 用的 kebab 名}。
+# 模型只见一种命名风格；agent_core 派发前经 to_manifest_keys 换回，manifest 代码不变。
+KEBAB_KEYS: dict[str, dict[str, str]] = {}
+
+
 def fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
+    aliases = {k.replace("-", "_"): k for k in props if "-" in k}
+    if aliases:
+        KEBAB_KEYS[name] = aliases
+    props = {k.replace("-", "_"): v for k, v in props.items()}
+    required = [r.replace("-", "_") for r in required or []]
     return {"type": "function", "function": {
         "name": name, "description": desc,
-        "parameters": {"type": "object", "properties": props,
-                       "required": required or []},
+        "parameters": {"type": "object", "properties": props, "required": required},
     }}
+
+
+def to_manifest_keys(tool: str, args: dict) -> dict:
+    """模型给的 snake_case 参数名 → 该工具 manifest 声明时的原名（kebab）。"""
+    aliases = KEBAB_KEYS.get(tool)
+    if not aliases:
+        return args
+    return {aliases.get(k, k): v for k, v in args.items()}
 
 
 def s(desc: str, **kw) -> dict:
