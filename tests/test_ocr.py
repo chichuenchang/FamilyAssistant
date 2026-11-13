@@ -148,9 +148,41 @@ def test_ocr_read_returns_plain_text(monkeypatch, tmp_path):
     assert _ocr_at.tool_ocr_read({"path": str(f)}) == "合同第一页"
 
 
+def test_ocr_failure_names_the_other_route(monkeypatch):
+    img = _paths.data_root() / "blank.jpg"
+    pdf = _paths.data_root() / "blank.pdf"
+    img.write_bytes(b"jpg")
+    pdf.write_bytes(b"%PDF")
+    monkeypatch.setattr(ocr, "is_available", lambda: False)
+    assert "view_image" in _ocr_at.tool_ocr_read({"path": str(img)})
+    assert "没有别的读法" in _ocr_at.tool_ocr_read({"path": str(pdf)})
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda p: "")
+    out = _ocr_at.tool_ocr_read({"path": str(img)})
+    assert out.startswith("[未识别到文字]") and "view_image" in out
+
+
 def test_ocr_read_refuses_path_outside_data_root(tmp_path):
     out = _ocr_at.tool_ocr_read({"path": str(tmp_path / "secret.png")})
     assert out.startswith("[错误]")
+    assert _ocr_at.tool_ocr_read({"path": "../secret.png"}).startswith("[错误]")
+
+
+def test_ocr_tools_report_moved_file_as_missing():
+    # 存档里的来件路径可能已归档移走：报不存在，不能说"读不出文字"
+    for tool in (_ocr_at.tool_ocr_image, _ocr_at.tool_ocr_read, _ocr_at.tool_ocr_read_pages):
+        assert "不存在" in tool({"path": "moved.pdf"})
+
+
+def test_ocr_read_accepts_data_relative_path(monkeypatch, tmp_path):
+    # 库里存的 source-image 是 data 相对路径（Jim/notes/...），不能按项目根解析
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    (tmp_path / "Jim").mkdir()
+    (tmp_path / "Jim" / "scan.jpg").write_bytes(b"jpg")
+    monkeypatch.setattr(ocr, "is_available", lambda: True)
+    monkeypatch.setattr(ocr, "ocr_image", lambda p: p)
+    out = _ocr_at.tool_ocr_read({"path": "Jim/scan.jpg"})
+    assert out == str((_paths.data_root() / "Jim" / "scan.jpg").resolve())
 
 
 def test_ocr_read_registered_and_untrusted():
@@ -306,10 +338,12 @@ def test_ocr_read_flags_pdf_over_20_pages(monkeypatch):
     monkeypatch.setattr(ocr, "is_available", lambda: True)
     monkeypatch.setattr(ocr, "ocr_image", lambda p: "前文")
     out = _ocr_at.tool_ocr_read({"path": str(f)})
-    assert out == "前文\n[仅读了前 20 页，共 25 页；用户要后面内容再用 ocr_read_pages]"
+    assert out == "前文\n[仅读了前 20 页，共 25 页；要后面内容就带 first_page/last_page 再调 ocr_read]"
 
 
-def test_ocr_read_pages_registered_and_untrusted():
-    names = {t["function"]["name"] for t in ac.TOOL_SCHEMAS}
-    assert "ocr_read_pages" in names and "ocr_read_pages" in ac._TOOL_MAP
-    assert "ocr_read_pages" in ac._UNTRUSTED_TOOLS
+def test_ocr_read_with_pages_routes_to_page_reader(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(_ocr_at, "tool_ocr_read_pages", lambda a: seen.setdefault("p", a) and "页段")
+    assert ac._TOOL_MAP["ocr_read"]({"path": "x.pdf", "first_page": 21}) == "页段"
+    assert "ocr_read_pages" not in ac._TOOL_MAP
+    assert "ocr_read" in ac._UNTRUSTED_TOOLS

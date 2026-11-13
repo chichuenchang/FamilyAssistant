@@ -51,6 +51,7 @@ reply = agent.handle_media(paths, text, user="<频道内唯一id>", member="<成
 ```
 
 - 来件（图片/PDF）不回复：`Transport.on_media` 按 `user` 静默攒着，下条文字到了才连同全部来件调 `handle_media`，交出即不再攒，出错放回；攒超 `idle_clear_hours` 作废。Telegram 附言只配自带来件（相册按 `media_group_id` 收齐，可跨两批轮询），不领攒着的；下载失败/不支持的文件附言丢弃；文字明显与来件无关时 LLM 按提示让来件作废。命令（`agent_core.is_command`）不带来件：`/clear` 连来件一起清，`/model` `/effort` 时来件继续等。下载失败仍提示重发。攒件在内存，进程重启即丢。
+- `handle_media` 不预先 OCR/看图：只给路径，LLM 自选 `ocr_read`/`ocr_image`/`view_image`（[Vision](../Vision/SKILL.md)）或都不调。代价：问图内容多一轮工具调用。
 
 - `user` = 该频道内用户/会话的唯一标识（微信 `from_user`、Telegram `chat_id`）。Agent 按 `user` 隔离对话历史，互不串台。
 - `member` = `members.resolve(频道, 频道id)` 解析出的成员名。**必传**：为空时 Agent 直接返回空串（防御纵深，未注册来源不碰 LLM）。
@@ -73,8 +74,10 @@ reply = agent.handle_media(paths, text, user="<频道内唯一id>", member="<成
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode test
 # 微信：扫码登录并运行
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run
-# 微信：换账号重新扫码
+# 微信：默认账号重新扫码
 python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --relogin
+# 微信：新增账号 mom（无凭据即扫码；--relogin 重扫）；运行总加载全部账号
+python .codewhale/skills/Agent_Runtime/wechat_ilink.py --mode run --account mom
 
 # Telegram：设好 token 直接跑
 python .codewhale/skills/Agent_Runtime/telegram_bot.py
@@ -86,8 +89,11 @@ python .codewhale/skills/Agent_Runtime/telegram_bot.py --no-debug
 
 微信凭据加密存于 `data/.state/wechat_creds.json`；Telegram 去重 offset 存于 `data/.state/.telegram_offset`。
 微信引用反查缓存存于 `data/.state/wechat_recent_msgs.json`（近期入站消息）与
-`data/.state/wechat_sent_msgs.json`（bot 出站回复，按时间戳匹配）——均为运行时状态，不进备份。
+`data/.state/wechat_sent_msgs.json`（bot 出站回复+后台推送，按收件人+时间戳匹配）——均为运行时状态，不进备份。
 微信 Bot 启动时抢单实例锁（绑定 `127.0.0.1:47831`）：双开会导致每条消息处理/回复两次，后启动的进程直接退出。
+多账号：一个 ClawBot 账号一份凭据 `wechat_creds_<标签>.json`（默认账号仍 `wechat_creds.json`），一进程全挂。
+每账号一条轮询线程，消息排队主线程串行分发（Agent/缓存非线程安全）；后台节拍全进程一份，推送找该用户发过消息的 bot（context_token 存在各 bot 内存）。
+`bot.run()` 不可用：装 signal 处理器只许主线程。新账号成员 id 取 `忽略未注册来源 <id>` 日志行，跨账号是否同 id 未验证。
 
 ## 新增频道
 
@@ -141,7 +147,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 `knowking_jobs.py` 接入 Agent，**不改 KnowKing 仓库**。
 
 - **触发**：仅当用户**显式说出 `knowking` / `kk` / `懂王`**（如"用 knowking 查大家怎么看 X"）。
-  普通查事实/新闻仍走 `anysearch_search`/`web_search`。工具描述与 system prompt 双重约束。
+  普通查事实/新闻仍走 `web_search`。工具描述与 system prompt 双重约束。
 - **后台 + 推送模型**（`kk ask` 耗时数分钟，同步会卡死会话）：`knowking` 工具调
   `knowking_jobs.submit()` → 落盘 `running` 任务 + 起守护线程跑 `uv run kk ask` → 立即返回
   "已开始"给用户；出报告后由传输层轮询 `poll_and_deliver(send_fn, channel)` 把报告推回**发起人**
@@ -166,9 +172,9 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 ## 安全
 
 - **命令白名单**：`config.json` 的 `wechat.allowed_commands` 是**记账族**命令白名单（`agent_core.ALLOWED_COMMANDS` 读取，config 缺失才回退内置集）；改它只影响记账族。备忘(note-*)/工作表(sheet-*)/图表(chart-render)/日程(cal-*)/文档(doc-* 除 doc-remove)/备份(backup-now/status/verify)/联网(web-*/any-*) 是 Agent 核心能力，`agent_core` 在装载时**恒定并入** `ALLOWED_COMMANDS`，不受本白名单增删影响。成员增删、doc-remove、backup-restore/reorg 等敏感命令既不在白名单也不并入 → Agent 调不到，仅限本机。
-- **磁盘布局**：所有数据落盘位置经 `Agent_Runtime/paths.py`（单一事实来源）。`config.json` `data_root`(默认 data)+`family_dir_name`(默认 Family) 定根。家庭共享在 `data/Family/`（ledger.db 财务、documents.db 文档+成员资料、receipts/、documents/）；成员私有在 `data/<成员>/`（notes/、schedule/、tasks/、inbox/、pdf_edits/）。来图先存发送者 `data/<成员>/inbox/`，分类后搬到对应位置。`agent_core.RECEIPTS_DIR`/`DOCUMENTS_DIR` 由 `paths` 计算，不硬编码。
+- **磁盘布局**：所有数据落盘位置经 `Agent_Runtime/paths.py`（单一事实来源）。`config.json` `data_root`(默认 data)+`family_dir_name`(默认 Family) 定根。家庭共享在 `data/Family/`（ledger.db 财务、documents.db 文档+成员资料、receipts/、documents/）；成员私有在 `data/<成员>/`（notes/、inbox/、pdf_edits/）。来图存发送者 `data/<成员>/inbox/`；备忘图搬 notes/，其余留 inbox。`agent_core.RECEIPTS_DIR`/`DOCUMENTS_DIR` 由 `paths` 计算，不硬编码。
 - **成员注册表**：`data/members.json`（git 不跟踪 — 姓名/频道 id 属隐私）只在本机用 `Expense_Tracker/cli.py member-add/list/remove` 管理（成员命令挂在记账 CLI 上，非本目录；不在命令白名单内，Agent 调不到）。未注册频道 id 一律静默丢弃；写入类账目的归属由 `agent_core` 注入解析出的成员名，LLM 给的 member 一律剥离（防冒名）。
-- **外部内容围栏**：非本地来源文本经 `tool_runtime.fence` 才进 LLM——manifest `UNTRUSTED_TOOLS` 的工具结果、来件 OCR、引用消息、日程注入块的数据行。软防线：降低注入命中率，不限制损害；备忘/工作表/成员资料（本地库）未套。
+- **外部内容围栏**：非本地来源文本经 `tool_runtime.fence` 才进 LLM——manifest `UNTRUSTED_TOOLS` 的工具结果、来件 OCR、引用消息。软防线：降低注入命中率，不限制损害；备忘/工作表/成员资料（本地库）未套。
 - **凭据本地化**：所有频道凭据（微信扫码态、Telegram token）只存本地，不外传。
 - Telegram token 走环境变量，不写进仓库。
 

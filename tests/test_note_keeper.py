@@ -180,8 +180,24 @@ class TestPinnedAndRecent:
         r = note_db.list_notes("爸爸", db_path=note_db_path)[0]
         assert r["pinned"] == 0
 
+    def test_update_note_owner_only(self, note_db_path):
+        nid = note_db.add_note("爸爸", "车位 B2-118", db_path=note_db_path)
+        assert note_db.update_note("爸爸", nid, "车位 B3-007", db_path=note_db_path)
+        assert note_db.list_notes("爸爸", db_path=note_db_path)[0]["content"] == "车位 B3-007"
+        assert not note_db.update_note("妈妈", nid, "x", db_path=note_db_path)
+        with pytest.raises(ValueError):
+            note_db.update_note("爸爸", nid, " ", db_path=note_db_path)
+
 
 class TestCli:
+    def test_note_edit(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("NOTE_DB_PATH", str(tmp_path / "cli.db"))
+        _run_cli("note-add", "--member", "爸爸", "--content", "车位 B2-118")
+        r = _run_cli("note-edit", "--member", "爸爸", "--id", "1", "--content", "车位 B3-007")
+        assert r.returncode == 0 and "已更新备忘 #1" in r.stdout
+        r = _run_cli("note-edit", "--member", "爸爸", "--id", "9", "--content", "x")
+        assert r.returncode != 0
+
     def test_note_add_and_list(self, tmp_path, monkeypatch):
         monkeypatch.setenv("NOTE_DB_PATH", str(tmp_path / "cli.db"))
         r = _run_cli("note-add", "--member", "爸爸", "--content", "车位 B2-118")
@@ -329,7 +345,7 @@ class TestAgentRegistration:
 
     def test_note_tools_registered(self):
         import agent_core
-        names = {"save_note", "list_notes", "search_notes", "delete_note", "pin_note"}
+        names = {"save_note", "list_notes", "search_notes", "update_note", "delete_note", "pin_note"}
         schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
         assert names <= schema_names
         assert names <= set(agent_core._TOOL_MAP)
@@ -337,7 +353,7 @@ class TestAgentRegistration:
 
     def test_note_commands_allowed_and_routed(self):
         import agent_core
-        cmds = {"note-add", "note-list", "note-search", "note-delete", "note-pin"}
+        cmds = {"note-add", "note-list", "note-search", "note-edit", "note-delete", "note-pin"}
         assert cmds <= agent_core.ALLOWED_COMMANDS
         for c in cmds:
             assert agent_core._cli_path(c).parent.name == "Note_Keeper"

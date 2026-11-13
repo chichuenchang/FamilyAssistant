@@ -11,4 +11,4 @@ Start-Process powershell -WorkingDirectory "C:\Users\slimj\PROJECTS\FamilyAssist
 
 Child re-reads `HKCU:\Environment` (except `Path`): `Start-Process` copies caller env, stale after `setx`.
 
-Extra flags from `$ARGUMENTS` (e.g. `--relogin`, `--no-debug`) pass through to `wechat_ilink.py`. Reply one line: launched, or exact error.
+Extra flags from `$ARGUMENTS` (e.g. `--relogin`, `--account <label>`, `--no-debug`) pass through to `wechat_ilink.py`. Reply one line: launched, or exact error.

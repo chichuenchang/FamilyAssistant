@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from anysearch import AVAILABLE_DOMAINS
 from tool_runtime import fn, s, int_
 
 ORDER = 80
@@ -23,19 +24,17 @@ MEMBER_LOCKED = {"fetch_images"}   # 下载落到发送者自己的目录
 IMAGE_TOOLS = {"fetch_images"}     # 返回每行一个图片路径，传输层逐张发
 
 SCHEMAS = [
-    fn("anysearch_search", "高质量实时联网搜索（AnySearch）。比 web_search 更准，"
-       "查最新资讯/事实/股价/学术/健康等首选。需要垂直领域结构化结果时（finance/health/"
-       "academic/travel/code 等），先用 anysearch_subdomains 拿到 sub_domain 再传 domain/sub_domain。"
-       "返回结果原文，你据此用中文总结报告", {
+    fn("anysearch_search", "AnySearch 垂直领域结构化搜索（finance/health/academic/travel/code 等）。"
+       "普通联网查询用 web_search（已含 AnySearch 中英双语），只有需要垂直结构化结果时才用它："
+       "先用 anysearch_subdomains 拿到 sub_domain 再传 domain/sub_domain。"
+       "返回结果原文，你据此用用户的语言总结", {
         "query": s("搜索关键词/问题"),
-        "domain": s("垂直领域（可选）", enum=[
-            "general", "resource", "social_media", "finance", "academic", "legal",
-            "health", "business", "security", "ip", "code", "energy",
-            "environment", "agriculture", "travel", "film", "gaming"]),
+        "domain": s("垂直领域（必填；通用查询走 web_search）",
+                    enum=[d for d in AVAILABLE_DOMAINS if d != "general"]),
         "sub_domain": s("子域路由键（如 finance.quote），垂直搜索时配 domain；先用 anysearch_subdomains 发现"),
         "sub_domain_params": s("子域参数，key=value,key2=value2 或 JSON（schema 见 anysearch_subdomains 输出）"),
         "max_results": int_("返回结果数 1-10（默认 10）"),
-    }, ["query"]),
+    }, ["query", "domain"]),
     fn("anysearch_extract", "抓取并提取一个网页链接的全文（AnySearch，markdown）。"
        "用户发链接让看/总结、或搜索摘要不够需读全文时用。返回正文，你据此总结", {
         "url": s("网页 URL"),
@@ -52,6 +51,6 @@ SCHEMAS = [
 ]
 
 PROMPT_RULES = [
-    '用户问"最新新闻/外面在发生什么/帮我查一下X" → 优先 anysearch_search（更准，可选 domain 垂直搜索：finance/health/academic/travel/code 等，先 anysearch_subdomains 发现子域）；web_search 为备选。发链接让看/总结文章 → anysearch_extract（备选 web_read）；发 YouTube 链接让总结 → youtube_summarize。工具返回抓取到的原文，你据此用中文总结报告；抓取失败就如实说没查到，别编造',
-    '用户要看某样东西的图片/照片/长什么样 → fetch_images（图片自动发出，不要在回复里贴链接或路径）',
+    "联网工具返回抓取到的原文，你据此总结；一个来源失败可换另一个，都没查到就如实说，别编造",
+    "发图/发文件类工具（fetch_images、visualize_data、edit_pdf、send_file 等）结果自动送达用户，回复里不贴链接或路径",
 ]

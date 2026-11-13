@@ -1,13 +1,11 @@
 """
-Calendar Keeper — 陈旧来图清理（活动/待办的 source_image）
+Calendar Keeper — 陈旧来图清理（按月目录年龄）
 
-删除 N 年前活动/待办的原始来图文件并清空 source_image 链接（保留行本身）。
-陈旧判定：行的 start_at（活动日 / 待办截止日）前 10 位；为空回退 created_at。
-该日期 < 今天 − retention_years → 删文件 + cal_db.clear_source_image。
-图片非远端字段（Google 无此概念）→ 清理不触发同步。
+来图不再挂到日程条目上：留在 data/<成员>/inbox/YYYY-MM/（旧版搬到 schedule/、tasks/ 月目录的也算）。
+删除早于「今天 − image_retention_years」所在月的 YYYY-MM 目录。notes/ 不动（备忘库链接其图）。
 
 参数（config.json `calendar`）：
-    image_retention_years      默认 2（保留近 N 年的来图）
+    image_retention_years      默认 1
     image_prune_interval_days  默认 30（节流：约每月扫一次）
 
 传输层在已注册成员消息到达后调 image_gc_tick()（节流 + 静默，永不抛）。
@@ -18,18 +16,21 @@ Calendar Keeper — 陈旧来图清理（活动/待办的 source_image）
 from __future__ import annotations
 
 import os
+import re
+import shutil
 from datetime import date, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
-import cal_db
 import members as _members
 import paths as _paths
 import jsonfile
 
 _STATE_NAME = ".image_gc_state.json"
-_FALLBACK = {"image_retention_years": 2, "image_prune_interval_days": 30}
+_FALLBACK = {"image_retention_years": 1, "image_prune_interval_days": 30}
+_AREAS = ("inbox", "schedule", "tasks")
+_MONTH = re.compile(r"\d{4}-\d{2}")
 
 
 def _cfg() -> dict:
@@ -58,42 +59,30 @@ def _years_ago(d: date, years: int) -> date:
         return d.replace(year=d.year - years, day=28)
 
 
-def _item_date(row: dict) -> str:
-    """陈旧判定用日期：start_at 前 10 位，空则回退 created_at 前 10 位。"""
-    return (row["start_at"] or "")[:10] or (row["created_at"] or "")[:10]
-
-
 def prune_stale_images(now: datetime | None = None,
                        retention_years: int | None = None,
                        *, dry_run: bool = False) -> dict:
-    """扫所有成员的 schedule/tasks 库，清陈旧来图。返回报告（不抛异常）。"""
+    """删各成员 _AREAS 下早于截止月的 YYYY-MM 目录。返回报告。"""
     now = now or datetime.now()
     ry = int(retention_years if retention_years is not None
              else _cfg()["image_retention_years"])
-    cutoff = _years_ago(now.date(), ry).isoformat()
-    report = {"cleared": 0, "files_deleted": 0, "members": {}, "dry_run": dry_run}
+    cutoff = _years_ago(now.date(), ry).strftime("%Y-%m")
+    report = {"dirs_deleted": 0, "files_deleted": 0, "members": {}, "dry_run": dry_run}
     for member in _members.member_names():
-        for domain in ("schedule", "tasks"):
-            db = _paths.member_store(member, domain)
-            if not db.exists():                  # 该成员该域无库 → 不创建空库
+        root = _paths.member_dir(member)
+        for area in _AREAS:
+            base = root / area
+            if not base.is_dir():
                 continue
-            db = str(db)
-            for row in cal_db.items_with_image(db_path=db):
-                d = _item_date(row)
-                if not d or d >= cutoff:          # 无日期或还在保留期 → 留
+            for d in sorted(base.iterdir()):
+                if not (d.is_dir() and _MONTH.fullmatch(d.name) and d.name < cutoff):
                     continue
-                report["cleared"] += 1
+                report["dirs_deleted"] += 1
                 report["members"][member] = report["members"].get(member, 0) + 1
                 if dry_run:
                     continue
-                try:
-                    f = _paths.resolve_rel(row["source_image"])
-                    if f.exists():
-                        f.unlink()
-                        report["files_deleted"] += 1
-                except Exception:
-                    pass
-                cal_db.clear_source_image(row["id"], db_path=db)
+                report["files_deleted"] += sum(1 for f in d.rglob("*") if f.is_file())
+                shutil.rmtree(d, ignore_errors=True)
     return report
 
 

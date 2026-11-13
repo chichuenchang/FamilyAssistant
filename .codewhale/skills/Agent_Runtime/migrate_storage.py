@@ -5,19 +5,14 @@ Family Assistant — 一次性存储迁移：单库 data/ledger.db → 分库布
     data/Family/ledger.db               收支/定期/划转/报税/汇率（家庭共享，当前多为空；
                                         文档表随后由 doc_db 再迁去 data/Family/documents.db）
     data/<owner>/notes/notes.db         备忘按 member 分库（图片搬进该成员 notes/YYYY-MM/）
-    data/<owner>/schedule/schedule.db   活动（kind=event）
-    data/<owner>/tasks/tasks.db         待办（kind=task）
 
-日历归属：所有 schedule_items 都活在日历 owner（唯一配置了 schedule 同步的成员，
-当前=Alex）的远程账号上 → 全部迁到 owner 分库，**保留 uid/synced/origin/status/时间戳**，
-避免下一轮同步把它们当新行重推（远端重复）。未登记的旧 member 标签（如"爸爸"）改为 owner；
-已登记标签（如 Robin）保留。owner 两个域 .sync_state.json 以旧全局状态播种。
+旧 schedule_items 不迁：日程直连远程日历（Calendar_Keeper/remote_schedule.py），远端即全量。
 
-幂等：schedule 按 uid、notes 按 (member,content,created_at) 跳过已存在行；family 表
+幂等：notes 按 (member,content,created_at) 跳过已存在行；family 表
 已有行则跳过整表。成功后把旧库改名 <name>.premigration.bak（即快照）。
 
-用法：python .codewhale/skills/Agent_Runtime/migrate_storage.py [--old P] [--state P] [--dry-run]
-默认 old=data/ledger.db，state=data/.calendar_state.json。**运行前请停掉机器人。**
+用法：python .codewhale/skills/Agent_Runtime/migrate_storage.py [--old P] [--dry-run]
+默认 old=data/ledger.db。**运行前请停掉机器人。**
 """
 
 from __future__ import annotations
@@ -42,12 +37,9 @@ ROOT = HERE.parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
 import paths
-import jsonfile
-import members
 import models as expense_models      # Expense SCHEMA（transactions/deposits/transfers/tax/fx）
 import doc_models                     # Document SCHEMA（documents）
 import note_db
-import cal_db
 
 _FAMILY_TABLES = ["transactions", "deposits", "transfers", "tax_filings",
                   "exchange_rates", "documents"]
@@ -79,14 +71,6 @@ def _insert(conn, table: str, d: dict) -> None:
 def _exists(conn, table: str, where: str, params: list) -> bool:
     return conn.execute(f"SELECT 1 FROM {table} WHERE {where} LIMIT 1",
                         params).fetchone() is not None
-
-
-def _detect_calendar_owner() -> str | None:
-    """日历 owner = 唯一配置了 schedule 远程同步的成员（当前 = Alex）。"""
-    for m in members.member_names():
-        if members.sync_pref(m, "schedule"):
-            return m
-    return None
 
 
 def _rewrite_path(rel: str) -> str:
@@ -121,15 +105,11 @@ def _move_note_image(src: str, member: str, report: dict) -> str:
         return src
 
 
-def migrate(old_ledger, old_state=None, *, calendar_owner: str | None = None,
-            dry_run: bool = False) -> dict:
+def migrate(old_ledger, *, dry_run: bool = False) -> dict:
     old_ledger = Path(old_ledger)
     if not old_ledger.exists():
         raise FileNotFoundError(old_ledger)
-    if calendar_owner is None:
-        calendar_owner = _detect_calendar_owner()
-    report = {"calendar_owner": calendar_owner, "family": {}, "notes": {},
-              "events": 0, "tasks": 0, "images_moved": 0, "snapshot": None,
+    report = {"family": {}, "notes": {}, "images_moved": 0, "snapshot": None,
               "dry_run": dry_run}
 
     old = sqlite3.connect(str(old_ledger))
@@ -181,37 +161,6 @@ def migrate(old_ledger, old_state=None, *, calendar_owner: str | None = None,
             nconn.commit()
         nconn.close()
 
-    # ── schedule_items → owner，按 kind 分库（保留 uid/synced/origin/状态/时间戳） ──
-    registered = set(members.member_names())
-    for row in (_rows(old, "schedule_items") if _has_table(old, "schedule_items") else []):
-        kind = row["kind"]
-        domain = "schedule" if kind == "event" else "tasks"
-        report["events" if kind == "event" else "tasks"] += 1
-        if dry_run:
-            continue
-        store = str(paths.member_store(calendar_owner, domain))
-        cal_db._connect(db_path=store).close()
-        sconn = sqlite3.connect(store)
-        cols = _columns(sconn, "schedule_items")
-        uid = row["uid"]
-        if uid and _exists(sconn, "schedule_items", "uid=?", [uid]):
-            sconn.close()
-            continue                        # 幂等：uid 已在
-        d = {k: row[k] for k in row.keys() if k in cols}
-        if d.get("member") not in registered:
-            d["member"] = calendar_owner    # 未登记旧标签（爸爸…）→ owner
-        _insert(sconn, "schedule_items", d)
-        sconn.commit()
-        sconn.close()
-
-    # ── 播种 owner 两域同步状态（保留 last_refresh，避免立即churn） ──
-    if not dry_run and old_state and Path(old_state).exists() and calendar_owner:
-        gst = jsonfile.load_dict(old_state)
-        for domain in ("schedule", "tasks"):
-            jsonfile.save(paths.member_sync_state(calendar_owner, domain),
-                          {"last_refresh": gst.get("last_refresh"),
-                           "last_error": gst.get("last_error")})
-
     old.close()
 
     # ── 快照：成功后把旧库改名 <name>.premigration.bak ──
@@ -231,11 +180,9 @@ def _main(argv) -> int:
     import argparse
     ap = argparse.ArgumentParser(description="单库 → 分库存储迁移（运行前停机器人）")
     ap.add_argument("--old", default=str(paths.data_root() / "ledger.db"))
-    ap.add_argument("--state", default=str(paths.data_root() / ".calendar_state.json"))
     ap.add_argument("--dry-run", action="store_true", help="只报告，不改盘")
     a = ap.parse_args(argv)
-    state = a.state if Path(a.state).exists() else None
-    rep = migrate(Path(a.old), state, dry_run=a.dry_run)
+    rep = migrate(Path(a.old), dry_run=a.dry_run)
     print(json.dumps(rep, ensure_ascii=False, indent=2))
     return 0
 

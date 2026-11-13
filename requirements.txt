@@ -11,7 +11,7 @@ weixin-ilink[qr]
 yt-dlp
 # matplotlib — Note_Keeper 的工作表数据可视化（chart-render / visualize_data）；未安装时优雅降级（chart-render 退出并提示 pip install matplotlib）。
 matplotlib
-# numpy — chart.py 直接 import（matplotlib 本身也依赖它，这里显式声明）。
+# numpy — chart.py 直接 import；PDF_Editor 找表格空格/勾选框（pdf_boxes.py）。
 numpy
 # pypdf — PDF_Editor 必需：读写 PDF、填表单字段、页级操作；未安装时 pdf-inspect/pdf-edit 提示安装。
 pypdf

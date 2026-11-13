@@ -3,8 +3,11 @@
 # Pure logic (parse_vtt/trim/summarize_youtube/web_search/web_read) is tested with
 # injected fetchers — no live network. cli.py is exercised via subprocess on error
 # paths only (also no network). Agent wiring is asserted against agent_core.
+import io
+import json
 import subprocess
 import sys as _sys
+import threading
 from pathlib import Path as _Path
 
 import pytest
@@ -113,25 +116,21 @@ class TestSummarizeYoutube:
         assert "Has Title" in out
 
 
-_V2 = {"status": "OK", "data": {"organic_results": [
+_RESULTS = [
     {"title": "T1", "url": "https://a.example/1", "snippet": "S1"},
     {"title": "T2", "url": "https://b.example/2", "snippet": ""},
-]}}
+]
 
 
 class TestWebSearch:
-    def test_formats_organic_results(self):
-        out = reach.web_search("latest news", search=lambda q: _V2)
+    def test_formats_results(self):
+        out = reach.web_search("latest news", search=lambda q: _RESULTS)
         assert out.startswith("1. T1\nhttps://a.example/1\nS1")
         assert "2. T2\nhttps://b.example/2" in out
 
-    def test_accepts_flat_data_list(self):
-        out = reach.web_search("q", search=lambda q: {"status": "OK", "data": _V2["data"]["organic_results"]})
-        assert "T1" in out and "T2" in out
-
     def test_passes_stripped_query(self):
         seen = {}
-        reach.web_search("  hello world ", search=lambda q: seen.update(q=q) or _V2)
+        reach.web_search("  hello world ", search=lambda q: seen.update(q=q) or _RESULTS)
         assert seen["q"] == "hello world"
 
     def test_empty_query_errors_without_searching(self):
@@ -139,7 +138,7 @@ class TestWebSearch:
 
         def search(q):
             called["n"] += 1
-            return _V2
+            return _RESULTS
 
         out = reach.web_search("   ", search=search)
         assert out.startswith("[错误]")
@@ -151,89 +150,163 @@ class TestWebSearch:
 
         assert reach.web_search("q", search=boom) == "[错误] 搜索失败：net down"
 
-    def test_non_ok_status_returns_error(self):
-        out = reach.web_search("q", search=lambda q: {"status": "ERROR", "error": "quota"})
-        assert out == "[错误] 搜索失败：quota"
-
     def test_empty_result_returns_error(self):
-        out = reach.web_search("q", search=lambda q: {"status": "OK", "data": {"organic_results": []}})
-        assert out.startswith("[错误]")
+        assert reach.web_search("q", search=lambda q: []) == "[错误] 没查到结果"
 
 
 class TestWebSearchFallback:
-    """RapidAPI fails (raise / non-OK / empty) → DuckDuckGo page via Jina reader."""
+    """Serper fails (raise / empty) → Parallel."""
 
     def _boom(self, q):
         raise RuntimeError("HTTP 429")
 
     def test_primary_ok_skips_fallback(self):
-        def fallback(url):
+        def fallback(q):
             raise AssertionError("fallback must not run")
 
-        out = reach.web_search("q", search=lambda q: _V2, fallback=fallback)
+        out = reach.web_search("q", search=lambda q: _RESULTS, fallback=fallback)
         assert out.startswith("1. T1")
 
-    @pytest.mark.parametrize("payload", [
-        {"status": "ERROR", "error": "quota"},
-        {"status": "OK", "data": {"organic_results": []}},
-    ])
-    def test_non_ok_or_empty_uses_fallback(self, payload):
-        out = reach.web_search("q", search=lambda q: payload, fallback=lambda url: "ddg page")
-        assert out == "ddg page"
-
-    def test_raise_uses_fallback_with_ddg_url(self):
+    def test_empty_uses_fallback(self):
         seen = {}
-        out = reach.web_search("hello world", search=self._boom,
-                               fallback=lambda url: seen.update(url=url) or "ddg page")
-        assert out == "ddg page"
-        assert seen["url"] == "https://r.jina.ai/https://html.duckduckgo.com/html/?q=hello%20world"
+        out = reach.web_search("hello", search=lambda q: [],
+                               fallback=lambda q: seen.update(q=q) or _RESULTS[1:])
+        assert out.startswith("1. T2") and seen["q"] == "hello"
+
+    def test_raise_uses_fallback(self):
+        out = reach.web_search("q", search=self._boom, fallback=lambda q: _RESULTS[1:])
+        assert out.startswith("1. T2")
 
     def test_both_fail_reports_both(self):
-        def fb(url):
-            raise IOError("jina down")
+        def fb(q):
+            raise IOError("parallel down")
 
         out = reach.web_search("q", search=self._boom, fallback=fb)
-        assert out == "[错误] 搜索失败：HTTP 429；备用 DuckDuckGo 失败：jina down"
+        assert out == "[错误] 搜索失败：HTTP 429；备用 Parallel 失败：parallel down"
 
     def test_fallback_empty_reports_primary_error(self):
-        out = reach.web_search("q", search=self._boom, fallback=lambda url: "  ")
-        assert out == "[错误] 搜索失败：HTTP 429；备用 DuckDuckGo 失败：无结果"
+        out = reach.web_search("q", search=self._boom, fallback=lambda q: [])
+        assert out == "[错误] 搜索失败：HTTP 429；备用 Parallel 失败：无结果"
 
-    def test_fallback_trimmed(self):
-        out = reach.web_search("q", search=self._boom, fallback=lambda url: "a" * 7000)
+    def test_both_empty_is_no_results(self):
+        assert reach.web_search("q", search=lambda q: [], fallback=lambda q: []) == "[错误] 没查到结果"
+
+    def test_output_trimmed(self):
+        long = [{"title": "T", "url": "https://x", "snippet": "a" * 7000}]
+        out = reach.web_search("q", search=self._boom, fallback=lambda q: long)
         assert out.endswith("…[截断]")
 
 
-class TestRapidapiSearch:
-    def test_missing_key_raises(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("RAPIDAPI_KEY", raising=False)
-        monkeypatch.setattr(reach, "_load_env", lambda: None)
-        with pytest.raises(RuntimeError, match="RAPIDAPI_KEY"):
-            reach.rapidapi_search("q")
+class TestBilingualSearch:
+    """Serper + AnySearch × EN + 中文, run concurrently, one labeled block each."""
 
-    def test_sends_rapidapi_headers_and_query(self, monkeypatch):
-        import io
-        import json as _json
-        monkeypatch.setenv("RAPIDAPI_KEY", "k123")
-        seen = {}
+    def _echo(self, tag):
+        return lambda q: f"{tag}:{q}"
 
-        class Resp(io.BytesIO):
-            def __enter__(self):
-                return self
+    def test_four_blocks_in_order(self):
+        out = reach.bilingual_search("gpu price", "显卡 价格",
+                                     serper=self._echo("S"), any_search=self._echo("A"))
+        heads = [l for l in out.splitlines() if l.startswith("## ")]
+        assert heads == ["## Serper · EN: gpu price", "## Serper · 中文: 显卡 价格",
+                         "## AnySearch · EN: gpu price", "## AnySearch · 中文: 显卡 价格"]
+        assert "S:gpu price" in out and "A:显卡 价格" in out
 
-            def __exit__(self, *a):
-                return False
+    def test_runs_concurrently(self):
+        barrier = threading.Barrier(4, timeout=2)
 
-        def fake_urlopen(req, timeout):
-            seen["url"], seen["headers"] = req.full_url, dict(req.header_items())
-            return Resp(_json.dumps(_V2).encode())
+        def wait(q):
+            barrier.wait()            # BrokenBarrierError if searches run serially
+            return q
+        out = reach.bilingual_search("a", "b", serper=wait, any_search=wait)
+        assert "[错误]" not in out
 
-        monkeypatch.setattr(reach.urllib.request, "urlopen", fake_urlopen)
-        assert reach.rapidapi_search("hello world") == _V2
-        assert seen["url"].startswith("https://real-time-web-search.p.rapidapi.com/search?")
-        assert "q=hello+world" in seen["url"] and "num=10" in seen["url"]
-        assert seen["headers"]["X-rapidapi-key"] == "k123"
-        assert seen["headers"]["X-rapidapi-host"] == "real-time-web-search.p.rapidapi.com"
+    def test_block_trimmed(self):
+        out = reach.bilingual_search("a", "", serper=lambda q: "x" * 5000,
+                                     any_search=lambda q: "y")
+        assert "x" * reach.BLOCK_CAP + "…[截断]" in out
+        assert "x" * (reach.BLOCK_CAP + 1) not in out
+
+    def test_one_language_only(self):
+        out = reach.bilingual_search("  ", "显卡", serper=self._echo("S"),
+                                     any_search=self._echo("A"))
+        assert "EN" not in out and out.count("## ") == 2
+
+    def test_newline_in_query_keeps_header_one_line(self):
+        out = reach.bilingual_search("gpu\nprice", "", serper=self._echo("S"),
+                                     any_search=self._echo("A"))
+        assert "## Serper · EN: gpu price\nS:gpu price" in out
+
+    def test_both_empty(self):
+        assert reach.bilingual_search(" ", "", serper=self._echo("S"),
+                                      any_search=self._echo("A")) == "[错误] 空查询"
+
+    def test_raise_isolated(self):
+        def boom(q):
+            raise RuntimeError("down")
+        out = reach.bilingual_search("a", "b", serper=self._echo("S"), any_search=boom)
+        assert out.count("[错误] 搜索失败：down") == 2
+        assert "S:a" in out and "S:b" in out
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _fake_urlopen(monkeypatch, payload):
+    seen = {}
+
+    def fake(req, timeout):
+        seen["url"], seen["headers"] = req.full_url, dict(req.header_items())
+        seen["body"] = json.loads(req.data)
+        return _Resp(json.dumps(payload).encode())
+
+    monkeypatch.setattr(reach.urllib.request, "urlopen", fake)
+    return seen
+
+
+# Trimmed from live responses, 2026-11-12.
+_SERPER = {"searchParameters": {"q": "hello world", "num": 10},
+           "organic": [{"title": "T1", "link": "https://a.example/1", "snippet": "S1", "position": 1},
+                       {"title": "no link"}],
+           "credits": 1}
+_PARALLEL = {"search_id": "search_1", "results": [
+    {"url": "https://p.example", "title": "P", "publish_date": None, "excerpts": ["# P\n\nbody", "x" * 900]}]}
+
+
+@pytest.mark.parametrize("env, fn", [("SERPER_API_KEY", "serper_search"),
+                                     ("PARALLEL_API_KEY", "parallel_search")])
+def test_missing_key_raises(monkeypatch, env, fn):
+    monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(reach, "_load_env", lambda: None)
+    with pytest.raises(RuntimeError, match=env):
+        getattr(reach, fn)("q")
+
+
+class TestSerperSearch:
+    def test_posts_query_and_reads_organic(self, monkeypatch):
+        monkeypatch.setenv("SERPER_API_KEY", "k123")
+        seen = _fake_urlopen(monkeypatch, _SERPER)
+        assert reach.serper_search("hello world") == [
+            {"title": "T1", "url": "https://a.example/1", "snippet": "S1"}]
+        assert seen["url"] == "https://google.serper.dev/search"
+        assert seen["body"] == {"q": "hello world", "num": 10}
+        assert seen["headers"]["X-api-key"] == "k123"
+
+
+class TestParallelSearch:
+    def test_posts_query_and_cuts_excerpts(self, monkeypatch):
+        monkeypatch.setenv("PARALLEL_API_KEY", "p123")
+        seen = _fake_urlopen(monkeypatch, _PARALLEL)
+        out = reach.parallel_search("hello world")
+        assert out[0]["url"] == "https://p.example" and out[0]["snippet"].startswith("P body x")
+        assert len(out[0]["snippet"]) == 500
+        assert seen["url"] == "https://api.parallel.ai/v1/search"
+        assert seen["body"]["search_queries"] == ["hello world"]
+        assert seen["headers"]["X-api-key"] == "p123"
 
 
 class TestWebRead:
@@ -293,9 +366,14 @@ class TestCli:
     """cli.py error paths — no network needed (empty args short-circuit before fetch)."""
 
     def test_web_search_empty_query_prints_error_exit0(self):
-        r = _run_cli("web-search", "--query", "   ")
+        r = _run_cli("web-search", "--query_en", "   ", "--query_zh", " ")
         assert r.returncode == 0, r.stderr
-        assert "[错误]" in r.stdout
+        assert "[错误] 空查询" in r.stdout
+
+    def test_web_search_no_flags_prints_error_exit0(self):
+        r = _run_cli("web-search")
+        assert r.returncode == 0, r.stderr
+        assert "[错误] 空查询" in r.stdout
 
     def test_web_read_empty_url_prints_error_exit0(self):
         r = _run_cli("web-read", "--url", "   ")
@@ -303,8 +381,8 @@ class TestCli:
         assert "[错误]" in r.stdout
 
     def test_missing_required_arg_exits_2(self):
-        r = _run_cli("web-search")
-        assert r.returncode == 2  # argparse: missing --query
+        r = _run_cli("web-read")
+        assert r.returncode == 2  # argparse: missing --url
 
 
 class TestAgentRegistration:
@@ -316,6 +394,12 @@ class TestAgentRegistration:
         schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
         assert names <= schema_names
         assert names <= set(agent_core._TOOL_MAP)
+
+    def test_web_search_schema_requires_both_languages(self):
+        import agent_core
+        fn = next(t["function"] for t in agent_core.TOOL_SCHEMAS
+                  if t["function"]["name"] == "web_search")
+        assert fn["parameters"]["required"] == ["query_en", "query_zh"]
 
     def test_reach_commands_allowed_and_routed(self):
         import agent_core

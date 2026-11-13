@@ -15,11 +15,12 @@
 
 ### 🧾 票据 OCR
 - 发票/小票照片或 PDF 账单 → 腾讯云 OCR 文字识别（1000 次/月免费，PDF 逐页各计一次，上限 20 页）→ DeepSeek 结构化提取（金额/日期/分类/描述）→ 自动记账
+- 照片里没字的东西（物体/场景/手写/图表）→ 识图模型看图（`view_image`，DeepSeek V4.1-Flash）
 - 原始票据按月存档 `data/Family/receipts/YYYY-MM/`，与账目记录关联（行内 `receipt_path` 记 data 相对路径）
 
 ### 📁 家庭文档管理（Document Keeper）
 - 重要文档归档：租约、保险单、证件、健康卡等，原件存 `data/Family/documents/<类型>/`
-- **在微信/Telegram 发一份 PDF（合同/保单/证件/移民表格等），Bot 自动 OCR 全文提取并归档**，OCR 识别不了的 PDF 会提示配置腾讯云密钥
+- **在微信/Telegram 发一份 PDF（合同/保单/证件/移民表格等），Bot OCR 全文提取并归档**，OCR 识别不了的 PDF 会提示配置腾讯云密钥
 - OCR 全文索引，关键词检索（"我们有哪些保险"）
 - **到期跟踪 + 每日主动提醒**：到期前 Bot 每天推送（如 "租约 20 天后到期 — 提前60天通知房东"），`doc-ack` 确认后不再重复
 - 重复检测（证件编号 / 文件哈希）
@@ -54,17 +55,11 @@
 
 ### 📅 家庭日程与待办（Calendar Keeper）
 - 自然语言加日程/待办："周六下午2点孩子游泳课"、"提醒我15号前买生日蛋糕"
-- **静默同步远程日历**：已注册成员消息到达时自动拉取过去 365 天（`sync_past_days`）～未来 90 天
-  （`sync_horizon_days`）日程（节流，默认 15 分钟一次），不主动播报；问"接下来有什么安排""待办清单"
-  时即答（回答窗口默认 10 天）
-- **历史日程也能查**：问"7月游了几次课""去年那趟航班哪天"→ Agent 传 `from`/`to` 框窗口，
-  比常驻缓存更久远的历史即时从远端实拉（`--from` 省略 = 整本日历）
-- **每次日程操作实时校验**：加/查/完成/取消/同步都会同时查本地与远端并核对一致性，
-  不一致自动修复并报告——在手机上直接划掉的待办、Gmail 自动建的日程立刻拉平
-- Agent 新建/完成/取消的日程待办自动推送远端；离线/未配置时本地照常用，配好自动补推
+- **直连远程日历，无本地库**：每次查/加/改/完成/删除都直接读写远端；家人在手机上的改动下一问即见
+- **历史日程也能查**：问"7月游了几次课"→ Agent 传 `from`/`to`（`--from` 省略 = 整本日历）
+- 远端不可用或成员未配远程日历 → 如实报错，不假装记上
 - 当前内置 Google Calendar + Google Tasks 实现（最小权限 `calendar.events` + `tasks`）；
   按 provider 契约可换任意日历服务
-- 家人在手机日历上的改动会同步回来：远端是日程的事实源（改名/删除/完成都对账）
 
 ### ☀️ 每日早报（Daily Banner）
 - 每天 08:20 主动推：未来 3 天日程 + 未完成待办 + 昨天以来未读邮件，LLM 排优先级压成一条（失败退模板）
@@ -73,8 +68,8 @@
 ### 🌐 联网资讯（Web Reach / Any Search）
 - "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
 - 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结
-- **高质量实时搜索（Any Search）**：更准的联网搜索，支持垂直领域（finance/health/academic/code 等）结构化结果与网页全文抽取；`ANYSEARCH_API_KEY` 可选（未配置走匿名访问，限额较低仍可用）；问最新资讯时优先 Any Search，下面的 Web Reach 作兜底
-- **Web Reach 只读公开信息**（搜索走 RapidAPI Real-Time Web Search，需 `RAPIDAPI_KEY`，失败回退 DuckDuckGo；网页读取走 Jina 阅读器，`JINA_API_KEY` 可选；YouTube 需 `yt-dlp`，缺失时优雅降级），作为 Any Search 的兜底
+- 联网搜索每次中英双语、多源并发（[Web_Reach SKILL.md](.codewhale/skills/Web_Reach/SKILL.md)）
+- 垂直领域（行情/学术/健康等）结构化搜索（[Any_Search SKILL.md](.codewhale/skills/Any_Search/SKILL.md)）
 
 ### 🔎 懂王舆情搜集（KnowKing 桥，可选）
 - 微信/Telegram 里说 **"用 knowking / kk / 懂王 查大家怎么看 X"** → 跨社交平台
@@ -255,25 +250,25 @@ FamilyAssistant/
 │       │   ├── backup_sync.py    ← 同步引擎
 │       │   ├── backup_provider.py← Google Drive 实现（可按契约换成其他云盘）
 │       │   └── cli.py            ← 备份 CLI 入口
-│       ├── Calendar_Keeper/  ← 家庭日程/待办 + 远程日历同步
+│       ├── Calendar_Keeper/  ← 家庭日程/待办，直连远程日历
 │       │   ├── SKILL.md
-│       │   ├── cal_db.py         ← 数据层（日程缓存）
-│       │   ├── calendar_sync.py  ← 同步引擎（静默节流刷新/先推后拉/对账/每操作校验）
+│       │   ├── remote_schedule.py ← 按成员读写远端（无本地库）
 │       │   ├── calendar_provider.py ← Google Calendar+Tasks 实现（可按契约换）
 │       │   ├── providers.py       ← provider 注册表（(域,名)→实现）
-│       │   ├── image_gc.py        ← 陈旧来图清理（N 年前的 source_image）
+│       │   ├── image_gc.py        ← 旧来图月目录清理
 │       │   └── cli.py            ← 日程 CLI 入口
 │       ├── Mail_Keeper/      ← 按成员私有邮箱（读 + 两轮确认回信）
 │       │   ├── SKILL.md
 │       │   ├── gmail_provider.py ← Gmail REST 实现（可按契约换）
 │       │   ├── mail_draft.py     ← 待确认草稿 + 发信闸门
 │       │   ├── mail_watch.py     ← 新邮件播报（可选，按成员开）
-│       │   └── mail_rules.py     ← 「这种别推」忽略规则（用户教）
+│       │   ├── mail_triage.py    ← LLM 判新邮件需不需处理
+│       │   └── mail_rules.py     ← mute / always 播报规则（用户教）
 │       ├── Web_Reach/        ← 只读联网：搜索 / 网页摘要 / YouTube 转写
 │       │   ├── SKILL.md
-│       │   ├── .env.example       ← RAPIDAPI_KEY 模板
-│       │   ├── reach.py           ← 搜索/抓取/YouTube 纯逻辑（可注入 fetcher）
-│       │   └── cli.py             ← CLI 入口 + 真实 HTTP 适配器
+│       │   ├── .env.example       ← 搜索 key 模板
+│       │   ├── reach.py           ← 纯逻辑（可注入 fetcher）+ 真实 HTTP 适配器
+│       │   └── cli.py             ← CLI 入口
 │       ├── Any_Search/       ← 高质量实时联网搜索（垂直领域 + 全文抽取）
 │       │   ├── SKILL.md
 │       │   ├── .env.example       ← ANYSEARCH_API_KEY 模板
@@ -292,7 +287,7 @@ FamilyAssistant/
 ├── FamilyAssistant.md    ← 开发者总览（架构 / config 键表 / 运行方式）
 ├── data/                 ← 全部用户数据（git 不跟踪）
 │   ├── Family/           ← 家庭共享：ledger.db（财务）、documents.db（文档+成员资料）、receipts/、documents/
-│   ├── <成员>/           ← 成员私有：notes/、schedule/、tasks/、inbox/、pdf_edits/（PDF 编辑会话）、cache/（可再生，不备份）
+│   ├── <成员>/           ← 成员私有：notes/、inbox/、pdf_edits/（PDF 编辑会话）、cache/（可再生，不备份）
 │   ├── .state/           ← 运行时状态/凭据/日志（不备份）；路径一律经 paths.state_file
 │   └── members.json      ← 成员注册表（dir + 每成员同步偏好）
 ├── tests/                ← pytest 套件（python -m pytest）

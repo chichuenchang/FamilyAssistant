@@ -28,7 +28,7 @@ import members as members_registry
 import paths as _paths
 
 # 备份脏标记：写入类命令成功后调用（Remote_Backup skill；失败静默，绝不影响写入）
-_BACKUP_WRITE_COMMANDS = {"init", "add", "delete", "deposit-add", "transfer-add",
+_BACKUP_WRITE_COMMANDS = {"init", "add", "add-batch", "update", "delete", "deposit-add", "transfer-add",
                           "tax-add", "fx-set", "member-add", "member-remove"}
 
 
@@ -38,6 +38,7 @@ from db import (
     init_db,
     add_transaction,
     get_transactions,
+    update_transaction,
     delete_transaction,
     summarize_by_category,
     monthly_summary,
@@ -125,14 +126,56 @@ def cmd_add(args):
         print(f"已添加交易 #{tid}: {args.type} {args.amount} {args.currency} — {args.category or '未分类'}")
 
 
+def cmd_add_batch(args):
+    """--rows = JSON 数组，每项同 add 的字段（type/amount/currency/date/category/desc/notes/force）。
+    逐行独立：一行失败不影响其余，每行一条结果，首行汇总。"""
+    import json
+    try:
+        rows = json.loads(args.rows)
+        if not isinstance(rows, list):
+            raise ValueError
+    except ValueError:
+        raise ValueError("--rows 须是 JSON 数组")
+    member = members_registry.require_registered(args.member or "")
+    lines, added, dup, err = [], 0, 0, 0
+    for i, r in enumerate(rows, 1):
+        try:
+            if not isinstance(r, dict):
+                raise ValueError("该行不是对象")
+            cur = r.get("currency") or get_base_currency()
+            tid, dupes = add_transaction(
+                type_=r.get("type", ""), amount=float(r.get("amount") or 0),
+                currency=cur, date_=r.get("date", ""),
+                category=r.get("category") or "", description=r.get("desc") or "",
+                notes=r.get("notes") or "", skip_dup_check=bool(r.get("force")), member=member)
+        except (ValueError, TypeError) as e:
+            err += 1
+            lines.append(f"{i}) 错误: {e or '字段不合法'}")
+            continue
+        if dupes:
+            dup += 1
+            d = dupes[0]
+            lines.append(f"{i}) 疑似重复，未写入（已有 #{d['id']} [{d['date']}] {d['amount']} "
+                         f"{d['currency']} {d['description']}）；确属另一笔就带 force 重记")
+        else:
+            added += 1
+            lines.append(f"{i}) 已添加 #{tid}: {r.get('date')} {r.get('amount')} "
+                         f"{cur} {r.get('category') or '未分类'} "
+                         f"{r.get('desc') or ''}".rstrip())
+    print(f"{len(rows)} 行：已添加 {added}，疑似重复未写 {dup}，错误 {err}")
+    for line in lines:
+        print(line)
+
+
 def cmd_list(args):
+    limit = args.limit or 200
     rows = get_transactions(
         type_=args.type,
         category=args.category,
         currency=args.currency,
         start_date=args.start,
         end_date=args.end,
-        limit=args.limit or 200,
+        limit=limit,
         member=args.member,
     )
     if not rows:
@@ -141,6 +184,19 @@ def cmd_list(args):
     for r in rows:
         print(f"#{r['id']} [{r['date']}] {r['type']} {r['amount']} {r['currency']} "
               f"| {r['category'] or '-'} | {r['description']}")
+    if len(rows) == limit:
+        print(f"…已到 {len(rows)} 条上限，可能还有更早的；缩小日期范围或用 query_ledger 聚合")
+
+
+def cmd_update(args):
+    row = update_transaction(args.id, type_=args.type, amount=args.amount,
+                             currency=args.currency, date_=args.date, category=args.category,
+                             description=args.desc, notes=args.notes)
+    if row is None:
+        print(f"未找到 交易 #{args.id}")
+        return
+    print(f"已更新交易 #{row['id']}: [{row['date']}] {row['type']} {row['amount']} {row['currency']} "
+          f"| {row['category'] or '-'} | {row['description']}")
 
 
 def cmd_delete(args):
@@ -386,6 +442,11 @@ def main():
     p.add_argument("--member", help="归属成员（须已登记）")
     p.add_argument("--force", action="store_true", help="跳过重复检查，强制写入")
 
+    # add-batch
+    p = sub.add_parser("add-batch", help="批量添加交易（逐行结果）")
+    p.add_argument("--rows", required=True, help="JSON 数组，每项字段同 add")
+    p.add_argument("--member", help="归属成员（须已登记）")
+
     # list
     p = sub.add_parser("list", help="查询交易")
     p.add_argument("--type")
@@ -395,6 +456,17 @@ def main():
     p.add_argument("--end")
     p.add_argument("--limit", type=int)
     p.add_argument("--member", help="按成员过滤")
+
+    # update
+    p = sub.add_parser("update", help="修改交易（只改给了的字段）")
+    p.add_argument("--id", type=int, required=True)
+    p.add_argument("--type", choices=list(TRANSACTION_TYPES))
+    p.add_argument("--amount", type=float)
+    p.add_argument("--currency")
+    p.add_argument("--date", help="YYYY-MM-DD")
+    p.add_argument("--category")
+    p.add_argument("--desc")
+    p.add_argument("--notes")
 
     # delete
     p = sub.add_parser("delete", help="删除交易")
@@ -514,7 +586,9 @@ def main():
     dispatch = {
         "init": cmd_init,
         "add": cmd_add,
+        "add-batch": cmd_add_batch,
         "list": cmd_list,
+        "update": cmd_update,
         "delete": cmd_delete,
         "summary": cmd_summary,
         "monthly": cmd_monthly,

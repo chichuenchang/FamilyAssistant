@@ -101,7 +101,7 @@ def _resolve_plan(args) -> tuple[dict, str]:
 
 def _layout_of(plan: dict, src: Path) -> dict:
     layout = pdf_plan.load_layout(plan)
-    if layout is None:                       # 缓存丢了就重取
+    if layout is None or layout.get("version") != pdf_layout.VERSION:    # 缓存丢了 / 旧版 → 重取
         layout = _build_layout(src)
         pdf_plan.save_layout(plan, layout)
     return layout
@@ -129,7 +129,7 @@ def cmd_edit(args):
     layout = _layout_of(plan, src)
     try:
         ops, notes = pdf_plan.compile_ops(pdf_layout.describe(layout), plan["ops"],
-                                          args.instruction)
+                                          args.instruction, history=plan["history"])
     except pdf_plan.PlanError as e:
         _die(str(e))
     planned = len(ops)

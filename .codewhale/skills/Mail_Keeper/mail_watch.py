@@ -1,15 +1,13 @@
 """
-Mail Keeper — 新邮件播报（FAST_TICKS 钩子，按成员 opt-in）。
+Mail Keeper — 新邮件播报（FAST_TICKS 钩子，按成员 opt-in）。设计：docs/superpowers/specs/2026-10-04-mail-triage-design.md
 
 为什么轮询而不用 Gmail 推送：见 SKILL.md「新邮件事件」。
-传输层每 ~20 秒调 check_and_push(push_fn, channel)：对每个 mail.watch=true 的成员调
-provider.history_since(游标)，新进收件箱的信只播报 **发件人 + 主题**，不带正文
-（正文是外部内容/注入面，且没人要求就不该把它甩进聊天）。播报不经 LLM。
+传输层每 ~20 秒调 tick：本频道没 worker 在跑才起守护线程跑 check_and_push（LLM 要几秒到几十秒，
+不能堵传输层轮询）。对每个 mail.watch=true 的成员调 provider.history_since(游标)。
 
-该播报哪些：命中 mail_rules 忽略规则的丢掉，其余全推（规则表空 = 全推）。
-规则由用户教（"这种以后别推" → Agent 调 mail_mute），见 mail_rules.py。
-播报过的信头记进 .mail_last_push.json：推送不经 LLM，用户回头说"别推这种"时
-Agent 才有得可查（mail_last_push 工具）。
+该播报哪些：mail_rules 规则先（文件头），余下交 mail_triage.judge（文件头）。不带正文。
+没推的也记进 .mail_last_push.json（带原因）：播报不经 Agent，用户说"漏推了/别推这种"时
+Agent 靠 mail_last_push 工具才查得到。
 
 游标存 data/.state/.mail_history.<频道>.json：{成员: {history_id, at}}
 （点前缀 = 运行时瞬态，不进备份）。按频道各存一份，微信/Telegram 都能收到同一封。
@@ -19,18 +17,20 @@ Agent 才有得可查（mail_last_push 工具）。
   - 首次见到某(频道,成员) → 用 getProfile 的 historyId 落游标，不播报历史邮件
   - 游标过旧（history_since 返回 rows=None）→ 存新起点，这轮不播报
   - API 失败、或该成员所有 id 都没推出去（push_fn 抛错或返回 False）→ 游标不动，
-    下一轮重来（宁可重播一次，不可漏）
-  - MIN_POLL_S 节流（进程内存，不落盘）：传输层节拍比这更密也不会多打 Gmail
+    下一轮重来（宁可重播一次，不可漏）；判决已缓存，不重付 LLM
+  - MIN_POLL_S 节流（进程内存，不落盘）
   - 游标没变不写盘
-  - 一轮总耗时超过 TICK_BUDGET_S → 剩下的成员留到下一轮（节拍跑在传输层轮询循环里）
-  - label 规则先用 history 带回的标签过一遍 → 命中的连信头都不取（省配额）
-  - 一轮最多取 MAX_META 封信头；更早的只计入条数
-  - 一条播报最多 MAX_LINES 行，其余只报条数（订阅邮件爆量不刷屏）
+  - 一轮总耗时超过 TICK_BUDGET_S → 剩下的成员留到下一轮
+  - label mute 先用 history 带回的标签过一遍 → 命中的连信都不取（省配额、不进日志）；
+    成员有非 label 的 always 规则时跳过这道（不取信头不知道它是不是 always）
+  - 一轮最多取 MAX_META 封；更早的不判，播报里单列"另有 N 封没分拣"（不算需处理，也不漏）
+  - 一条播报最多 MAX_LINES 封，其余只报条数（订阅邮件爆量不刷屏）
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -40,6 +40,7 @@ import members as _members
 import paths as _paths
 
 import mail_rules as _rules
+import mail_triage as _triage
 
 _log = logging.getLogger("familyassist.mail")
 
@@ -48,10 +49,12 @@ LAST_PUSH_NAME = ".mail_last_push.json"
 MAX_LINES = 5
 MAX_META = 25
 MIN_POLL_S = 15
-LAST_PUSH_KEEP = 20
+LAST_PUSH_KEEP = 40
 TICK_BUDGET_S = 20
 
 _polled: dict[tuple[str, str], float] = {}    # (频道, 成员) → 上次轮询时刻
+_lock = threading.Lock()
+_running: set[str] = set()                     # 有 worker 在跑的频道
 
 
 def store_path(channel: str) -> Path:
@@ -79,21 +82,22 @@ def _entry_items(entry) -> list[dict]:
 
 
 def last_push(member: str) -> list[dict]:
-    """最近播报过的信头（新的在前），供 mail_last_push 工具回放给 Agent。"""
+    """最近经手的新邮件（新的在前）：{id, from, subject, labels, pushed, why}，供 mail_last_push 工具。"""
     return _entry_items(jsonfile.load_dict(last_push_path()).get(member))
 
 
-def record_last_push(member: str, metas: list[dict]) -> None:
-    """同一封信各频道都会播报一次，按 id 去重只记一条。"""
+def record(member: str, items: list[dict]) -> None:
+    """同一封信各频道都会经手一次，按 id 去重只记一条。"""
     d = jsonfile.load_dict(last_push_path())
     old = _entry_items(d.get(member))
     known = {i.get("id") for i in old}
-    items = [{"id": m.get("id", ""), "from": m.get("from", ""),
-              "subject": m.get("subject", ""), "labels": list(m.get("labels") or [])}
-             for m in reversed(metas) if m.get("id") not in known]
-    if not items:
+    new = [{"id": m.get("id", ""), "from": m.get("from", ""), "subject": m.get("subject", ""),
+            "labels": list(m.get("labels") or []), "pushed": bool(m.get("pushed")),
+            "why": m.get("why", "")}
+           for m in reversed(items) if m.get("id") not in known]
+    if not new:
         return
-    d[member] = {"at": time.time(), "items": (items + old)[:LAST_PUSH_KEEP]}
+    d[member] = {"at": time.time(), "items": (new + old)[:LAST_PUSH_KEEP]}
     jsonfile.save(last_push_path(), d)
 
 
@@ -103,28 +107,52 @@ def watch_enabled(member: str, members_path: Path | None = None) -> bool:
     return bool(pref and pref["enabled"] and pref["watch"])
 
 
-def format_push(metas: list[dict], extra: int = 0) -> str:
-    """播报文本。发件人/主题是外部内容，原样转述，不做任何解释。"""
-    lines = [f"📬 新邮件 {len(metas) + extra} 封："]
-    for m in metas:
-        lines.append(f"- {m.get('from') or '(无发件人)'}｜{m.get('subject') or '(无主题)'}")
-    if extra:
-        lines.append(f"…还有 {extra} 封（说\"查邮箱\"我再细看）")
+def format_push(items: list[dict], older: int = 0, sorted_ok: bool = True) -> str:
+    """播报文本，只列最新 MAX_LINES 封。发件人/主题/理由是外部内容（理由由 LLM 读信产出），原样转述。
+    older = 超出 MAX_META 没取没判的，单列一行，不算进"需处理"。"""
+    lines = []
+    if items:
+        shown = items[-MAX_LINES:]
+        head = "需处理" if sorted_ok else "新邮件"
+        tail = "" if sorted_ok else "（未分拣）"
+        lines.append(f"📬 {head} {len(items)} 封{tail}：")
+        for m in shown:
+            lines.append(f"- {m.get('from') or '(无发件人)'}｜{m.get('subject') or '(无主题)'}")
+            if m.get("why"):
+                lines.append(f"  → {m['why']}")
+        if len(items) > len(shown):
+            lines.append(f"…还有 {len(items) - len(shown)} 封（说\"查邮箱\"我再细看）")
+    if older:
+        lines.append(f"{'' if items else '📬 '}另有 {older} 封更早的新邮件没分拣（说\"查邮箱\"我再细看）")
     return "\n".join(lines)
 
 
-def _keep(rows: list[dict], mod, prefix: str, rules: list[dict]) -> tuple[list[dict], int]:
-    """规则过滤后要播报的信头（最新的在最后）+ 只计数不列出的条数。
-
-    两道：先用 history 带回的 labels 挡 label 规则（不花配额取信头），
-    再对最新 MAX_META 封取信头按发件人/域/主题规则挡。
-    """
-    live = [r for r in rows if not _rules.match(r, rules)]
+def _partition(rows: list[dict], mod, prefix: str, rules: list[dict], chat
+          ) -> tuple[list[dict], list[dict], int, bool]:
+    """(要推的, 没推的, 超出 MAX_META 只计数的条数, 分拣是否成功)。顺序同 rows（旧→新）。"""
+    if any(r.get("kind") != "label" for r in rules if _rules.push_of(r) == "always"):
+        live = rows
+    else:
+        live = [r for r in rows if _rules.match(r, rules, "always") or not _rules.match(r, rules)]
     head = live[-MAX_META:]
-    metas = [m for m in mod.message_metas([r["id"] for r in head], prefix)
-             if not _rules.match(m, rules)]
-    extra = len(live) - len(head) + max(0, len(metas) - MAX_LINES)
-    return metas[-MAX_LINES:], extra
+    labels = {r["id"]: r.get("labels") or [] for r in head}
+    mails = mod.get_messages([r["id"] for r in head], prefix)
+    pending = []
+    for m in mails:
+        m["labels"] = labels.get(m["id"], [])
+        if _rules.match(m, rules, "always"):
+            m.update(pushed=True, why="")
+        elif rule := _rules.match(m, rules):
+            m.update(pushed=False, why=f"mute 规则 #{_rules.index_of(rule, rules)}")
+        else:
+            pending.append(m)
+    verdicts, ok = _triage.judge(pending, chat=chat)
+    for m in pending:
+        act, why = verdicts[m["id"]]
+        m.update(pushed=act, why=why if act else (f"无需处理：{why}" if why else "无需处理"))
+    push = [m for m in mails if m["pushed"]]
+    drop = [m for m in mails if not m["pushed"]]
+    return push, drop, len(live) - len(head), ok
 
 
 def _cursors(chan: dict) -> dict:
@@ -146,12 +174,12 @@ def _push_all(push_fn, ids: list[str], text: str) -> bool:
 
 def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
                    provider_for: Callable[[str], tuple], members_path: Path | None = None,
-                   now: float | None = None) -> int:
-    """轮询本频道各成员邮箱，有新信则推送。返回播报的成员数。
+                   now: float | None = None, chat=None) -> int:
+    """轮询本频道各成员邮箱，有需处理的新信则推送。返回播报的成员数。同步；tick 放进线程跑。
 
     provider_for(member) → ((provider 模块, 凭据前缀), "") 或 (None, 错误文本)
     （由 agent_tools._provider 提供，避免本模块反向依赖 manifest）。
-    单个成员出错只记日志，不影响其余。
+    chat 注入 llm_client.chat 的替身（测试用）。单个成员出错只记日志，不影响其余。
     """
     now = time.time() if now is None else now
     began = time.monotonic()
@@ -183,19 +211,45 @@ def check_and_push(push_fn: Callable[[str, str], object], channel: str, *,
             if rows is None:              # 游标过旧 → 重新起点，这轮不播报
                 chan[member] = {"history_id": new_hid, "at": now}
                 continue
-            metas, extra = _keep(rows, mod, prefix, _rules.load(member))
-            if not metas:                 # 全被忽略规则挡掉（或本来就没新信）
-                chan[member] = {"history_id": new_hid, "at": now}
-                continue
-            text = format_push(metas, extra)
-            if not _push_all(push_fn, ids, text):
+            push, drop, older, ok = _partition(rows, mod, prefix, _rules.load(member), chat)
+            if (push or older) and not _push_all(push_fn, ids, format_push(push, older, ok)):
                 raise RuntimeError("所有 id 都推送失败")
-            record_last_push(member, metas)
+            record(member, push + drop)
         except Exception:
             _log.exception("新邮件播报失败（游标不动，下轮重试）: %s/%s", channel, member)
             continue
         chan[member] = {"history_id": new_hid, "at": now}
-        pushed += 1
+        pushed += bool(push or older)
     if _cursors(chan) != before:
         _save(channel, chan)
     return pushed
+
+
+def _spawn(fn) -> None:
+    threading.Thread(target=fn, daemon=True, name="mail-watch").start()
+
+
+def tick(push_fn, channel: str, *, provider_for, spawn=None) -> bool:
+    """FAST_TICKS 钩子：本频道没 worker 在跑就起一个。返回是否起了。"""
+    with _lock:
+        if channel in _running:
+            return False
+        _running.add(channel)
+
+    def run():
+        try:
+            check_and_push(push_fn, channel, provider_for=provider_for)
+        except Exception:
+            _log.exception("新邮件播报 worker 崩了: %s", channel)
+        finally:
+            with _lock:
+                _running.discard(channel)
+
+    try:
+        (spawn or _spawn)(run)
+    except Exception:
+        _log.exception("新邮件播报线程启动失败: %s", channel)
+        with _lock:
+            _running.discard(channel)
+        return False
+    return True

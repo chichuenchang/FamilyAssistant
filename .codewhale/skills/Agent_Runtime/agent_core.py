@@ -34,6 +34,7 @@ import os
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 
@@ -257,8 +258,8 @@ DOC_SENTINEL = "\x01DOC:"
 TRUNCATED_REPLY_MARK = "（回复超出长度上限被截断）"
 TRUNCATED_TOOLS_NOTE = ("[系统] 你上一条输出超出长度上限被截断，其中的工具调用参数不完整，"
                         "全部未执行。请减少推理、把工作拆成更小的批次重新调用。")
-# 工具轮数用完仍在调工具：补一次收尾调用，要求只用已有结果作答
-TOOL_ROUNDS = 16
+# 工具轮数用完仍在调工具：补一次收尾调用，要求只用已有结果作答（上限见 config agent.tool_rounds）
+TOOL_ROUNDS = int((_CONFIG.get("agent") or {}).get("tool_rounds") or 30)
 TOOL_LIMIT_NOTE = ("[系统] 本轮工具调用次数已用完，不要再调用任何工具。请直接用已拿到的结果"
                    "回复用户：列出已完成的部分，说明还剩哪些没做，并提示用户回复“继续”接着处理。")
 
@@ -351,9 +352,10 @@ class Agent:
         self._llm_overrides: dict[str, dict] = _load_llm_overrides()
 
     def handle(self, text: str, user: str = "default", member: str = "", *,
-               said: str | None = None) -> str:
+               said: str | None = None, media: Sequence[str] = ()) -> str:
         """said = 用户本人亲手打的字（确认闸门 __text 只认它）。text 可能掺了引用/OCR 等
-        外部内容，传输层须另传 said；缺省 = text（本地 CLI 等无掺杂入口）。"""
+        外部内容，传输层须另传 said；缺省 = text（本地 CLI 等无掺杂入口）。
+        media = 本轮来件路径，只进对话存档（chat_archive）。"""
         said = text if said is None else said
         # 防御纵深：传输层闸门漏掉的未注册来源，这里二次拦截，不碰 LLM
         if not member:
@@ -455,6 +457,7 @@ class Agent:
                 except (json.JSONDecodeError, KeyError):
                     targs = {}
                 fn = _TOOL_MAP.get(name)
+                targs = rt.to_manifest_keys(name, targs)
                 targs = _apply_member(name, targs, member)
                 targs = _apply_context(name, targs, self.channel, user, member,
                                        turn_id=turn_id, text=said)
@@ -513,7 +516,7 @@ class Agent:
         final = f"{tool_log}\n{reply}".strip() if tool_log else reply
         turn.append({"role": "assistant", "content": hist_reply})
         self._save_history(user, turn)
-        chat_archive.append(self.channel, user, said, hist_reply)
+        chat_archive.append(self.channel, user, said, hist_reply, media)
         if shown:
             final += "\n\n" + "\n\n".join(shown.values())
         for p in produced_images:
@@ -525,27 +528,22 @@ class Agent:
     def handle_media(self, paths: list[str], text: str, user: str = "default",
                      member: str = "", *, said: str | None = None) -> str:
         """图片/PDF + 随后文字指令 一并处理。传输层攒下来件，等用户发文字才调（来件本身不回复）。
-        ocr_image 对图片/PDF 一视同仁（PDF 走腾讯 IsPdf 逐页）；OCR 不可用或没识别到文字时
-        只给路径，靠用户文字指令。said 同 handle（缺省 = text）。"""
+        只给路径，工具 LLM 自选（见 Agent_Runtime/SKILL.md）。said 同 handle（缺省 = text）。"""
         if not member:
             return ""
-        from ocr import ocr_image, is_available
-        ocr_on = is_available()
-        parts = []
-        for i, path in enumerate(paths, 1):
-            ocr_text = ocr_image(path) if ocr_on else ""
-            body = rt.fence(ocr_text, "ocr") if ocr_text else "（无 OCR 文字）"
-            parts.append(f"材料{i}: {path}\nOCR结果:\n{body}")
+        parts = [f"材料{i}（{'PDF' if Path(p).suffix.lower() == '.pdf' else '图片'}）: {p}"
+                 for i, p in enumerate(paths, 1)]
         routes = "\n".join(f"{i}) {r}" for i, r in enumerate(REGISTRY.image_routes, 1))
         prompt = (
-            f"用户发来 {len(paths)} 份材料（图片或 PDF），已保存：\n" + "\n\n".join(parts)
+            f"用户发来 {len(paths)} 份材料，已保存：\n" + "\n".join(parts)
             + f"\n\n用户随后的指示:\n{text}\n\n"
             f"指示明显与这些材料无关（如另起话题）→ 材料作废：不处理、不提及，只回应指示。\n"
-            f"否则按用户指示处理这些材料。指示没说清归类时，按以下情况判断（取最匹配的一条）：\n{routes}\n"
+            f"否则按用户指示处理这些材料：先按需调工具看内容（选法见行为准则“看材料”），"
+            f"下文“OCR”指 ocr_read 读出的文字。指示没说清归类时，按以下情况判断（取最匹配的一条）：\n{routes}\n"
             f"信息不完整就先问用户。拿不准归哪类时问用户。处理完简要汇报做了什么。"
         )
         return self.handle(prompt, user=user, member=member,
-                           said=text if said is None else said)
+                           said=text if said is None else said, media=paths)
 
     def _handle_llm_command(self, text: str, user: str) -> str | None:
         """/model /effort 运行时切换（不经 LLM，零 token）。是切换命令返回回复，否则 None。"""

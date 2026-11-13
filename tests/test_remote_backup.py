@@ -612,10 +612,10 @@ class TestAgentIntegration:
         assert "backup-restore" not in agent_core.ALLOWED_COMMANDS
 
     def test_tools_registered(self):
-        for name in ("backup_now", "backup_status", "backup_verify"):
-            assert name in agent_core._TOOL_MAP
+        assert "backup" in agent_core._TOOL_MAP
         schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
-        assert "backup_status" in schema_names
+        assert "backup" in schema_names
+        assert agent_core._TOOL_MAP["backup"]({"action": "restore"}).startswith("[错误]")
 
 
 class TestScopeResolver:

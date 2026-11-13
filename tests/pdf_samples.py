@@ -33,6 +33,35 @@ def build_acro_pdf(path) -> Path:
     return Path(path)
 
 
+def _draw_chars(c, x, y, text, size=10):
+    """逐字定位（模仿实测表单：pdfium 每字一个框）。"""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    c.setFont("Helvetica", size)
+    for ch in text:
+        c.drawString(x, y, ch)
+        x += stringWidth(ch, "Helvetica", size)
+
+
+def build_table_form_pdf(path) -> Path:
+    """平面表单（无 AcroForm），字全逐字画：
+    表头 GIVEN NAME | SURNAME（y 700–660）+ 下方空行（660–630），x 50–250–450；
+    标签格 Phone #（50–450 × 620–590）；方框 10pt（60,560）+ 右侧 NO。"""
+    c = _canvas(path)
+    c.setLineWidth(1)
+    for x in (50, 250):
+        c.rect(x, 660, 200, 40)
+        c.rect(x, 630, 200, 30)
+    _draw_chars(c, 70, 676, "GIVEN NAME")
+    _draw_chars(c, 270, 676, "SURNAME")
+    c.rect(50, 590, 400, 30)
+    _draw_chars(c, 56, 601, "Phone #")
+    c.rect(60, 560, 10, 10)
+    _draw_chars(c, 76, 561, "NO")
+    c.showPage()
+    c.save()
+    return Path(path)
+
+
 def build_blank_pdf(path, pages=1) -> Path:
     """无文字层（当扫描件用）。"""
     c = _canvas(path)

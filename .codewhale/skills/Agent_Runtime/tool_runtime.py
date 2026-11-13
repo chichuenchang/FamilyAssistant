@@ -3,6 +3,7 @@
 - 命令路由表 / 白名单 / 超时：由 skill_registry.load() 填充，run_cli 查表执行
 - schema 小助手 fn / s / num / int_ / boolean
 - 来图搬迁 relocate_image、送文件闸门 resolve_sendable（路径安全，代码确定性执行）
+- 只读 SQL ro_query（模型自由查询家庭共享库）
 
 本模块不 import agent_core（避免环）；manifest 只依赖本模块 + paths/members。
 """
@@ -12,8 +13,10 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -93,18 +96,83 @@ def json_arg(args: dict, key: str) -> dict:
     return args
 
 
+# ── 只读 SQL（模型自由查询；只读 URI + authorizer 双保险，库绝不被改） ──────
+
+_RO_ALLOWED = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION,
+               getattr(sqlite3, "SQLITE_RECURSIVE", 33)}
+RO_QUERY_SECONDS = 3
+RO_QUERY_ROWS = 200
+
+
+def ro_query(db_path: str, sql: str, max_rows: int = RO_QUERY_ROWS) -> str:
+    """单条 SELECT（可 WITH）→ "列 | 列" 表头 + 每行一行；超 max_rows 截断并提示。
+    写/ATTACH/PRAGMA 被 authorizer 拒；超 RO_QUERY_SECONDS 秒中断。错误返回 "[错误] …"。"""
+    p = Path(db_path)
+    if not p.is_file():
+        return "[错误] 数据库不存在（还没有任何记录）"
+    deadline = time.monotonic() + RO_QUERY_SECONDS
+    try:
+        conn = sqlite3.connect(p.resolve().as_uri() + "?mode=ro", uri=True)
+    except sqlite3.Error as e:
+        return f"[错误] 打不开数据库: {e}"
+    try:
+        conn.set_authorizer(lambda action, *_: sqlite3.SQLITE_OK if action in _RO_ALLOWED
+                            else sqlite3.SQLITE_DENY)
+        conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
+        cur = conn.execute(sql)
+        cols = [d[0] for d in cur.description or ()]
+        rows = cur.fetchmany(max_rows + 1)
+    except (sqlite3.Error, sqlite3.Warning) as e:
+        msg = "查询超时，缩小范围或加条件" if "interrupted" in str(e) else str(e)
+        return f"[错误] SQL: {msg}"
+    finally:
+        conn.close()
+    lines = [" | ".join(cols)]
+    lines += [" | ".join("" if v is None else str(v) for v in r) for r in rows[:max_rows]]
+    if not rows:
+        lines.append("（0 行）")
+    elif len(rows) > max_rows:
+        lines.append(f"…只显示前 {max_rows} 行，更多请加 LIMIT/OFFSET 或聚合")
+    return "\n".join(lines)
+
+
 # ── schema 小助手（OpenAI function calling 格式） ──────────────
 
+# 工具名 → {模型看到的 snake_case 参数名: manifest/CLI 用的 kebab 名}。
+# 模型只见一种命名风格；agent_core 派发前经 to_manifest_keys 换回，manifest 代码不变。
+KEBAB_KEYS: dict[str, dict[str, str]] = {}
+
+
 def fn(name: str, desc: str, props: dict, required: list[str] | None = None) -> dict:
+    aliases = {k.replace("-", "_"): k for k in props if "-" in k}
+    if aliases:
+        KEBAB_KEYS[name] = aliases
+    props = {k.replace("-", "_"): v for k, v in props.items()}
+    required = [r.replace("-", "_") for r in required or []]
     return {"type": "function", "function": {
         "name": name, "description": desc,
-        "parameters": {"type": "object", "properties": props,
-                       "required": required or []},
+        "parameters": {"type": "object", "properties": props, "required": required},
     }}
+
+
+def to_manifest_keys(tool: str, args: dict) -> dict:
+    """模型给的 snake_case 参数名 → 该工具 manifest 声明时的原名（kebab）。"""
+    aliases = KEBAB_KEYS.get(tool)
+    if not aliases:
+        return args
+    return {aliases.get(k, k): v for k, v in args.items()}
 
 
 def s(desc: str, **kw) -> dict:
     return {"type": "string", "description": desc, **kw}
+
+
+def member_param(desc: str, extra: tuple[str, ...] = ()) -> dict:
+    """成员名参数：已登记成员（+extra）做 enum，模型选不错名字；注册表空则退回自由文本。
+    启动时读一次（改 members.json 本就要重启）。"""
+    import members
+    names = [*members.member_names(), *extra]
+    return s(desc, enum=names) if names else s(desc)
 
 
 def num(desc: str) -> dict:
@@ -146,7 +214,7 @@ def fence(text: str, source: str) -> str:
 def relocate_image(src: str, member: str, domain: str) -> str:
     """来图从暂存（成员 inbox，data_root 内）搬到该成员某域 YYYY-MM/，返回 data 相对路径。
 
-    domain ∈ notes/schedule/tasks。失败保留原路径，绝不丢图。
+    domain = notes（日程/待办来图留 inbox）。失败保留原路径，绝不丢图。
     仅处理 data_root 内的文件 + 已知成员；否则原样返回。"""
     try:
         if not member:
@@ -190,12 +258,26 @@ def resolve_sendable(path: str, member: str) -> str | None:
 
 
 def data_path_guard(path: str) -> Path | None:
-    """LLM 给的路径只允许指向 data_root 内；越界或无效返回 None。"""
+    """LLM 给的路径只允许指向 data_root 内；越界或无效返回 None。
+    相对路径先按 data_root 解析（库里存的 source-image 都是这种），不存在且项目根下存在再按项目根（data/...）。"""
     try:
-        p = Path(path)
-        resolved = (p if p.is_absolute() else ROOT / p).resolve()
+        resolved = _paths.resolve_rel(path)       # 绝对路径 data_root / abs = abs
+        if not resolved.exists() and (ROOT / path).exists():
+            resolved = ROOT / path
+        resolved = resolved.resolve()
         if not resolved.is_relative_to(_paths.data_root().resolve()):
             return None
         return resolved
     except (OSError, ValueError):
         return None
+
+
+def data_file(path: str, refusal: str) -> Path | str:
+    """data_path_guard + 文件须存在。越界 → "[错误] {refusal}: data_root"；不在 → 报不存在
+    （别让 LLM 误以为格式不对而放弃）。返回 str 即错误文本，原样回给 LLM。"""
+    resolved = data_path_guard(path)
+    if resolved is None:
+        return f"[错误] {refusal}: {_paths.data_root().resolve()}"
+    if not resolved.is_file():
+        return f"[错误] {path} 不存在（可能已被归档移走，用归档后的路径）"
+    return resolved

@@ -29,6 +29,34 @@ def test_load_llm_overrides_corrupt_json(tmp_path, monkeypatch):
     assert agent_core._load_llm_overrides() == {}
 
 
+def test_stale_override_pruned_on_disk_warns_once(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    (tmp_path / ".llm_overrides.json").write_text(json.dumps({
+        "u1": {"model": "claude-opus-5"}, "u2": {"effort": "max", "model": "gone"}}),
+        encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        assert agent_core._load_llm_overrides() == {"u2": {"effort": "max"}}
+    assert "未登记值" in caplog.text
+    on_disk = json.loads((tmp_path / ".state" / ".llm_overrides.json").read_text(encoding="utf-8"))
+    assert on_disk == {"u2": {"effort": "max"}}
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        assert agent_core._load_llm_overrides() == {"u2": {"effort": "max"}}
+    assert caplog.text == ""
+
+
+def test_corrupt_overrides_moved_aside_warns_once(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    (tmp_path / ".llm_overrides.json").write_text("{broken", encoding="utf-8")
+    with caplog.at_level("WARNING"):
+        assert agent_core._load_llm_overrides() == {}
+    assert (tmp_path / ".state" / ".llm_overrides.json.bad").read_text(encoding="utf-8") == "{broken"
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        assert agent_core._load_llm_overrides() == {}
+    assert caplog.text == ""
+
+
 def test_save_llm_overrides_roundtrip_atomic(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_ROOT", str(tmp_path))
     data = {"u1": {"effort": "max"}}

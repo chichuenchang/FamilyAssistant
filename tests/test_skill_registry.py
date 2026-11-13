@@ -107,3 +107,17 @@ def test_duplicate_module_name_across_skills_rejected(tmp_path):
     (b / "helper.py").write_text("", encoding="utf-8")
     with pytest.raises(RuntimeError, match="helper.py"):
         bootstrap.check_unique_modules([a, b])
+
+
+def test_member_params_offer_registered_names(monkeypatch):
+    import members
+    import skill_registry
+    monkeypatch.setattr(members, "member_names", lambda *a: ["爸爸", "妈妈"])
+    props = {t["function"]["name"]: t["function"]["parameters"]["properties"]
+             for t in skill_registry.load().schemas}
+    assert props["list_transactions"]["member"]["enum"] == ["爸爸", "妈妈"]
+    assert props["set_profile_field"]["member_name"]["enum"] == ["爸爸", "妈妈", "Family"]
+    monkeypatch.setattr(members, "member_names", lambda *a: [])
+    props = {t["function"]["name"]: t["function"]["parameters"]["properties"]
+             for t in skill_registry.load().schemas}
+    assert "enum" not in props["list_transactions"]["member"]      # 空注册表不出空 enum

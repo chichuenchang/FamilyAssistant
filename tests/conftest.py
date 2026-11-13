@@ -50,13 +50,3 @@ def note_db_path(tmp_path):
     conn = note_dbm._connect(db_path=path)
     conn.close()
     return path
-
-
-@pytest.fixture
-def cal_db_path(tmp_path):
-    """Temporary SQLite database initialised with the schedule_items table."""
-    import cal_db as cal_dbm
-    path = str(tmp_path / "cal.db")
-    conn = cal_dbm._connect(db_path=path)
-    conn.close()
-    return path

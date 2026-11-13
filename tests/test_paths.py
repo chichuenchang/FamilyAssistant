@@ -26,14 +26,11 @@ def test_family_ledger(env):
     assert paths.family_ledger().as_posix().endswith("data/Family/ledger.db")
 
 
-def test_member_schedule_store(env):
-    assert paths.member_store("Alex Lee", "schedule").as_posix().endswith(
-        "data/Alex/schedule/schedule.db")
-
-
-def test_member_tasks_store(env):
-    assert paths.member_store("Alex Lee", "tasks").as_posix().endswith(
-        "data/Alex/tasks/tasks.db")
+@pytest.mark.parametrize("domain", ["schedule", "tasks"])
+def test_no_local_schedule_store(env, domain):
+    # 日程直连远程日历，无本地库
+    with pytest.raises(ValueError):
+        paths.member_store("Alex Lee", domain)
 
 
 def test_member_notes_store(env):
@@ -58,11 +55,6 @@ def test_to_rel_passthrough_relative(env):
 
 def test_unknown_member_slug(env):
     assert paths.member_dir("New Person").as_posix().endswith("data/new")
-
-
-def test_sync_state_path(env):
-    assert paths.member_sync_state("Alex Lee", "tasks").as_posix().endswith(
-        "data/Alex/tasks/.sync_state.json")
 
 
 def test_notes_image_dir_created(env):

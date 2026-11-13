@@ -81,7 +81,7 @@ class Transport:
         raise NotImplementedError
 
     def after_text_sent(self, target, text: str) -> None:
-        """钩子：文字已发出（微信用它记出站消息供引用反查）。"""
+        """钩子：文字已发出（回复与后台推送都经过；微信用它记出站消息供引用反查）。"""
 
     # ── 闸门 / 节拍 ────────────────────────────────────────
     def gate(self, channel_id) -> str | None:
@@ -195,8 +195,12 @@ class Transport:
     # ── 后台节拍 ────────────────────────────────────────────
     def push_text(self, user, text: str) -> bool:
         """后台推送（提醒/懂王报告/新邮件）：按频道内用户 id 发。没送达 = 返回 False 或抛错
-        （send_text 吞错只回 False 的频道如 Telegram 靠返回值；mail_watch 据此决定游标动不动）。"""
-        return self.send_text(user, text) is not False
+        （send_text 吞错只回 False 的频道如 Telegram 靠返回值；mail_watch 据此决定游标动不动）。
+        送达也走 after_text_sent：微信引用推送靠它反查原文。"""
+        if self.send_text(user, text) is False:
+            return False
+        self.after_text_sent(user, text)
+        return True
 
     def slow_tick(self) -> None:
         run_ticks(REGISTRY.slow_ticks, self.push_text, self.channel)

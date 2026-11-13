@@ -42,9 +42,10 @@ def inbox(data_root):
 
 
 def _planner(monkeypatch, ops, notes=(), seen=None):
-    def fake(layout_text, prior_ops, instruction, chat=None):
+    def fake(layout_text, prior_ops, instruction, chat=None, history=()):
         if seen is not None:
-            seen.append({"layout": layout_text, "prior": prior_ops, "instruction": instruction})
+            seen.append({"layout": layout_text, "prior": prior_ops, "instruction": instruction,
+                         "history": list(history)})
         return list(ops), list(notes)
     monkeypatch.setattr(pdf_plan, "compile_ops", fake)
 
@@ -318,3 +319,23 @@ def test_pages_encrypted_is_an_error(cli, capsys, inbox):
         w.write(fh)
     code, out, _ = _run(cli, capsys, "pdf-pages", "--file", str(enc), "--member", "jim")
     assert code == 1 and "已加密" in out
+
+
+def test_stale_layout_cache_without_targets_is_rebuilt(cli, capsys, inbox, monkeypatch):
+    from pdf_samples import build_table_form_pdf
+    pdf = build_table_form_pdf(inbox / "table.pdf")
+    code, out, _ = _run(cli, capsys, "pdf-inspect", "--file", str(pdf), "--member", "jim")
+    plan = pdf_plan.load("jim", _sid(out))
+    old = pdf_plan.load_layout(plan)
+    del old["version"], old["targets"]       # 改版前建的会话
+    pdf_plan.save_layout(plan, old)
+    seen = []
+    _planner(monkeypatch, [{"op": "text", "target": "p0-1", "text": "Jichun"}], seen=seen)
+    code, out, _ = _run(cli, capsys, "pdf-edit", "--session", plan["id"],
+                        "--instruction", "GIVEN NAME 填 Jichun", "--member", "jim")
+    assert code == 0 and "目标 p0-1 空格" in seen[0]["layout"]
+    assert seen[0]["history"] == []
+    _run(cli, capsys, "pdf-edit", "--session", plan["id"], "--instruction", "往右挪", "--member", "jim")
+    assert seen[1]["history"] == ["GIVEN NAME 填 Jichun"]          # 续改带上原话
+    assert "targets" in pdf_plan.load_layout(plan)
+    assert "Jichun" in page_texts(Path(cli._paths.resolve_rel(out.splitlines()[0])))[0]

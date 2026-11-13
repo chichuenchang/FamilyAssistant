@@ -144,81 +144,85 @@ class TestTick:
 
 # ── 取数 + 成文 ──────────────────────────────────────────────
 
-import cal_db
-import calendar_sync
 import gmail_provider
 import mail_rules
-import paths
+import remote_schedule as rs
 import tool_runtime as rt
+from test_remote_schedule import FakeProvider
 
 DAY = date(2026, 9, 17)
 
 
 @pytest.fixture
 def data(env, monkeypatch):
-    """Alex 的日程/待办库 + 远端刷新打桩（默认成功）。"""
-    monkeypatch.setattr(calendar_sync, "refresh_range",
-                        lambda member, domain, a, b: {"errors": []})
-    monkeypatch.setitem(calendar_sync.CFG, "enabled", True)
-    sched = str(paths.member_store("Alex", "schedule"))
-    tasks = str(paths.member_store("Alex", "tasks"))
-    return sched, tasks
+    """Alex 的远程日历（内存假 provider）。"""
+    fake = FakeProvider()
+    monkeypatch.setattr(rs, "provider_for", lambda m, d: fake if m == "Alex" else None)
+    return fake
+
+
+def _ev(title, start, **kw):
+    return rs.add("Alex", "event", title, start_at=start, **kw)
+
+
+def _tk(title, due=""):
+    return rs.add("Alex", "task", title, start_at=due)
 
 
 class TestGather:
     def test_events_inside_window_only(self, data):
-        sched, _ = data
-        cal_db.add_item("event", "游泳课", "2026-09-19T14:00", location="Y", db_path=sched)
-        cal_db.add_item("event", "太远", "2026-09-20T09:00", db_path=sched)
-        cal_db.add_item("event", "昨天", "2026-09-16T09:00", db_path=sched)
+        _ev("游泳课", "2026-09-19T14:00", location="Y")
+        _ev("太远", "2026-09-20T09:00")
+        _ev("昨天", "2026-09-16T09:00")
         d = banner.gather("Alex", DAY, CFG)
         assert d.events == ["09-19 周六 14:00 游泳课 @Y"]
 
     def test_event_overflow_noted(self, data):
-        sched, _ = data
         for i in range(banner.EVENT_CAP + 2):
-            cal_db.add_item("event", f"e{i}", "2026-09-17T10:00", db_path=sched)
+            _ev(f"e{i}", "2026-09-17T10:00")
         d = banner.gather("Alex", DAY, CFG)
         assert len(d.events) == banner.EVENT_CAP + 1 and d.events[-1] == "…还有 2 项"
 
     def test_tasks_overdue_first_undated_last(self, data):
-        _, tasks = data
-        cal_db.add_item("task", "无期限", db_path=tasks)
-        cal_db.add_item("task", "下周", "2026-09-25", db_path=tasks)
-        cal_db.add_item("task", "欠着", "2026-09-10", db_path=tasks)
+        _tk("无期限")
+        _tk("下周", "2026-09-25")
+        _tk("欠着", "2026-09-10")
         d = banner.gather("Alex", DAY, CFG)
         assert d.tasks == ["欠着（逾期 09-10）", "下周（截止 09-25）", "无期限"]
 
     def test_task_overflow_counts_all(self, data):
-        _, tasks = data
         for i in range(banner.TASK_CAP + 5):
-            cal_db.add_item("task", f"t{i}", db_path=tasks)
+            _tk(f"t{i}")
         d = banner.gather("Alex", DAY, CFG)
         assert d.tasks[-1] == "…还有 5 项"
         assert f"待办 {banner.TASK_CAP + 5} 项" in banner.template(d)
 
     def test_done_task_excluded(self, data):
-        _, tasks = data
-        tid = cal_db.add_item("task", "做完了", "2026-09-17", db_path=tasks)
-        cal_db.set_status(tid, "done", db_path=tasks)
+        rs.complete("Alex", _tk("做完了", "2026-09-17")["id"])
         assert banner.gather("Alex", DAY, CFG).tasks == []
 
-    def test_refresh_error_marks_stale(self, data, monkeypatch):
-        monkeypatch.setattr(calendar_sync, "refresh_range",
-                            lambda *a: {"errors": ["HTTP 500"]})
-        assert banner.gather("Alex", DAY, CFG).stale
+    def test_remote_failure_marks_stale(self, data):
+        _tk("交表")
+        data.fail = True
+        d = banner.gather("Alex", DAY, CFG)
+        assert d.stale and d.events == [] and d.tasks == []
 
-    def test_refresh_exception_marks_stale(self, data, monkeypatch):
-        def boom(*a):
-            raise OSError("offline")
-        monkeypatch.setattr(calendar_sync, "refresh_range", boom)
-        assert banner.gather("Alex", DAY, CFG).stale
+    def test_one_domain_failing_keeps_the_other(self, data, monkeypatch):
+        _ev("游泳课", "2026-09-17T14:00")
+        monkeypatch.setattr(data, "list_tasks", lambda: (_ for _ in ()).throw(RuntimeError("down")))
+        d = banner.gather("Alex", DAY, CFG)
+        assert d.stale and d.events == ["09-17 周四 14:00 游泳课"] and d.tasks == []
 
-    def test_calendar_disabled_skips_refresh(self, data, monkeypatch):
-        monkeypatch.setitem(calendar_sync.CFG, "enabled", False)
-        monkeypatch.setattr(calendar_sync, "refresh_range",
-                            lambda *a: pytest.fail("不该刷新"))
-        assert not banner.gather("Alex", DAY, CFG).stale
+    def test_only_events_configured_is_not_stale(self, data, monkeypatch):
+        _ev("游泳课", "2026-09-17T14:00")
+        monkeypatch.setattr(rs, "provider_for", lambda m, d: data if d == "schedule" else None)
+        d = banner.gather("Alex", DAY, CFG)
+        assert not d.stale and len(d.events) == 1 and d.tasks == []
+
+    def test_no_remote_calendar_is_not_stale(self, data, monkeypatch):
+        monkeypatch.setattr(rs, "provider_for", lambda m, d: None)
+        d = banner.gather("Alex", DAY, CFG)
+        assert not d.stale and d.events == [] and d.tasks == []
 
     def test_no_mail_block_means_no_mail(self, data):
         assert banner.gather("Alex", DAY, CFG).mails is None
@@ -240,8 +244,7 @@ class TestGather:
         assert d.mails == ["Bank <a@bank.com>｜账单"]
 
     def test_mail_failure_drops_only_mail(self, data, env, monkeypatch):
-        sched, _ = data
-        cal_db.add_item("event", "会", "2026-09-17T10:00", db_path=sched)
+        _ev("会", "2026-09-17T10:00")
         env.write_text(json.dumps({"Alex": {"telegram": ["1"], "banner": True,
                                             "mail": {"enabled": True}}}), encoding="utf-8")
         monkeypatch.setattr(gmail_provider, "is_configured", lambda prefix: True)
@@ -293,14 +296,21 @@ class TestCompose:
         assert text.count(rt.FENCE_NONCE) == 6
 
     def test_template_shows_stale_warning(self):
-        assert "远端同步失败" in banner.template(_digest(tasks=["t"], stale=True))
+        assert "远程日历读取失败" in banner.template(_digest(tasks=["t"], stale=True))
+
+    def test_stale_empty_does_not_claim_free_schedule(self):
+        out = banner.template(_digest(stale=True))
+        assert "远程日历读取失败" in out and "无日程" not in out and "无待办" not in out
+
+    def test_llm_told_calendar_missing_not_cached(self):
+        text = banner.llm_input(_digest(mails=["m｜s"], stale=True))
+        assert "远程日历读取失败" in text and "缓存" not in text
 
     def test_template_notes_mail_zero_when_configured(self):
         assert "未读邮件 0" in banner.template(_digest(tasks=["t"], mails=[]))
 
     def test_build_wires_gather_and_compose(self, data, monkeypatch):
-        sched, _ = data
-        cal_db.add_item("event", "会", "2026-09-17T10:00", db_path=sched)
+        _ev("会", "2026-09-17T10:00")
         monkeypatch.setattr(banner, "compose", lambda d, chat=None: f"n={len(d.events)}")
         assert REAL_BUILD("Alex", DAY, CFG) == "n=1"
 

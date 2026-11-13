@@ -53,6 +53,9 @@ python .codewhale/skills/Note_Keeper/cli.py note-list --member 爸爸 --limit 10
 python .codewhale/skills/Note_Keeper/cli.py note-search --member 爸爸 --keyword 车位
 python .codewhale/skills/Note_Keeper/cli.py note-search --member 爸爸 --keyword WiFi
 
+# 改写备忘（整条覆盖）
+python .codewhale/skills/Note_Keeper/cli.py note-edit --member 爸爸 --id 3 --content "车位 B3-007"
+
 # 删除备忘
 python .codewhale/skills/Note_Keeper/cli.py note-delete --member 爸爸 --id 3
 

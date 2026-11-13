@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 
+import models
 import tool_runtime as rt
 from tool_runtime import fn, s, num, int_, boolean
 
 ORDER = 10
 
 _FALLBACK = {
-    "add", "list", "summary", "monthly", "delete",
+    "add", "add-batch", "list", "summary", "monthly", "update", "delete",
     "deposit-add", "deposit-list", "tax-add", "tax-list",
     "fx-get", "fx-set",
     "transfer-add", "transfer-list",
@@ -26,8 +28,33 @@ CURRENCIES = rt.CONFIG.get("supported_currencies") or ["USD", "CNY", "CAD"]
 BASE_CUR = rt.CONFIG.get("base_currency") or "USD"
 CATS_DESC = json.dumps(rt.CONFIG.get("categories", {}), ensure_ascii=False)
 
+
+def _table_columns(schema: str) -> str:
+    """models.SCHEMA → "表(列, 列…)"（schema 单一事实来源，不手抄；内存库建一遍再读，不解析 DDL 文本）。"""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.executescript(schema)
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+        return "；".join(
+            f"{t}({', '.join(r[1] for r in conn.execute(f'PRAGMA table_info({t})'))})"
+            for t in tables)
+    finally:
+        conn.close()
+
+
+def tool_query_ledger(args):
+    return rt.ro_query(str(models.DB_PATH), args.get("sql") or "")
+
+
+def tool_add_transactions(args):
+    return rt.run_cli("add-batch", rt.json_arg(args, "rows"))
+
+
 TOOLS = {
     "add_transaction": "add",
+    "add_transactions": tool_add_transactions,
+    "query_ledger": tool_query_ledger,
     "list_transactions": "list",
     "get_summary": "summary",
     "get_monthly": "monthly",
@@ -39,23 +66,42 @@ TOOLS = {
     "list_tax": "tax-list",
     "add_transfer": "transfer-add",
     "list_transfers": "transfer-list",
+    "update_transaction": "update",
     "delete_transaction": "delete",
 }
 
 # 写工具：归属由代码注入（防 LLM 冒名记到别人头上）
-MEMBER_LOCKED = {"add_transaction", "add_deposit", "add_transfer", "add_tax"}
+MEMBER_LOCKED = {"add_transaction", "add_transactions", "add_deposit", "add_transfer", "add_tax"}
+
+# 一笔账的字段：add_transaction 与 add_transactions 每行共用
+_TX_PROPS = {
+    "type": s("交易类型", enum=TX_TYPES),
+    "amount": num("金额，正数"),
+    "currency": s(f"币种，默认 {BASE_CUR}", enum=CURRENCIES),
+    "date": s("日期 YYYY-MM-DD"),
+    "category": s(f"分类，必须从合法分类中选: {CATS_DESC}"),
+    "desc": s("描述，带商家+时间以区分同日同额，如 午餐"),
+    "notes": s("备注"),
+    "force": boolean("跳过重复检查强制写入（确认是另一笔独立交易、非重复时用）"),
+}
+_TX_REQUIRED = ["type", "amount", "date"]
 
 SCHEMAS = [
-    fn("add_transaction", "记一笔账（支出/收入/投资/储蓄）", {
-        "type": s("交易类型", enum=TX_TYPES),
-        "amount": num("金额，正数"),
-        "currency": s(f"币种，默认 {BASE_CUR}", enum=CURRENCIES),
-        "date": s("日期 YYYY-MM-DD"),
-        "category": s(f"分类，必须从合法分类中选: {CATS_DESC}"),
-        "desc": s("描述，如 午餐"),
-        "notes": s("备注"),
-        "force": boolean("跳过重复检查强制写入（仅在用户确认非重复后用）"),
-    }, ["type", "amount", "date"]),
+    fn("add_transaction", "记一笔账（支出/收入/投资/储蓄）", _TX_PROPS, _TX_REQUIRED),
+    fn("add_transactions", "一次记多笔账（账单/流水逐笔明细）。每行独立处理，返回逐行结果"
+       "（已添加/疑似重复未写/错误），你据此决定哪些行带 force 重记或问用户", {
+        "rows": {"type": "array", "description": "每项一笔，字段同 add_transaction",
+                 "items": {"type": "object",
+                           # 分类清单已在 add_transaction 给过，行里不再重复（省 token）
+                           "properties": {**_TX_PROPS, "category": s("分类，同 add_transaction")},
+                           "required": _TX_REQUIRED}},
+    }, ["rows"]),
+    fn("query_ledger", "对家庭账本跑一条只读 SQL（SQLite 方言，单条 SELECT/WITH，写操作会被拒）。"
+       f"任意统计、对比、趋势、跨表都可自己写；固定视图不够用时用它。最多返回 {rt.RO_QUERY_ROWS} 行。"
+       "表: " + _table_columns(models.SCHEMA)
+       + "。date 为 'YYYY-MM-DD' 文本，金额分币种不要混加", {
+        "sql": s("SQL 语句"),
+    }, ["sql"]),
     fn("list_transactions", "查询交易流水", {
         "type": s("交易类型", enum=TX_TYPES),
         "category": s("分类"),
@@ -63,19 +109,19 @@ SCHEMAS = [
         "start": s("开始日期 YYYY-MM-DD"),
         "end": s("结束日期 YYYY-MM-DD"),
         "limit": int_("最多返回条数"),
-        "member": s("按成员过滤，如只看某个家庭成员的账"),
+        "member": rt.member_param("按成员过滤，如只看某个家庭成员的账"),
     }),
     fn("get_summary", "按分类汇总金额（分币种）", {
         "type": s("交易类型，默认 expense", enum=TX_TYPES),
         "year": int_("年份"),
         "month": int_("月份 1-12"),
-        "member": s("按成员过滤，如只看某个家庭成员的账"),
+        "member": rt.member_param("按成员过滤，如只看某个家庭成员的账"),
         "by-member": boolean("按成员汇总（谁花了多少）"),
     }),
     fn("get_monthly", "按月汇总金额（分币种）", {
         "type": s("交易类型，默认 expense", enum=TX_TYPES),
         "year": int_("年份"),
-        "member": s("按成员过滤，如只看某个家庭成员的账"),
+        "member": rt.member_param("按成员过滤，如只看某个家庭成员的账"),
     }),
     fn("list_deposits", "查询定期存款", {
         "currency": s("币种", enum=CURRENCIES),
@@ -142,37 +188,28 @@ SCHEMAS = [
         "trace": s("模糊匹配 描述/银行/账号/备注"),
         "limit": int_("最多返回条数"),
     }),
+    fn("update_transaction", "修改一条交易：只传要改的字段，其余不动（记错金额/日期/分类/描述时用，别删了重记）", {
+        "id": int_("交易 id"),
+        "type": s("交易类型", enum=TX_TYPES),
+        "amount": num("金额，正数"),
+        "currency": s("币种", enum=CURRENCIES),
+        "date": s("日期 YYYY-MM-DD"),
+        "category": s("分类（须属于改后的交易类型）"),
+        "desc": s("描述"),
+        "notes": s("备注"),
+    }, ["id"]),
     fn("delete_transaction", "删除一条交易", {
         "id": int_("交易 id"),
     }, ["id"]),
 ]
 
 PROMPT_SECTIONS = [
-    f"""## 记账合法值（来自配置，必须从中选）
-- 交易类型: {"/".join(TX_TYPES)}
-- 币种: {"/".join(CURRENCIES)}（默认基准 {BASE_CUR}）
-- 各类型分类: {CATS_DESC}""",
-]
-
-PROMPT_RULES = [
-    '用户说"记账""花了""买了"→ 提取金额/分类/日期 → 调 add_transaction',
-    '用户说"查账""这个月花了多少"→ list_transactions 或 get_summary（可给 year+month 看某一个月）；要全年逐月对比→get_monthly（只按年，无月参数）；记错要删→delete_transaction',
-    '用户说"存了定期""买了理财"→ add_deposit；"我有哪些定期"→ list_deposits',
-    '用户说"报税""今年报了多少税"→ add_tax / list_tax',
-    '用户说"换汇""把X块换成美元""转到X银行存定期""转钱"→ add_transfer（尽量问全：源账户/金额/币种→目标金额/币种/银行/账号/类型/日期）',
-    '用户问"这笔定期/活期哪来的""资金来源""查某笔存款来源"→ list_transfers（按 to-deposit-id 或 trace 关键词）',
-    '用户说"汇率"→ get_fx_rate；"美元汇率改成X"→ set_fx_rate',
+    f"""## 记账（家庭共享账本）
+- 交易类型: {"/".join(TX_TYPES)}；币种: {"/".join(CURRENCIES)}（默认基准 {BASE_CUR}）；分类见 add_transaction
+- 开出去的发票/报价单/未付账单没有现金流，不是收支（要跟进收款可建待办）
+- 账单/流水记的是每笔明细；总额、应还款额、最低还款额、已还款额是汇总数字，不记""",
 ]
 
 IMAGE_ROUTES = [
-    "单张消费票据：提取金额/日期/类别，调 add_transaction 记一笔。"
-    "注意：开出去的发票/报价单/还没付的账单 = 没有实际现金流，绝不要直接记成收入或支出；"
-    "可建 add_task 跟进收款（带 source-image），别记成 income/expense。",
-    "银行/信用卡/支付App流水或账单（多行消费，PDF 多页账单常见）：逐笔记账，每条明细调一次"
-    " add_transaction（可在一条回复里并发多次调用）。**重点：记的是每一笔交易明细，绝不要把账单总额、"
-    "应还款额、最低还款额、已还款额当成一笔记账**——那些是汇总数字，不是消费。"
-    "每笔的 desc 带上能区分该行的信息（商家+时间，OCR 里有就带），这样同日同额的不同消费"
-    "不会被误判为重复，而重复发同一张截图会被正确拦截。某行确属独立消费却被重复检查拦下时，"
-    "对该行加 force=true 重记。行数多一条回复记不完就分多条继续记。"
-    "无法确定金额/日期的行先列出来问用户，不要瞎记。",
+    "消费票据、银行/信用卡/支付App流水或账单 → 记账（逐笔明细，desc 带商家+时间以免同日同额被误判重复）",
 ]
