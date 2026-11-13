@@ -19,7 +19,8 @@ _JINA_TIMEOUT = 20      # under _run_cli's 30s subprocess cap
 _SUBS_TIMEOUT = 18      # subs + meta worst case 26s, still under 30s
 _META_TIMEOUT = 8
 _SEARCH_TIMEOUT = 20    # per provider; Serper + Parallel fallback stays under the 45s CLI cap
-_JINA_READER = "https://r.jina.ai/"                  # keyless; cleans any URL to markdown
+_UA = "FamilyAssistant/1.0 (+web_reach)"
+_JINA_READER = "https://r.jina.ai/"                 # keyless; cleans any URL to markdown
 _SERPER_URL = "https://google.serper.dev/search"     # Google results (paid, serper.dev)
 _PARALLEL_URL = "https://api.parallel.ai/v1/search"  # fallback (paid, platform.parallel.ai)
 _RESULTS = 10
@@ -115,15 +116,12 @@ def web_search(query, *, search, fallback=None):
     if not q:
         return "[错误] 空查询"
     results, err = _attempt(q, search)
+    if not results and fallback is not None:
+        results, fb_err = _attempt(q, fallback)
+        if not results and not err == fb_err == "无结果":
+            err = f"{err}；备用 Parallel 失败：{fb_err}"
     if results:
         return trim(format_results(results))
-    if fallback is not None:
-        results, fb_err = _attempt(q, fallback)
-        if results:
-            return trim(format_results(results))
-        if err == fb_err == "无结果":
-            return "[错误] 没查到结果"
-        return f"[错误] 搜索失败：{err}；备用 Parallel 失败：{fb_err}"
     return "[错误] 没查到结果" if err == "无结果" else f"[错误] 搜索失败：{err}"
 
 
@@ -165,7 +163,7 @@ def _load_env():
 def _post_json(url, body, headers, *, timeout):
     req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers={
         "Content-Type": "application/json",
-        "User-Agent": "FamilyAssistant/1.0 (+web_reach)",
+        "User-Agent": _UA,
         **headers,
     })
     try:
@@ -184,15 +182,19 @@ def _require_key(name):
     return key
 
 
+def _items(data, key):
+    """Dict entries of data[key]; [] on any other shape."""
+    items = data.get(key) if isinstance(data, dict) else None
+    return [r for r in items if isinstance(r, dict)] if isinstance(items, list) else []
+
+
 def serper_search(query, *, timeout=_SEARCH_TIMEOUT):
     """POST Serper /search; return [{title,url,snippet}]. Raises on failure."""
     key = _require_key("SERPER_API_KEY")
     data = _post_json(_SERPER_URL, {"q": query, "num": _RESULTS}, {"X-API-KEY": key},
                       timeout=timeout)
-    items = data.get("organic") if isinstance(data, dict) else None
     return [{"title": r.get("title") or "", "url": r["link"], "snippet": r.get("snippet") or ""}
-            for r in (items if isinstance(items, list) else [])
-            if isinstance(r, dict) and r.get("link")][:_RESULTS]
+            for r in _items(data, "organic") if r.get("link")][:_RESULTS]
 
 
 def parallel_search(query, *, timeout=_SEARCH_TIMEOUT):
@@ -202,10 +204,9 @@ def parallel_search(query, *, timeout=_SEARCH_TIMEOUT):
             "advanced_settings": {"max_results": _RESULTS, "excerpt_settings": {
                 "max_chars_per_result": _PARALLEL_SNIPPET}}}
     data = _post_json(_PARALLEL_URL, body, {"x-api-key": key}, timeout=timeout)
-    items = data.get("results") if isinstance(data, dict) else None
     out = []
-    for r in items if isinstance(items, list) else []:
-        if isinstance(r, dict) and r.get("url"):
+    for r in _items(data, "results"):
+        if r.get("url"):
             ex = r.get("excerpts") if isinstance(r.get("excerpts"), list) else []
             text = _MD_HEADING_RE.sub("", "\n".join(e for e in ex if isinstance(e, str)))
             snippet = _WS_RE.sub(" ", text).strip()[:_PARALLEL_SNIPPET]
@@ -215,7 +216,7 @@ def parallel_search(query, *, timeout=_SEARCH_TIMEOUT):
 
 def jina_fetch(url, *, timeout=_JINA_TIMEOUT):
     headers = {
-        "User-Agent": "FamilyAssistant/1.0 (+web_reach)",
+        "User-Agent": _UA,
         "Accept": "text/plain, text/markdown, */*",
     }
     key = os.environ.get("JINA_API_KEY")
