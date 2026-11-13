@@ -133,17 +133,18 @@ def bilingual_search(query_en, query_zh, *, serper, any_search):
     `serper(q)` / `any_search(q)` return result text. Empty language skipped; a raising
     searcher only spoils its own block.
     """
-    langs = [(lang, (q or "").strip()) for lang, q in (("EN", query_en), ("中文", query_zh))]
-    jobs = [(name, fn, lang, q)
-            for name, fn in (("Serper", serper), ("AnySearch", any_search))
+    # collapse all whitespace: a newline in q would split the `## …` header line
+    langs = [(lang, " ".join((q or "").split())) for lang, q in (("EN", query_en), ("中文", query_zh))]
+    jobs = [(name, searcher, lang, q)
+            for name, searcher in (("Serper", serper), ("AnySearch", any_search))
             for lang, q in langs if q]
     if not jobs:
         return "[错误] 空查询"
 
     def run(job):
-        name, fn, lang, q = job
+        name, searcher, lang, q = job
         try:
-            text = fn(q)
+            text = searcher(q)
         except Exception as e:                   # noqa: BLE001 — relay any search failure
             text = f"[错误] 搜索失败：{e}"
         return f"## {name} · {lang}: {q}\n" + trim((text or "").strip(), BLOCK_CAP)

@@ -231,6 +231,11 @@ class TestBilingualSearch:
                                      any_search=self._echo("A"))
         assert "EN" not in out and out.count("## ") == 2
 
+    def test_newline_in_query_keeps_header_one_line(self):
+        out = reach.bilingual_search("gpu\nprice", "", serper=self._echo("S"),
+                                     any_search=self._echo("A"))
+        assert "## Serper · EN: gpu price\nS:gpu price" in out
+
     def test_both_empty(self):
         assert reach.bilingual_search(" ", "", serper=self._echo("S"),
                                       any_search=self._echo("A")) == "[错误] 空查询"
