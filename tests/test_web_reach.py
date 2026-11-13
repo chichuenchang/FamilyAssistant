@@ -7,6 +7,7 @@ import io
 import json
 import subprocess
 import sys as _sys
+import threading
 from pathlib import Path as _Path
 
 import pytest
@@ -194,6 +195,52 @@ class TestWebSearchFallback:
         long = [{"title": "T", "url": "https://x", "snippet": "a" * 7000}]
         out = reach.web_search("q", search=self._boom, fallback=lambda q: long)
         assert out.endswith("…[截断]")
+
+
+class TestBilingualSearch:
+    """Serper + AnySearch × EN + 中文, run concurrently, one labeled block each."""
+
+    def _echo(self, tag):
+        return lambda q: f"{tag}:{q}"
+
+    def test_four_blocks_in_order(self):
+        out = reach.bilingual_search("gpu price", "显卡 价格",
+                                     serper=self._echo("S"), any_search=self._echo("A"))
+        heads = [l for l in out.splitlines() if l.startswith("## ")]
+        assert heads == ["## Serper · EN: gpu price", "## Serper · 中文: 显卡 价格",
+                         "## AnySearch · EN: gpu price", "## AnySearch · 中文: 显卡 价格"]
+        assert "S:gpu price" in out and "A:显卡 价格" in out
+
+    def test_runs_concurrently(self):
+        barrier = threading.Barrier(4, timeout=2)
+
+        def wait(q):
+            barrier.wait()            # BrokenBarrierError if searches run serially
+            return q
+        out = reach.bilingual_search("a", "b", serper=wait, any_search=wait)
+        assert "[错误]" not in out
+
+    def test_block_trimmed(self):
+        out = reach.bilingual_search("a", "", serper=lambda q: "x" * 5000,
+                                     any_search=lambda q: "y")
+        assert "x" * reach.BLOCK_CAP + "…[截断]" in out
+        assert "x" * (reach.BLOCK_CAP + 1) not in out
+
+    def test_one_language_only(self):
+        out = reach.bilingual_search("  ", "显卡", serper=self._echo("S"),
+                                     any_search=self._echo("A"))
+        assert "EN" not in out and out.count("## ") == 2
+
+    def test_both_empty(self):
+        assert reach.bilingual_search(" ", "", serper=self._echo("S"),
+                                      any_search=self._echo("A")) == "[错误] 空查询"
+
+    def test_raise_isolated(self):
+        def boom(q):
+            raise RuntimeError("down")
+        out = reach.bilingual_search("a", "b", serper=self._echo("S"), any_search=boom)
+        assert out.count("[错误] 搜索失败：down") == 2
+        assert "S:a" in out and "S:b" in out
 
 
 class _Resp(io.BytesIO):
