@@ -2,7 +2,7 @@
 """Web_Reach CLI — 只读联网读取/搜索/YouTube 总结。
 
 子命令:
-  web-search --query "..."   联网搜索最新资讯（Serper，失败回退 Parallel）
+  web-search --query_en "..." --query_zh "..."   Serper + AnySearch × 英文 + 中文 并发搜索
   web-read   --url "..."     抓取并清洗单个网页正文（Jina r.jina.ai）
   yt-summary --url "..."     YouTube 取字幕转文字（无字幕回退标题+简介）
 
@@ -25,6 +25,7 @@ if sys.platform == "win32":
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Agent_Runtime")); import bootstrap  # noqa: E402,E702  挂全部 skill 目录
 
+import anysearch
 import reach
 
 
@@ -34,7 +35,8 @@ def main() -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("web-search", help="联网搜索最新资讯")
-    s.add_argument("--query", required=True, help="搜索关键词/问题")
+    s.add_argument("--query_en", default="", help="英文关键词")
+    s.add_argument("--query_zh", default="", help="中文关键词")
 
     r = sub.add_parser("web-read", help="抓取并阅读一个网页")
     r.add_argument("--url", required=True, help="网页 URL")
@@ -45,8 +47,11 @@ def main() -> int:
     args = p.parse_args()
 
     if args.cmd == "web-search":
-        out = reach.web_search(args.query, search=reach.serper_search,
-                               fallback=reach.parallel_search)
+        out = reach.bilingual_search(
+            args.query_en, args.query_zh,
+            serper=lambda q: reach.web_search(q, search=reach.serper_search,
+                                              fallback=reach.parallel_search),
+            any_search=lambda q: anysearch.search(q, call=anysearch.anysearch_call))
     elif args.cmd == "web-read":
         out = reach.web_read(args.url, fetch=reach.jina_fetch)
     elif args.cmd == "yt-summary":

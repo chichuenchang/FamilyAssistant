@@ -16,8 +16,8 @@
 | **Calendar Keeper** | 按成员私有的日程与待办，直连各成员远程日历，无本地库（作者已实现 Google Calendar + Tasks provider，按成员/域选择，可按契约换） | [SKILL.md](.codewhale/skills/Calendar_Keeper/SKILL.md) | 日程、安排、活动、待办、任务、日历 |
 | **Mail Keeper** | 按成员私有的邮箱：查收/读全文/回信/发新信，可带附件（发信须用户下一条消息确认才发出，闸门在代码里；回信收件人由原信决定），可选新邮件播报（AI 判需处理才报，发件人+主题+一行理由；说"这种别推"/"漏推了"即学会 mute/always 该类）；建 Gmail 过滤器把某类信分到别的标签（同样两轮确认）；当前 Gmail provider，可按契约换 | [SKILL.md](.codewhale/skills/Mail_Keeper/SKILL.md) | 邮件、邮箱、Gmail、回邮件、查收邮件 |
 | **Remote Backup** | 用户数据云盘镜像（可选；作者已实现 Google Drive provider，用户可按契约换成自己想要的云端存储） | [SKILL.md](.codewhale/skills/Remote_Backup/SKILL.md) | 备份、同步、云盘、恢复数据 |
-| **Web Reach** | 只读联网：搜最新资讯、抓取/总结网页、转写 YouTube 字幕（搜索需付费 key；YouTube 需 yt-dlp，缺失优雅降级） | [SKILL.md](.codewhale/skills/Web_Reach/SKILL.md) | 最新新闻、查一下、外面在发生什么、总结链接、YouTube、视频 |
-| **Any Search** | 高质量实时联网搜索：垂直领域（finance/health/academic/code 等）结构化结果 + 网页全文抽取（可选 `ANYSEARCH_API_KEY`，未配置走匿名）；问最新资讯时优先，Web Reach 兜底 | [SKILL.md](.codewhale/skills/Any_Search/SKILL.md) | 最新资讯、实时搜索、行情、垂直领域查询 |
+| **Web Reach** | 只读联网：搜最新资讯（Serper + AnySearch × 中英双语）、抓取/总结网页、转写 YouTube 字幕（搜索需付费 key；YouTube 需 yt-dlp，缺失优雅降级） | [SKILL.md](.codewhale/skills/Web_Reach/SKILL.md) | 最新新闻、查一下、外面在发生什么、总结链接、YouTube、视频 |
+| **Any Search** | 高质量实时联网搜索：垂直领域（finance/health/academic/code 等）结构化结果 + 网页全文抽取（可选 `ANYSEARCH_API_KEY`，未配置走匿名）；普通搜索已并入 Web Reach `web_search` | [SKILL.md](.codewhale/skills/Any_Search/SKILL.md) | 最新资讯、实时搜索、行情、垂直领域查询 |
 | **Agent Runtime** | 频道无关 Agent 大脑 + 远程频道传输层（微信、Telegram）+ 懂王（KnowKing）跨平台舆情桥（外部 uv 项目，后台跑 + 完成推送） | [SKILL.md](.codewhale/skills/Agent_Runtime/SKILL.md) | 远程频道、微信、Telegram、Bot 接入、Agent 核心、新增频道、knowking、kk、懂王 |
 
 ## 运行时提示词

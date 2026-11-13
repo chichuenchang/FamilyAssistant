@@ -4,7 +4,7 @@
 
 实现 `anysearch.py`（纯逻辑，可注入测试）+ `cli.py`（真实 AnySearch JSON-RPC 适配器）就在本 skill 目录 `.codewhale/skills/Any_Search/`。
 
-走 AnySearch API（JSON-RPC 2.0，`https://api.anysearch.com/mcp`）。**`ANYSEARCH_API_KEY` 可选**——未配置走匿名访问（限额较低但可用）。只读公开信息，不写库、不按成员隔离。作为 Web_Reach 的高质量替代：问最新资讯时优先 Any Search，Web Reach 作兜底。
+走 AnySearch API（JSON-RPC 2.0，`https://api.anysearch.com/mcp`）。**`ANYSEARCH_API_KEY` 可选**——未配置走匿名访问（限额较低但可用）。只读公开信息，不写库、不按成员隔离。普通搜索已并入 Web_Reach `web_search`（Serper + AnySearch × 中英，调本 skill `anysearch.search`）；`anysearch_search` 只做垂直领域结构化搜索。
 
 ## 命令行调用（agent 经白名单子命令调用）
 
@@ -35,7 +35,7 @@ python .codewhale/skills/Any_Search/cli.py any-images --query "praying mantis" -
 
 | 工具 (LLM) | 子命令 | 触发场景 |
 |-----------|--------|---------|
-| `anysearch_search` | `any-search --query` | "最新新闻 / 帮我查一下 X / 行情 / 垂直领域查询" |
+| `anysearch_search` | `any-search --query` | 垂直领域结构化查询（行情 / 学术 / 健康等，配 `--domain`） |
 | `anysearch_extract` | `any-extract --url` | 用户发链接让看/总结文章 |
 | `anysearch_subdomains` | `any-subdomains --domains` | 垂直搜索前发现可用子域 |
 | `fetch_images` | `any-images --query` | "看 X 的图片 / X 长什么样" |
@@ -77,4 +77,4 @@ python .codewhale/skills/Any_Search/cli.py any-images --query "praying mantis" -
 
 - 同步单条回复：抓取期间（约数秒）Bot 静默，完成后一次性回复（与其它工具一致）。
 - 抓取到的网页文本会进入 LLM 上下文（轻度注入面）；工具固定只读、LLM 不能执行命令，最坏只是被污染的"总结"，非 RCE。
-- 依赖 AnySearch 外部服务，可能限频或偶发不可用 → 返回 `[错误]`，Agent 可回退 Web_Reach。
+- 依赖 AnySearch 外部服务，可能限频或偶发不可用 → 返回 `[错误]`。

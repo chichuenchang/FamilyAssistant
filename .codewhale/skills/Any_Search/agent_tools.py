@@ -23,9 +23,9 @@ MEMBER_LOCKED = {"fetch_images"}   # 下载落到发送者自己的目录
 IMAGE_TOOLS = {"fetch_images"}     # 返回每行一个图片路径，传输层逐张发
 
 SCHEMAS = [
-    fn("anysearch_search", "高质量实时联网搜索（AnySearch）。比 web_search 更准，"
-       "查最新资讯/事实/股价/学术/健康等首选。需要垂直领域结构化结果时（finance/health/"
-       "academic/travel/code 等），先用 anysearch_subdomains 拿到 sub_domain 再传 domain/sub_domain。"
+    fn("anysearch_search", "AnySearch 垂直领域结构化搜索（finance/health/academic/travel/code 等）。"
+       "普通联网查询用 web_search（已含 AnySearch 中英双语），只有需要垂直结构化结果时才用它："
+       "先用 anysearch_subdomains 拿到 sub_domain 再传 domain/sub_domain。"
        "返回结果原文，你据此用中文总结报告", {
         "query": s("搜索关键词/问题"),
         "domain": s("垂直领域（可选）", enum=[

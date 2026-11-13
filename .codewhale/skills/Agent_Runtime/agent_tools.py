@@ -64,7 +64,7 @@ SCHEMAS = [
     fn("knowking", "懂王（KnowKing / kk）：跨社交平台（YouTube/X/Reddit/TikTok/Instagram/"
        "Bilibili/Zhihu）搜集\"大家在怎么说某话题\"，出中立第三方舆情报告。"
        "**仅当用户明确说出触发词 knowking / kk / 懂王 时才用**（如\"用 knowking 查 X\""
-       "\"kk 一下大家怎么看 X\"）；普通查事实/新闻/股价仍用 anysearch_search/web_search，不要用它。"
+       "\"kk 一下大家怎么看 X\"）；普通查事实/新闻/股价仍用 web_search，不要用它。"
        "耗时数分钟，后台运行，出报告会自动推送给用户——你只需把本工具返回的\"已开始\"提示原样转达，"
        "不要等待、不要编造报告内容。", {
         "topic": s("要查的主题：去掉 knowking/kk/懂王 触发词，保留真正要查的内容 + 用户给的额外背景/角度/时间范围"),

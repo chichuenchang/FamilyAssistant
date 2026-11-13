@@ -361,9 +361,14 @@ class TestCli:
     """cli.py error paths — no network needed (empty args short-circuit before fetch)."""
 
     def test_web_search_empty_query_prints_error_exit0(self):
-        r = _run_cli("web-search", "--query", "   ")
+        r = _run_cli("web-search", "--query_en", "   ", "--query_zh", " ")
         assert r.returncode == 0, r.stderr
-        assert "[错误]" in r.stdout
+        assert "[错误] 空查询" in r.stdout
+
+    def test_web_search_no_flags_prints_error_exit0(self):
+        r = _run_cli("web-search")
+        assert r.returncode == 0, r.stderr
+        assert "[错误] 空查询" in r.stdout
 
     def test_web_read_empty_url_prints_error_exit0(self):
         r = _run_cli("web-read", "--url", "   ")
@@ -371,8 +376,8 @@ class TestCli:
         assert "[错误]" in r.stdout
 
     def test_missing_required_arg_exits_2(self):
-        r = _run_cli("web-search")
-        assert r.returncode == 2  # argparse: missing --query
+        r = _run_cli("web-read")
+        assert r.returncode == 2  # argparse: missing --url
 
 
 class TestAgentRegistration:
@@ -384,6 +389,12 @@ class TestAgentRegistration:
         schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
         assert names <= schema_names
         assert names <= set(agent_core._TOOL_MAP)
+
+    def test_web_search_schema_requires_both_languages(self):
+        import agent_core
+        fn = next(t["function"] for t in agent_core.TOOL_SCHEMAS
+                  if t["function"]["name"] == "web_search")
+        assert fn["parameters"]["required"] == ["query_en", "query_zh"]
 
     def test_reach_commands_allowed_and_routed(self):
         import agent_core
