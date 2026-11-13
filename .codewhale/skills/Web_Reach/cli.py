@@ -2,7 +2,7 @@
 """Web_Reach CLI — 只读联网读取/搜索/YouTube 总结。
 
 子命令:
-  web-search --query "..."   联网搜索最新资讯（Serper，失败回退 Parallel；需 SERPER_API_KEY 或 PARALLEL_API_KEY）
+  web-search --query "..."   联网搜索最新资讯（Serper，失败回退 Parallel）
   web-read   --url "..."     抓取并清洗单个网页正文（Jina r.jina.ai）
   yt-summary --url "..."     YouTube 取字幕转文字（无字幕回退标题+简介）
 

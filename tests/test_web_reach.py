@@ -250,7 +250,6 @@ class TestParallelSearch:
             reach.parallel_search("q")
 
     def test_posts_query_and_cuts_excerpts(self, monkeypatch):
-        """Parallel overshoots max_chars_per_result (~1000 back for 500), so we cut too."""
         monkeypatch.setenv("PARALLEL_API_KEY", "p123")
         seen = _fake_urlopen(monkeypatch, _PARALLEL)
         out = reach.parallel_search("hello world")

@@ -4,14 +4,14 @@
 
 实现 `reach.py` + `cli.py` 就在本 skill 目录 `.codewhale/skills/Web_Reach/`。搜索/网页抓取仅用标准库 urllib；YouTube 需 `yt-dlp`（缺失时优雅降级）。
 
-搜索走 Serper（Google 结果，需 `SERPER_API_KEY`），报错/无结果回退 Parallel（需 `PARALLEL_API_KEY`）；网页读取走 Jina 阅读器（keyless）。只读公开信息，不写库、不按成员隔离。
+搜索走 Serper（Google 结果），报错/无结果回退 Parallel；网页读取走 Jina 阅读器（keyless）。只读公开信息，不写库、不按成员隔离。
 
 ## 命令行调用（agent 经白名单子命令调用）
 
 从项目根目录直接跑：
 
 ```bash
-# 联网搜索最新资讯（Serper→Parallel，输出编号 标题/URL/摘要）
+# 联网搜索最新资讯（输出编号 标题/URL/摘要）
 python .codewhale/skills/Web_Reach/cli.py web-search --query "最新 AI 新闻"
 
 # 抓取并阅读单个网页正文
@@ -54,9 +54,8 @@ python .codewhale/skills/Web_Reach/cli.py yt-summary --url "https://www.youtube.
 
 ## 配置
 
-- `SERPER_API_KEY` / `PARALLEL_API_KEY`（`web-search` 至少一个）：环境变量 > skill 目录 `.env`（模板 `.env.example`，gitignore）。缺一个即直接走另一个。
+- `SERPER_API_KEY` / `PARALLEL_API_KEY`（`web-search` 至少一个）：环境变量 > skill 目录 `.env`（模板 `.env.example`，gitignore）。缺一个即直接走另一个；两个都缺即报错，无 keyless 回退。
 - 换掉 RapidAPI Real-Time Web Search（2026-11-12）：同 14 查询实测 Serper 中位 ~1.1s、与其共享 ~74% 链接（同为 Google）；RapidAPI ~7.5s。Parallel `advanced` ~2.2s，新闻最新、多一手来源，偶有重复链接。旧 DuckDuckGo 回退（链接为跳转、常夹广告）一并去掉。
-- Parallel 摘录超出 `max_chars_per_result`（要 500 回 ~1000），本地再截 500，否则 10 条撑爆 6000 字上限。
 - `web-search` 子进程上限 45s（`agent_tools.py` `CLI_TIMEOUTS`）：Serper 20s + Parallel 20s。
 
 - `JINA_API_KEY`：设置后作为 `Authorization: Bearer` 头发给 `r.jina.ai`，提升免费限频。不设则用 keyless 免费档。
