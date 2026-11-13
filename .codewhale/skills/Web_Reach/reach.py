@@ -2,14 +2,14 @@
 #
 # Pure logic (trim/parse_vtt/summarize_youtube/web_search/web_read) takes its I/O as
 # injected callables so it is unit-testable without network. The thin adapters
-# (rapidapi_search/jina_fetch/ytdlp_subs/ytdlp_meta) do the real I/O, wired in by cli.py.
+# (serper_search/parallel_search/jina_fetch/ytdlp_subs/ytdlp_meta) do the real I/O,
+# wired in by cli.py.
 import json
 import os
 import re
 import subprocess
 import tempfile
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -18,10 +18,14 @@ _TRUNC = "…[截断]"
 _JINA_TIMEOUT = 20      # under _run_cli's 30s subprocess cap
 _SUBS_TIMEOUT = 18      # subs + meta worst case 26s, still under 30s
 _META_TIMEOUT = 8
+_SEARCH_TIMEOUT = 20    # per provider; Serper + Parallel fallback stays under the 45s CLI cap
 _JINA_READER = "https://r.jina.ai/"                  # keyless; cleans any URL to markdown
-_RAPID_HOST = "real-time-web-search.p.rapidapi.com"  # RapidAPI "Real-Time Web Search" (paid)
-_RAPID_NUM = 10         # `limit` ignored by API; `num` honoured
-_DDG_HTML = "https://html.duckduckgo.com/html/?q="   # keyless fallback search page
+_SERPER_URL = "https://google.serper.dev/search"     # Google results (paid, serper.dev)
+_PARALLEL_URL = "https://api.parallel.ai/v1/search"  # fallback (paid, platform.parallel.ai)
+_RESULTS = 10
+# Parallel snippets are page excerpts; it overshoots its own cap (~1000 back for 500), so cut
+# here too — else 10 results blow CAP and the tail results are lost.
+_PARALLEL_SNIPPET = 500
 
 _TAG_RE = re.compile(r"<[^>]+>")   # <c>…</c>, inline <00:00:01.500> word timings
 
@@ -77,18 +81,10 @@ def summarize_youtube(url, *, get_subs, get_meta):
     return "[错误] 该视频无字幕、无简介，无法总结"
 
 
-def _organic(payload):
-    """Result list from either response shape: data=[…] or data={organic_results:[…]}."""
-    data = (payload or {}).get("data")
-    if isinstance(data, dict):
-        data = data.get("organic_results")
-    return [r for r in (data or []) if isinstance(r, dict)]
-
-
-def format_results(payload):
-    """RapidAPI search JSON -> numbered markdown list (title / url / snippet)."""
+def format_results(results):
+    """[{title, url, snippet}] -> numbered markdown list."""
     lines = []
-    for i, r in enumerate(_organic(payload), 1):
+    for i, r in enumerate(results, 1):
         title = (r.get("title") or "").strip()
         url = (r.get("url") or "").strip()
         snippet = (r.get("snippet") or "").strip()
@@ -98,39 +94,35 @@ def format_results(payload):
     return "\n\n".join(lines)
 
 
-def _primary(q, search):
-    """RapidAPI attempt -> (markdown, None) or (None, error reason)."""
+def _attempt(q, search):
+    """One provider -> (results, None) or (None, error reason)."""
     try:
-        payload = search(q)
+        results = search(q)
     except Exception as e:                       # noqa: BLE001 — relay any fetch failure
         return None, str(e)
-    status = (payload or {}).get("status")
-    if status and status != "OK":
-        return None, payload.get("error") or status
-    return (format_results(payload), None) if _organic(payload) else (None, "无结果")
+    return (results, None) if results else (None, "无结果")
 
 
 def web_search(query, *, search, fallback=None):
-    """Search via injected `search(q) -> dict` (RapidAPI JSON); return markdown results.
+    """Search via injected `search(q) -> [{title,url,snippet}]` (Serper); markdown results.
 
-    On any RapidAPI failure (raise / non-OK / no results) and a `fallback(url) -> str`
-    fetcher given, retry as a DuckDuckGo results page through the Jina reader.
+    On a failure (raise / no results) and a `fallback(q)` of the same shape given (Parallel),
+    retry there.
     """
     q = (query or "").strip()
     if not q:
         return "[错误] 空查询"
-    out, err = _primary(q, search)
-    if out:
-        return trim(out)
-    if fallback is None:
-        return "[错误] 没查到结果" if err == "无结果" else f"[错误] 搜索失败：{err}"
-    try:
-        raw = (fallback(_JINA_READER + _DDG_HTML + urllib.parse.quote(q)) or "").strip()
-    except Exception as e:                       # noqa: BLE001 — relay any fetch failure
-        return f"[错误] 搜索失败：{err}；备用 DuckDuckGo 失败：{e}"
-    if not raw:
-        return f"[错误] 搜索失败：{err}；备用 DuckDuckGo 失败：无结果"
-    return trim(raw)
+    results, err = _attempt(q, search)
+    if results:
+        return trim(format_results(results))
+    if fallback is not None:
+        results, fb_err = _attempt(q, fallback)
+        if results:
+            return trim(format_results(results))
+        if err == fb_err == "无结果":
+            return "[错误] 没查到结果"
+        return f"[错误] 搜索失败：{err}；备用 Parallel 失败：{fb_err}"
+    return "[错误] 没查到结果" if err == "无结果" else f"[错误] 搜索失败：{err}"
 
 
 def web_read(url, *, fetch):
@@ -168,17 +160,11 @@ def _load_env():
         pass
 
 
-def rapidapi_search(query, *, num=_RAPID_NUM, timeout=_JINA_TIMEOUT):
-    """GET RapidAPI Real-Time Web Search /search; return parsed JSON. Raises on failure."""
-    _load_env()
-    key = os.environ.get("RAPIDAPI_KEY", "")
-    if not key:
-        raise RuntimeError("未配置 RAPIDAPI_KEY")
-    url = f"https://{_RAPID_HOST}/search?" + urllib.parse.urlencode({"q": query, "num": num})
-    req = urllib.request.Request(url, headers={
-        "x-rapidapi-key": key,
-        "x-rapidapi-host": _RAPID_HOST,
+def _post_json(url, body, headers, *, timeout):
+    req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), headers={
+        "Content-Type": "application/json",
         "User-Agent": "FamilyAssistant/1.0 (+web_reach)",
+        **headers,
     })
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -186,6 +172,43 @@ def rapidapi_search(query, *, num=_RAPID_NUM, timeout=_JINA_TIMEOUT):
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace")[:200]
         raise RuntimeError(f"HTTP {e.code} {body}") from None
+
+
+def _key(name):
+    _load_env()
+    key = os.environ.get(name, "")
+    if not key:
+        raise RuntimeError(f"未配置 {name}")
+    return key
+
+
+def serper_search(query, *, timeout=_SEARCH_TIMEOUT):
+    """POST Serper /search; return [{title,url,snippet}]. Raises on failure."""
+    key = _key("SERPER_API_KEY")
+    data = _post_json(_SERPER_URL, {"q": query, "num": _RESULTS}, {"X-API-KEY": key},
+                      timeout=timeout)
+    items = data.get("organic") if isinstance(data, dict) else None
+    return [{"title": r.get("title") or "", "url": r["link"], "snippet": r.get("snippet") or ""}
+            for r in (items if isinstance(items, list) else [])
+            if isinstance(r, dict) and r.get("link")][:_RESULTS]
+
+
+def parallel_search(query, *, timeout=_SEARCH_TIMEOUT):
+    """POST Parallel /v1/search; return [{title,url,snippet}], excerpts as the snippet."""
+    key = _key("PARALLEL_API_KEY")
+    body = {"objective": query, "search_queries": [query], "mode": "advanced",
+            "advanced_settings": {"max_results": _RESULTS, "excerpt_settings": {
+                "max_chars_per_result": _PARALLEL_SNIPPET}}}
+    data = _post_json(_PARALLEL_URL, body, {"x-api-key": key}, timeout=timeout)
+    items = data.get("results") if isinstance(data, dict) else None
+    out = []
+    for r in items if isinstance(items, list) else []:
+        if isinstance(r, dict) and r.get("url"):
+            ex = r.get("excerpts") if isinstance(r.get("excerpts"), list) else []
+            out.append({"title": r.get("title") or "", "url": r["url"],
+                        "snippet": " ".join(e for e in ex if isinstance(e, str)).strip()
+                        [:_PARALLEL_SNIPPET]})
+    return out[:_RESULTS]
 
 
 def jina_fetch(url, *, timeout=_JINA_TIMEOUT):
