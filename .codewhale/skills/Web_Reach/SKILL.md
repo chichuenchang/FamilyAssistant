@@ -57,7 +57,7 @@ python .codewhale/skills/Web_Reach/cli.py yt-summary --url "https://www.youtube.
 
 - `SERPER_API_KEY` / `PARALLEL_API_KEY`（`web-search` 至少一个）：环境变量 > skill 目录 `.env`（模板 `.env.example`，gitignore）。缺一个即直接走另一个；两个都缺即报错，无 keyless 回退。
 - 换掉 RapidAPI Real-Time Web Search（2026-11-12）：同 14 查询实测 Serper 中位 ~1.1s、与其共享 ~74% 链接（同为 Google）；RapidAPI ~7.5s。Parallel `advanced` ~2.2s，新闻最新、多一手来源，偶有重复链接。旧 DuckDuckGo 回退（链接为跳转、常夹广告）一并去掉。
-- `web-search` 子进程上限 45s（`agent_tools.py` `CLI_TIMEOUTS`）：4 路并发，最慢 Serper 20s + Parallel 20s。
+- `web-search` 子进程上限 45s：分解见 `agent_tools.py` `CLI_TIMEOUTS` 注释。
 
 - `JINA_API_KEY`：设置后作为 `Authorization: Bearer` 头发给 `r.jina.ai`，提升免费限频。不设则用 keyless 免费档。
 
