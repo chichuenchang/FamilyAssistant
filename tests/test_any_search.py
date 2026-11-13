@@ -244,6 +244,13 @@ class TestAgentRegistration:
         assert names <= schema_names
         assert names <= set(agent_core._TOOL_MAP)
 
+    def test_anysearch_search_is_vertical_only(self):
+        import agent_core
+        fn = next(t["function"] for t in agent_core.TOOL_SCHEMAS
+                  if t["function"]["name"] == "anysearch_search")
+        assert "domain" in fn["parameters"]["required"]
+        assert "general" not in fn["parameters"]["properties"]["domain"]["enum"]
+
     def test_anysearch_commands_allowed_and_routed(self):
         import agent_core
         cmds = {"any-search", "any-extract", "any-subdomains"}

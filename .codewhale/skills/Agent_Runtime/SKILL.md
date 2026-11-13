@@ -147,7 +147,7 @@ YouTube/X/Reddit/TikTok/Instagram/Bilibili/Zhihu 搜集"大家在怎么说"，�
 `knowking_jobs.py` 接入 Agent，**不改 KnowKing 仓库**。
 
 - **触发**：仅当用户**显式说出 `knowking` / `kk` / `懂王`**（如"用 knowking 查大家怎么看 X"）。
-  普通查事实/新闻仍走 `anysearch_search`/`web_search`。工具描述与 system prompt 双重约束。
+  普通查事实/新闻仍走 `web_search`。工具描述与 system prompt 双重约束。
 - **后台 + 推送模型**（`kk ask` 耗时数分钟，同步会卡死会话）：`knowking` 工具调
   `knowking_jobs.submit()` → 落盘 `running` 任务 + 起守护线程跑 `uv run kk ask` → 立即返回
   "已开始"给用户；出报告后由传输层轮询 `poll_and_deliver(send_fn, channel)` 把报告推回**发起人**

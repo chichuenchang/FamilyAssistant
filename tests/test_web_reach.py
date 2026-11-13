@@ -7,6 +7,7 @@ import io
 import json
 import subprocess
 import sys as _sys
+import threading
 from pathlib import Path as _Path
 
 import pytest
@@ -196,6 +197,57 @@ class TestWebSearchFallback:
         assert out.endswith("…[截断]")
 
 
+class TestBilingualSearch:
+    """Serper + AnySearch × EN + 中文, run concurrently, one labeled block each."""
+
+    def _echo(self, tag):
+        return lambda q: f"{tag}:{q}"
+
+    def test_four_blocks_in_order(self):
+        out = reach.bilingual_search("gpu price", "显卡 价格",
+                                     serper=self._echo("S"), any_search=self._echo("A"))
+        heads = [l for l in out.splitlines() if l.startswith("## ")]
+        assert heads == ["## Serper · EN: gpu price", "## Serper · 中文: 显卡 价格",
+                         "## AnySearch · EN: gpu price", "## AnySearch · 中文: 显卡 价格"]
+        assert "S:gpu price" in out and "A:显卡 价格" in out
+
+    def test_runs_concurrently(self):
+        barrier = threading.Barrier(4, timeout=2)
+
+        def wait(q):
+            barrier.wait()            # BrokenBarrierError if searches run serially
+            return q
+        out = reach.bilingual_search("a", "b", serper=wait, any_search=wait)
+        assert "[错误]" not in out
+
+    def test_block_trimmed(self):
+        out = reach.bilingual_search("a", "", serper=lambda q: "x" * 5000,
+                                     any_search=lambda q: "y")
+        assert "x" * reach.BLOCK_CAP + "…[截断]" in out
+        assert "x" * (reach.BLOCK_CAP + 1) not in out
+
+    def test_one_language_only(self):
+        out = reach.bilingual_search("  ", "显卡", serper=self._echo("S"),
+                                     any_search=self._echo("A"))
+        assert "EN" not in out and out.count("## ") == 2
+
+    def test_newline_in_query_keeps_header_one_line(self):
+        out = reach.bilingual_search("gpu\nprice", "", serper=self._echo("S"),
+                                     any_search=self._echo("A"))
+        assert "## Serper · EN: gpu price\nS:gpu price" in out
+
+    def test_both_empty(self):
+        assert reach.bilingual_search(" ", "", serper=self._echo("S"),
+                                      any_search=self._echo("A")) == "[错误] 空查询"
+
+    def test_raise_isolated(self):
+        def boom(q):
+            raise RuntimeError("down")
+        out = reach.bilingual_search("a", "b", serper=self._echo("S"), any_search=boom)
+        assert out.count("[错误] 搜索失败：down") == 2
+        assert "S:a" in out and "S:b" in out
+
+
 class _Resp(io.BytesIO):
     def __enter__(self):
         return self
@@ -314,9 +366,14 @@ class TestCli:
     """cli.py error paths — no network needed (empty args short-circuit before fetch)."""
 
     def test_web_search_empty_query_prints_error_exit0(self):
-        r = _run_cli("web-search", "--query", "   ")
+        r = _run_cli("web-search", "--query_en", "   ", "--query_zh", " ")
         assert r.returncode == 0, r.stderr
-        assert "[错误]" in r.stdout
+        assert "[错误] 空查询" in r.stdout
+
+    def test_web_search_no_flags_prints_error_exit0(self):
+        r = _run_cli("web-search")
+        assert r.returncode == 0, r.stderr
+        assert "[错误] 空查询" in r.stdout
 
     def test_web_read_empty_url_prints_error_exit0(self):
         r = _run_cli("web-read", "--url", "   ")
@@ -324,8 +381,8 @@ class TestCli:
         assert "[错误]" in r.stdout
 
     def test_missing_required_arg_exits_2(self):
-        r = _run_cli("web-search")
-        assert r.returncode == 2  # argparse: missing --query
+        r = _run_cli("web-read")
+        assert r.returncode == 2  # argparse: missing --url
 
 
 class TestAgentRegistration:
@@ -337,6 +394,12 @@ class TestAgentRegistration:
         schema_names = {t["function"]["name"] for t in agent_core.TOOL_SCHEMAS}
         assert names <= schema_names
         assert names <= set(agent_core._TOOL_MAP)
+
+    def test_web_search_schema_requires_both_languages(self):
+        import agent_core
+        fn = next(t["function"] for t in agent_core.TOOL_SCHEMAS
+                  if t["function"]["name"] == "web_search")
+        assert fn["parameters"]["required"] == ["query_en", "query_zh"]
 
     def test_reach_commands_allowed_and_routed(self):
         import agent_core

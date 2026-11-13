@@ -9,7 +9,7 @@ ORDER = 70
 
 COMMANDS = {"web-search", "web-read", "yt-summary"}
 
-CLI_TIMEOUTS = {"web-search": 45}  # Serper 20s + Parallel fallback 20s
+CLI_TIMEOUTS = {"web-search": 45}  # 4 searches concurrent; worst Serper 20s + Parallel 20s
 
 TOOLS = {
     "web_search": "web-search",
@@ -20,10 +20,12 @@ TOOLS = {
 UNTRUSTED_TOOLS = set(TOOLS)
 
 SCHEMAS = [
-    fn("web_search", "联网搜索最新资讯/新闻/动态（用户问\"最新新闻\"\"外面在发生什么\"\"帮我查一下X\"）。"
-       "返回抓取到的网页结果原文，你据此用中文总结报告", {
-        "query": s("搜索关键词/问题"),
-    }, ["query"]),
+    fn("web_search", "联网搜索：任何要上网查的问题都用它（最新新闻/价格/事实/\"帮我查一下X\"）。"
+       "系统同时用 Serper 与 AnySearch 各搜英文、中文两组关键词（中文网常更有用），"
+       "无论用户用什么语言提问。返回四组结果原文，你综合后用用户的语言总结", {
+        "query_en": s("从用户请求提炼的英文搜索关键词（不是整句直译）"),
+        "query_zh": s("从用户请求提炼的中文搜索关键词（不是整句直译）"),
+    }, ["query_en", "query_zh"]),
     fn("web_read", "抓取并阅读一个网页链接（用户发链接让看/总结文章时）。返回网页正文，你据此总结", {
         "url": s("网页 URL"),
     }, ["url"]),

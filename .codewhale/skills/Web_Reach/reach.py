@@ -11,9 +11,11 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 CAP = 6000              # max chars handed back to the LLM (DeepSeek max_tokens is tight)
+BLOCK_CAP = 2000        # per bilingual_search block; 4 blocks ≈ 8000
 _TRUNC = "…[截断]"
 _JINA_TIMEOUT = 20      # under _run_cli's 30s subprocess cap
 _SUBS_TIMEOUT = 18      # subs + meta worst case 26s, still under 30s
@@ -123,6 +125,32 @@ def web_search(query, *, search, fallback=None):
     if results:
         return trim(format_results(results))
     return "[错误] 没查到结果" if err == "无结果" else f"[错误] 搜索失败：{err}"
+
+
+def bilingual_search(query_en, query_zh, *, serper, any_search):
+    """Serper + AnySearch × EN + 中文 concurrently; one labeled, trimmed block per search.
+
+    `serper(q)` / `any_search(q)` return result text. Empty language skipped; a raising
+    searcher only spoils its own block.
+    """
+    # collapse all whitespace: a newline in q would split the `## …` header line
+    langs = [(lang, " ".join((q or "").split())) for lang, q in (("EN", query_en), ("中文", query_zh))]
+    jobs = [(name, searcher, lang, q)
+            for name, searcher in (("Serper", serper), ("AnySearch", any_search))
+            for lang, q in langs if q]
+    if not jobs:
+        return "[错误] 空查询"
+
+    def run(job):
+        name, searcher, lang, q = job
+        try:
+            text = searcher(q)
+        except Exception as e:                   # noqa: BLE001 — relay any search failure
+            text = f"[错误] 搜索失败：{e}"
+        return f"## {name} · {lang}: {q}\n" + trim((text or "").strip(), BLOCK_CAP)
+
+    with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        return "\n\n".join(pool.map(run, jobs))
 
 
 def web_read(url, *, fetch):
