@@ -21,7 +21,7 @@ python .codewhale/skills/Web_Reach/cli.py web-read --url "https://example.com/ar
 python .codewhale/skills/Web_Reach/cli.py yt-summary --url "https://www.youtube.com/watch?v=..."
 ```
 
-输出为抓取到的原文/转写（截断到约 6000 字，DeepSeek max_tokens 偏紧；`web-search` 每块 2000，共 ~8000）。失败打印 `[错误] …` 并 `exit 0`，让 Agent 自然地告诉用户"没查到"，不编造。
+输出为抓取到的原文/转写（截断到约 6000 字，DeepSeek max_tokens 偏紧；`web-search` 每块 `reach.BLOCK_CAP`）。失败打印 `[错误] …` 并 `exit 0`，让 Agent 自然地告诉用户"没查到"，不编造。
 
 ## Agent 工具映射
 

@@ -68,8 +68,8 @@
 ### 🌐 联网资讯（Web Reach / Any Search）
 - "最新 AI 新闻是什么""外面在发生什么" → 联网搜索；发链接说"帮我看看这篇" → 抓取正文总结
 - 发 YouTube 链接说"总结下这视频" → 取字幕转写后用中文总结
-- **联网搜索中英双语**：每次搜索 Serper + AnySearch 各搜英文、中文关键词，不论用户用何语言（见 [Web_Reach SKILL.md](.codewhale/skills/Web_Reach/SKILL.md)）
-- **Any Search 垂直领域**（finance/health/academic/code 等）结构化结果与网页全文抽取；`ANYSEARCH_API_KEY` 可选（未配置走匿名，限额较低）
+- 联网搜索每次中英双语、多源并发（[Web_Reach SKILL.md](.codewhale/skills/Web_Reach/SKILL.md)）
+- 垂直领域（行情/学术/健康等）结构化搜索（[Any_Search SKILL.md](.codewhale/skills/Any_Search/SKILL.md)）
 
 ### 🔎 懂王舆情搜集（KnowKing 桥，可选）
 - 微信/Telegram 里说 **"用 knowking / kk / 懂王 查大家怎么看 X"** → 跨社交平台
