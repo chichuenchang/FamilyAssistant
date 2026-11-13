@@ -222,7 +222,7 @@ _SERPER = {"searchParameters": {"q": "hello world", "num": 10},
                        {"title": "no link"}],
            "credits": 1}
 _PARALLEL = {"search_id": "search_1", "results": [
-    {"url": "https://p.example", "title": "P", "publish_date": None, "excerpts": ["# P", "x" * 900]}]}
+    {"url": "https://p.example", "title": "P", "publish_date": None, "excerpts": ["# P\n\nbody", "x" * 900]}]}
 
 
 class TestSerperSearch:
@@ -253,7 +253,7 @@ class TestParallelSearch:
         monkeypatch.setenv("PARALLEL_API_KEY", "p123")
         seen = _fake_urlopen(monkeypatch, _PARALLEL)
         out = reach.parallel_search("hello world")
-        assert out[0]["url"] == "https://p.example" and out[0]["snippet"].startswith("# P x")
+        assert out[0]["url"] == "https://p.example" and out[0]["snippet"].startswith("P body x")
         assert len(out[0]["snippet"]) == 500
         assert seen["url"] == "https://api.parallel.ai/v1/search"
         assert seen["body"]["search_queries"] == ["hello world"]

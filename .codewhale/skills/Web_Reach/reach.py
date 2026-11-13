@@ -28,6 +28,8 @@ _RESULTS = 10
 _PARALLEL_SNIPPET = 500
 
 _TAG_RE = re.compile(r"<[^>]+>")   # <c>…</c>, inline <00:00:01.500> word timings
+_MD_HEADING_RE = re.compile(r"(?m)^#+\s*")   # Parallel excerpts are markdown; one-line snippets
+_WS_RE = re.compile(r"\s+")
 
 
 # ── pure logic ──────────────────────────────────────────────
@@ -205,9 +207,9 @@ def parallel_search(query, *, timeout=_SEARCH_TIMEOUT):
     for r in items if isinstance(items, list) else []:
         if isinstance(r, dict) and r.get("url"):
             ex = r.get("excerpts") if isinstance(r.get("excerpts"), list) else []
-            out.append({"title": r.get("title") or "", "url": r["url"],
-                        "snippet": " ".join(e for e in ex if isinstance(e, str)).strip()
-                        [:_PARALLEL_SNIPPET]})
+            text = _MD_HEADING_RE.sub("", "\n".join(e for e in ex if isinstance(e, str)))
+            snippet = _WS_RE.sub(" ", text).strip()[:_PARALLEL_SNIPPET]
+            out.append({"title": r.get("title") or "", "url": r["url"], "snippet": snippet})
     return out[:_RESULTS]
 
 
