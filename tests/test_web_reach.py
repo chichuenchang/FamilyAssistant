@@ -225,13 +225,16 @@ _PARALLEL = {"search_id": "search_1", "results": [
     {"url": "https://p.example", "title": "P", "publish_date": None, "excerpts": ["# P\n\nbody", "x" * 900]}]}
 
 
-class TestSerperSearch:
-    def test_missing_key_raises(self, monkeypatch):
-        monkeypatch.delenv("SERPER_API_KEY", raising=False)
-        monkeypatch.setattr(reach, "_load_env", lambda: None)
-        with pytest.raises(RuntimeError, match="SERPER_API_KEY"):
-            reach.serper_search("q")
+@pytest.mark.parametrize("env, fn", [("SERPER_API_KEY", "serper_search"),
+                                     ("PARALLEL_API_KEY", "parallel_search")])
+def test_missing_key_raises(monkeypatch, env, fn):
+    monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(reach, "_load_env", lambda: None)
+    with pytest.raises(RuntimeError, match=env):
+        getattr(reach, fn)("q")
 
+
+class TestSerperSearch:
     def test_posts_query_and_reads_organic(self, monkeypatch):
         monkeypatch.setenv("SERPER_API_KEY", "k123")
         seen = _fake_urlopen(monkeypatch, _SERPER)
@@ -243,12 +246,6 @@ class TestSerperSearch:
 
 
 class TestParallelSearch:
-    def test_missing_key_raises(self, monkeypatch):
-        monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
-        monkeypatch.setattr(reach, "_load_env", lambda: None)
-        with pytest.raises(RuntimeError, match="PARALLEL_API_KEY"):
-            reach.parallel_search("q")
-
     def test_posts_query_and_cuts_excerpts(self, monkeypatch):
         monkeypatch.setenv("PARALLEL_API_KEY", "p123")
         seen = _fake_urlopen(monkeypatch, _PARALLEL)

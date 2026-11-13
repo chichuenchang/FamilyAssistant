@@ -176,7 +176,7 @@ def _post_json(url, body, headers, *, timeout):
         raise RuntimeError(f"HTTP {e.code} {body}") from None
 
 
-def _key(name):
+def _require_key(name):
     _load_env()
     key = os.environ.get(name, "")
     if not key:
@@ -186,7 +186,7 @@ def _key(name):
 
 def serper_search(query, *, timeout=_SEARCH_TIMEOUT):
     """POST Serper /search; return [{title,url,snippet}]. Raises on failure."""
-    key = _key("SERPER_API_KEY")
+    key = _require_key("SERPER_API_KEY")
     data = _post_json(_SERPER_URL, {"q": query, "num": _RESULTS}, {"X-API-KEY": key},
                       timeout=timeout)
     items = data.get("organic") if isinstance(data, dict) else None
@@ -197,7 +197,7 @@ def serper_search(query, *, timeout=_SEARCH_TIMEOUT):
 
 def parallel_search(query, *, timeout=_SEARCH_TIMEOUT):
     """POST Parallel /v1/search; return [{title,url,snippet}], excerpts as the snippet."""
-    key = _key("PARALLEL_API_KEY")
+    key = _require_key("PARALLEL_API_KEY")
     body = {"objective": query, "search_queries": [query], "mode": "advanced",
             "advanced_settings": {"max_results": _RESULTS, "excerpt_settings": {
                 "max_chars_per_result": _PARALLEL_SNIPPET}}}
