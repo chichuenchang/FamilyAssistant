@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from anysearch import AVAILABLE_DOMAINS
 from tool_runtime import fn, s, int_
 
 ORDER = 80
@@ -26,16 +27,14 @@ SCHEMAS = [
     fn("anysearch_search", "AnySearch 垂直领域结构化搜索（finance/health/academic/travel/code 等）。"
        "普通联网查询用 web_search（已含 AnySearch 中英双语），只有需要垂直结构化结果时才用它："
        "先用 anysearch_subdomains 拿到 sub_domain 再传 domain/sub_domain。"
-       "返回结果原文，你据此用中文总结报告", {
+       "返回结果原文，你据此用用户的语言总结", {
         "query": s("搜索关键词/问题"),
-        "domain": s("垂直领域（可选）", enum=[
-            "general", "resource", "social_media", "finance", "academic", "legal",
-            "health", "business", "security", "ip", "code", "energy",
-            "environment", "agriculture", "travel", "film", "gaming"]),
+        "domain": s("垂直领域（必填；通用查询走 web_search）",
+                    enum=[d for d in AVAILABLE_DOMAINS if d != "general"]),
         "sub_domain": s("子域路由键（如 finance.quote），垂直搜索时配 domain；先用 anysearch_subdomains 发现"),
         "sub_domain_params": s("子域参数，key=value,key2=value2 或 JSON（schema 见 anysearch_subdomains 输出）"),
         "max_results": int_("返回结果数 1-10（默认 10）"),
-    }, ["query"]),
+    }, ["query", "domain"]),
     fn("anysearch_extract", "抓取并提取一个网页链接的全文（AnySearch，markdown）。"
        "用户发链接让看/总结、或搜索摘要不够需读全文时用。返回正文，你据此总结", {
         "url": s("网页 URL"),

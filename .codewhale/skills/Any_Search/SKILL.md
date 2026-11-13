@@ -1,10 +1,10 @@
 # Any_Search
 
-> 高质量实时联网搜索 skill。比 Web_Reach 更准的联网搜索：支持垂直领域结构化结果与网页全文抽取。抓取到的结果交给 Agent 的 LLM 总结后回复用户。
+> AnySearch skill：垂直领域结构化搜索、网页全文抽取、搜图。抓取到的结果交给 Agent 的 LLM 总结后回复用户。
 
 实现 `anysearch.py`（纯逻辑，可注入测试）+ `cli.py`（真实 AnySearch JSON-RPC 适配器）就在本 skill 目录 `.codewhale/skills/Any_Search/`。
 
-走 AnySearch API（JSON-RPC 2.0，`https://api.anysearch.com/mcp`）。**`ANYSEARCH_API_KEY` 可选**——未配置走匿名访问（限额较低但可用）。只读公开信息，不写库、不按成员隔离。普通搜索已并入 Web_Reach `web_search`（Serper + AnySearch × 中英，调本 skill `anysearch.search`）；`anysearch_search` 只做垂直领域结构化搜索。
+走 AnySearch API（JSON-RPC 2.0，`https://api.anysearch.com/mcp`）。**`ANYSEARCH_API_KEY` 可选**——未配置走匿名访问（限额较低但可用）。只读公开信息，不写库、不按成员隔离。通用搜索归 Web_Reach `web_search`（调本 skill `anysearch.search`）；`anysearch_search` schema 强制 `domain`（无 `general`）。
 
 ## 命令行调用（agent 经白名单子命令调用）
 
